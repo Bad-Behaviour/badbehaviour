@@ -16,7 +16,7 @@ You should have received a copy of the GNU Lesser General Public License along
 with this program. If not, see <http://www.gnu.org/licenses/>.
 
 Please report any problems to bad . bots AT ioerror DOT us
-https://github.com/Bad-Behaveiour/badbehaviour
+https://github.com/Bad-Behaviour/badbehaviour
 */
 
 ###############################################################################
@@ -154,7 +154,7 @@ function bb2_insert_stats($force = false)
 
 		if ($blocked !== false)
 		{
-			echo sprintf('<p><a href="https://github.com/Bad-Behaveiour/badbehaviour">%1$s</a> %2$s <strong>%3$s</strong> %4$s</p>', __('Bad Behavior'), __('has blocked'), $blocked[0]["COUNT(*)"], __('access attempts in the last 7 days.'));
+			echo sprintf('<p><a href="https://github.com/Bad-Behaviour/badbehaviour">%1$s</a> %2$s <strong>%3$s</strong> %4$s</p>', __('Bad Behavior'), __('has blocked'), $blocked[0]["COUNT(*)"], __('access attempts in the last 7 days.'));
 		}
 	}
 }

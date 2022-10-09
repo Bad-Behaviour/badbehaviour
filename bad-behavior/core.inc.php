@@ -1,5 +1,5 @@
 <?php if (!defined('BB2_CWD')) die('I said no cheating!');
-const BB2_VERSION = '2.2.24';
+const BB2_VERSION = '2.2.25';
 
 // Bad Behavior entry point is bb2_start()
 // If you're reading this, you are probably lost.
@@ -143,8 +143,8 @@ function bb2_start($settings)
 
 	if ($settings['reverse_proxy'] && $ip = bb2_reverse_proxy($settings, $headers_mixed))
 	{
-		$headers['X-Bad-Behavior-Remote-Address'] = $_SERVER['REMOTE_ADDR'];
-		$headers_mixed['X-Bad-Behavior-Remote-Address'] = $_SERVER['REMOTE_ADDR'];
+		$headers['X-Bad-Behavior-Remote-Address']		= $_SERVER['REMOTE_ADDR'];
+		$headers_mixed['X-Bad-Behavior-Remote-Address']	= $_SERVER['REMOTE_ADDR'];
 	}
 	else
 	{
@@ -232,8 +232,8 @@ function bb2_screen($settings, $package)
 			return false;
 		}
 		else if (stripos($ua, 'Googlebot') !== false
-			|| stripos($ua, 'Mediapartners-Google') !== false
-			|| stripos($ua, 'Google Web Preview') !== false)
+			||   stripos($ua, 'Mediapartners-Google') !== false
+			||   stripos($ua, 'Google Web Preview') !== false)
 		{
 			require_once(BB2_CORE . '/searchengine.inc.php');
 

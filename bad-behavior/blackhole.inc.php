@@ -28,8 +28,8 @@ function bb2_blackhole($package)
 	];
 
 	// Check the blackhole lists
-	$ip = $package['ip'];
-	$find = implode('.', array_reverse(explode('.', $ip)));
+	$ip		= $package['ip'];
+	$find	= implode('.', array_reverse(explode('.', $ip)));
 
 	foreach ($bb2_blackhole_lists as $dnsbl)
 	{
@@ -60,14 +60,14 @@ function bb2_httpbl($settings, $package)
 	// Workaround for "MySQL server has gone away"
 	bb2_db_query("SET @@session.wait_timeout = 90");
 
-	$find = implode('.', array_reverse(explode('.', $package['ip'])));
-	$result = gethostbynamel($settings['httpbl_key'].".${find}.dnsbl.httpbl.org.");
+	$find	= implode('.', array_reverse(explode('.', $package['ip'])));
+	$result	= gethostbynamel($settings['httpbl_key'].".${find}.dnsbl.httpbl.org.");
 
 	if (!empty($result))
 	{
 		$ip = explode('.', $result[0]);
 
-		if ($ip[0] == 127 && ($ip[3] & 7)
+		if (   $ip[0] == 127 && ($ip[3] & 7)
 			&& $ip[2] >= $settings['httpbl_threat']
 			&& $ip[1] <= $settings['httpbl_maxage'])
 		{

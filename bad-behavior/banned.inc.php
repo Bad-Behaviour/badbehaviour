@@ -14,7 +14,8 @@ function bb2_housekeeping($settings, $package)
 	bb2_db_query($query);
 
 	// Waste a bunch more of the spammer's time, sometimes.
-	if (rand(1,1000) == 1) {
+	if (rand(1,1000) == 1)
+	{
 		$query = "OPTIMIZE TABLE `" . $settings['log_table'] . "`";
 		bb2_db_query($query);
 	}
@@ -24,15 +25,20 @@ function bb2_display_denial($settings, $package, $key, $previous_key = false)
 {
 	define('DONOTCACHEPAGE', true);	// WP Super Cache
 	if (!$previous_key) $previous_key = $key;
-	if ($key == 'e87553e1') {
+	if ($key == 'e87553e1')
+	{
 		// FIXME: lookup the real key
 	}
+
 	// Create support key
 	$ip = explode('.', $package['ip']);
 	$ip_hex = '';
-	foreach ($ip as $octet) {
+
+	foreach ($ip as $octet)
+	{
 		$ip_hex .= str_pad(dechex((int) $octet), 2, 0, STR_PAD_LEFT);
 	}
+
 	$support_key = implode('-', str_split("$ip_hex$key", 4));
 
 	// Get response data

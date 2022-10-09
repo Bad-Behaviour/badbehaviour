@@ -2,7 +2,8 @@
 
 // Defines the responses which Bad Behavior might return.
 
-function bb2_get_response($key) {
+function bb2_get_response($key)
+{
 	$bb2_responses = [
 		'00000000' => ['response' => 200, 'explanation' => '', 'log' => 'Permitted'],
 		'136673cd' => ['response' => 403, 'explanation' => 'Your Internet Protocol address is listed on a blacklist of addresses involved in malicious or illegal activity. See the listing below for more details on specific blacklists and removal procedures.', 'log' => 'IP address found on external blacklist'],
@@ -48,5 +49,6 @@ function bb2_get_response($key) {
 	];
 
 	if (array_key_exists($key, $bb2_responses)) return $bb2_responses[$key];
+
 	return ['00000000'];
 }

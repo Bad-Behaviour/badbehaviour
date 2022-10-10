@@ -1,0 +1,19 @@
+{
+	"name" : "badbehaviour/badbehaviour",
+	"type" : "library",
+	"description" : "Bad Behavior is a spam protection system that detects and blocks unwanted Web accesses.",
+	"license" : "LGPL3",
+	"require" : {
+		"php" : "8.0 - 8.1"
+	},
+	"prefer-stable" : true,
+	"homepage" : "https://github.com/Bad-Behaviour/badbehaviour",
+	"keywords" : [
+		"comment",
+		"trackback",
+		"referrer",
+		"spam",
+		"robot",
+		"antispam"
+	]
+}

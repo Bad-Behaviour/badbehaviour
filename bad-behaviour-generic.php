@@ -1,9 +1,9 @@
 <?php
 /*
-Bad Behavior - detects and blocks unwanted Web accesses
+Bad Behaviour - detects and blocks unwanted Web accesses
 Copyright (C) 2005,2006,2007,2008,2009,2010,2011,2012 Michael Hampton
 
-Bad Behavior is free software; you can redistribute it and/or modify it under
+Bad Behaviour is free software; you can redistribute it and/or modify it under
 the terms of the GNU Lesser General Public License as published by the Free
 Software Foundation; either version 3 of the License, or (at your option) any
 later version.
@@ -24,12 +24,12 @@ https://github.com/Bad-Behaviour/badbehaviour
 
 const BB2_CWD = __DIR__;
 
-// Settings you can adjust for Bad Behavior.
+// Settings you can adjust for Bad Behaviour.
 // Most of these are unused in non-database mode.
 // DO NOT EDIT HERE; instead make changes in settings.ini.
 // These settings are used when settings.ini is not present.
 $bb2_settings_defaults = [
-	'log_table'					=> 'bad_behavior',
+	'log_table'					=> 'bad_behaviour',
 	'display_stats'				=> false,
 	'strict'					=> false,
 	'verbose'					=> false,
@@ -43,7 +43,7 @@ $bb2_settings_defaults = [
 	'reverse_proxy_addresses'	=> [],
 ];
 
-// Bad Behavior callback functions.
+// Bad Behaviour callback functions.
 
 // Return current time in the format preferred by your database.
 function bb2_db_date()
@@ -77,7 +77,7 @@ function bb2_db_num_rows($result)
 
 // Run a query and return the results, if any.
 // Should return FALSE if an error occurred.
-// Bad Behavior will use the return value here in other callbacks.
+// Bad Behaviour will use the return value here in other callbacks.
 function bb2_db_query($query)
 {
 	return false;
@@ -154,7 +154,7 @@ function bb2_insert_stats($force = false)
 
 		if ($blocked !== false)
 		{
-			echo sprintf('<p><a href="https://github.com/Bad-Behaviour/badbehaviour">%1$s</a> %2$s <strong>%3$s</strong> %4$s</p>', __('Bad Behavior'), __('has blocked'), $blocked[0]["COUNT(*)"], __('access attempts in the last 7 days.'));
+			echo sprintf('<p><a href="https://github.com/Bad-Behaviour/badbehaviour">%1$s</a> %2$s <strong>%3$s</strong> %4$s</p>', __('Bad Behaviour'), __('has blocked'), $blocked[0]["COUNT(*)"], __('access attempts in the last 7 days.'));
 		}
 	}
 }
@@ -169,7 +169,7 @@ function bb2_relative_path()
 }
 
 // Calls inward to Bad Behavor itself.
-require_once BB2_CWD . '/bad-behavior/core.inc.php';
+require_once BB2_CWD . '/bad-behaviour/core.inc.php';
 bb2_install();	// FIXME: see above
 
 bb2_start(bb2_read_settings());

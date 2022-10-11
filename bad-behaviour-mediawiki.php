@@ -1,9 +1,9 @@
 <?php
 /*
-Bad Behavior - detects and blocks unwanted Web accesses
+Bad Behaviour - detects and blocks unwanted Web accesses
 Copyright (C) 2005,2006,2007,2008,2009,2010,2011,2012 Michael Hampton
 
-Bad Behavior is free software; you can redistribute it and/or modify it under
+Bad Behaviour is free software; you can redistribute it and/or modify it under
 the terms of the GNU Lesser General Public License as published by the Free
 Software Foundation; either version 3 of the License, or (at your option) any
 later version.
@@ -22,17 +22,17 @@ https://github.com/Bad-Behaviour/badbehaviour
 ###############################################################################
 ###############################################################################
 
-// This file is the entry point for Bad Behavior.
+// This file is the entry point for Bad Behaviour.
 
 if (!defined('MEDIAWIKI')) die();
 
-$wgBadBehaviorTimer = false;
+$wgBadBehaviourTimer = false;
 
-// Settings you can adjust for Bad Behavior.
+// Settings you can adjust for Bad Behaviour.
 // DO NOT EDIT HERE; instead make changes in settings.ini.
 // These settings are used when settings.ini is not present.
 $bb2_settings_defaults = [
-	'log_table'					=> $wgDBprefix . 'bad_behavior',
+	'log_table'					=> $wgDBprefix . 'bad_behaviour',
 	'display_stats'				=> false,
 	'strict'					=> false,
 	'verbose'					=> false,
@@ -48,8 +48,8 @@ $bb2_settings_defaults = [
 
 const BB2_CWD = __DIR__;
 
-// Bad Behavior callback functions.
-require_once("bad-behavior-mysql.php");
+// Bad Behaviour callback functions.
+require_once("bad-behaviour-mysql.php");
 
 // Return current time in the format preferred by your database.
 function bb2_db_date()
@@ -85,7 +85,7 @@ function bb2_db_query($query)
 	try {
 		$bb2_last_query = $db->query($query);
 	} catch (DBQueryError $e) {
-		trigger_error("Bad Behavior DBQueryError " . $e->getMessage(), E_USER_WARNING);
+		trigger_error("Bad Behaviour DBQueryError " . $e->getMessage(), E_USER_WARNING);
 		return false;
 	}
 
@@ -104,7 +104,7 @@ function bb2_db_rows($result)
 			$rows[] = $row;
 		}
 	} catch (DBUnexpectedError $e) {
-		trigger_error('Bad Behavior DBUnexpectedError ' . $e->getMessage(), E_USER_WARNING);
+		trigger_error('Bad Behaviour DBUnexpectedError ' . $e->getMessage(), E_USER_WARNING);
 	}
 
 	return $rows;
@@ -123,7 +123,7 @@ function bb2_read_whitelist()
 	return @parse_ini_file(dirname(BB2_CORE) . '/whitelist.ini');
 }
 
-// This Bad Behavior-related function is a stub. You can help MediaWiki by expanding it.
+// This Bad Behaviour-related function is a stub. You can help MediaWiki by expanding it.
 // retrieve settings from database
 function bb2_read_settings()
 {
@@ -134,7 +134,7 @@ function bb2_read_settings()
 	return @array_merge($bb2_settings_defaults, $settings);
 }
 
-// This Bad Behavior-related function is a stub. You can help MediaWiki by expanding it.
+// This Bad Behaviour-related function is a stub. You can help MediaWiki by expanding it.
 // write settings to database
 function bb2_write_settings($settings)
 {
@@ -144,7 +144,7 @@ function bb2_write_settings($settings)
 // In some configurations automatic table creation may fail with the message
 // You must update your load-balancing configuration.
 // You can create the table manually (see query in
-// bad-behavior/database.inc.php) and add this line to your LocalSettings.php:
+// bad-behaviour/database.inc.php) and add this line to your LocalSettings.php:
 //
 //   define('BB2_NO_CREATE', true);
 
@@ -169,11 +169,11 @@ function bb2_relative_path()
 // Cute timer display
 function bb2_mediawiki_timer(&$out, &$skin)
 {
-	global $bb2_timer_total, $wgBadBehaviorTimer;
+	global $bb2_timer_total, $wgBadBehaviourTimer;
 
-	if ($wgBadBehaviorTimer)
+	if ($wgBadBehaviourTimer)
 	{
-		$out->addHTML("<!-- Bad Behavior " . BB2_VERSION . " run time: " . number_format(1000 * $bb2_timer_total, 3) . " ms -->");
+		$out->addHTML("<!-- Bad Behaviour " . BB2_VERSION . " run time: " . number_format(1000 * $bb2_timer_total, 3) . " ms -->");
 	}
 
 	return true;
@@ -206,10 +206,10 @@ function bb2_mediawiki_entry()
 	$bb2_timer_total	= $bb2_timer_stop - $bb2_timer_start;
 }
 
-require_once BB2_CWD . '/bad-behavior/core.inc.php';
+require_once BB2_CWD . '/bad-behaviour/core.inc.php';
 
 $wgExtensionCredits['other'][] = [
-	'name'			=> 'Bad Behavior',
+	'name'			=> 'Bad Behaviour',
 	'version'		=> BB2_VERSION,
 	'author'		=> 'Michael Hampton',
 	'description'	=> 'Detects and blocks unwanted Web accesses',

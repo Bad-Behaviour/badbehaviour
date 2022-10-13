@@ -49,7 +49,7 @@ $bb2_settings_defaults = [
 const BB2_CWD = __DIR__;
 
 // Bad Behaviour callback functions.
-require_once("bad-behaviour-mysql.php");
+require_once 'bad-behaviour-mysql.php';
 
 // Return current time in the format preferred by your database.
 function bb2_db_date()

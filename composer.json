@@ -2,7 +2,7 @@
 	"name" : "badbehaviour/badbehaviour",
 	"type" : "library",
 	"description" : "Bad Behaviour is a spam protection system that detects and blocks unwanted Web accesses.",
-	"license" : "LGPL3",
+	"license" : "LGPL-3.0-only",
 	"require" : {
 		"php" : "8.0 - 8.1"
 	},

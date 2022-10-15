@@ -169,7 +169,7 @@ function bb2_relative_path()
 }
 
 // Calls inward to Bad Behavor itself.
-require_once BB2_CWD . '/bad-behaviour/core.inc.php';
+require_once BB2_CWD . '/src/core.inc.php';
 bb2_install();	// FIXME: see above
 
 bb2_start(bb2_read_settings());

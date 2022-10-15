@@ -206,7 +206,7 @@ function bb2_mediawiki_entry()
 	$bb2_timer_total	= $bb2_timer_stop - $bb2_timer_start;
 }
 
-require_once BB2_CWD . '/bad-behaviour/core.inc.php';
+require_once BB2_CWD . '/src/core.inc.php';
 
 $wgExtensionCredits['other'][] = [
 	'name'			=> 'Bad Behaviour',

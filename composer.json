@@ -15,5 +15,9 @@
 		"spam",
 		"robot",
 		"antispam"
+	],
+	"authors" : [{
+			"name" : "Michael Hampton"
+		}
 	]
 }

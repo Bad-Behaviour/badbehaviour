@@ -53,7 +53,7 @@ the following:
 	include( './extensions/Bad-Behaviour/bad-behaviour-mediawiki.php' );
 
 For complete documentation and installation instructions, please visit
-[User Guide](https://github.com/Bad-Behaviour/badbehaviour)
+[User Guide](https://github.com/Bad-Behaviour/badbehaviour/wiki)
 
 ## Screenshots
 

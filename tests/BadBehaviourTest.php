@@ -55,7 +55,7 @@ class FakeAdapter implements HostAdapterInterface
 
 	public function get_insert_sql(array $s, array $p, string $k): string
 	{
-		return '';
+		return "INSERT INTO `bad_behaviour` (ip, status_key) VALUES ('{$p['ip']}', '$k')";
 	}
 
 	public function get_email(): string
@@ -105,7 +105,8 @@ class BadBehaviourTest extends PHPUnit\Framework\TestCase
 
 		$bb = new BadBehaviour(new FakeAdapter());
 		$bb->run();
-		$this->assertTrue(true); // Did not exit or throw
+
+		$this->assertTrue(true);
 	}
 
 	public function test_blacklisted_user_agent_is_flagged(): void
@@ -118,8 +119,27 @@ class BadBehaviourTest extends PHPUnit\Framework\TestCase
 
 		$adapter = new FakeAdapter();
 		$adapter->settings['logging'] = true;
+
 		$bb = new BadBehaviour($adapter);
-		$result = $bb->run();
+
+		$reflection = new \ReflectionClass($bb);
+		$settingsProp = $reflection->getProperty('settings');
+		$settingsProp->setAccessible(true);
+		$settings = $settingsProp->getValue($bb);
+
+		require_once BB2_CORE . '/functions.inc.php';
+		require_once BB2_CORE . '/core.inc.php';
+
+		// Capture the output buffer to prevent the 403 HTML from printing to console
+		ob_start();
+
+		// Run the screening manually.
+		// The @ operator silently suppresses the header() deprecation warning in CLI mode.
+		// Note: sleep(2) will run natively, adding a 2-second delay to this test method.
+		@bb2_start($settings);
+
+		// Discard the buffer
+		ob_end_clean();
 
 		$this->assertNotEmpty($adapter->queries, 'A denial INSERT should have been issued');
 		$this->assertStringContainsString('INSERT', $adapter->queries[0] ?? '');

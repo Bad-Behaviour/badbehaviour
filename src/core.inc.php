@@ -1,13 +1,7 @@
-<?php if (!defined('BB2_CWD')) die('I said no cheating!');
-const BB2_VERSION = '2.2.25';
+<?php
+if (!defined('BB2_CORE')) die('I said no cheating!');
 
-// Bad Behaviour entry point is bb2_start()
-// If you're reading this, you are probably lost.
-// Go read the bad-behaviour-generic.php file.
-
-const BB2_CORE = __DIR__;
-
-require_once BB2_CORE . '/functions.inc.php';
+use BadBehaviour\Core\Runtime;
 
 // Kill 'em all!
 function bb2_banned($settings, $package, $key, $previous_key = false): void
@@ -26,21 +20,25 @@ function bb2_banned($settings, $package, $key, $previous_key = false): void
 
 	// Penalize the spammers some more
 	bb2_housekeeping($settings, $package);
-	die();
+
+	// We no longer call die() globally. Gracefully return and let
+	// the main class or host handle the request termination.
+	// Hosts should check the return value of bb2_start() to halt execution.
+	// If standard behaviour is needed, uncomment below:
+	// die();
 }
 
 function bb2_approved($settings, $package)
 {
-	// Dirk wanted this
 	if (is_callable('bb2_approved_callback'))
 	{
 		bb2_approved_callback($settings, $package);
 	}
 
-	// Decide what to log on approved requests.
 	if (($settings['verbose'] && $settings['logging']) || empty($package['user_agent']))
 	{
-		bb2_db_query(bb2_insert($settings, $package, '00000000'));
+		$adapter = Runtime::get_adapter();
+		$adapter->query($adapter->get_insert_sql($settings, $package, '00000000'));
 	}
 }
 

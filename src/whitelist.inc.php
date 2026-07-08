@@ -1,16 +1,15 @@
 <?php if (!defined('BB2_CORE')) die('I said no cheating!');
 
+use BadBehaviour\Core\Runtime;
+
 function bb2_run_whitelist($package)
 {
-	// FIXME: Transitional, until port maintainters implement bb2_read_whitelist
-	if (function_exists('bb2_read_whitelist'))
-	{
-		$whitelists = bb2_read_whitelist();
-	}
-	else
-	{
-		$whitelists = @parse_ini_file(dirname(BB2_CORE) . '/whitelist.ini');
-	}
+	$adapter = Runtime::get_adapter();
+
+	// Modern path: ask the adapter. Legacy platforms that previously
+	// overrode bb2_read_whitelist() keep working because their adapter
+	// implementation simply calls the same parse_ini_file internally.
+	$whitelists = $adapter->read_whitelist();
 
 	if (@!empty($whitelists['ip']))
 	{

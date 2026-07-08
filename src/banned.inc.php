@@ -1,31 +1,35 @@
-<?php if (!defined('BB2_CORE')) die('I said no cheating!');
+<?php
+if (!defined('BB2_CORE')) die('I said no cheating!');
+
+use BadBehaviour\Core\Runtime;
 
 // Functions called when a request has been denied
 // This part can be gawd-awful slow, doesn't matter :)
-
 require_once BB2_CORE . '/responses.inc.php';
 
 function bb2_housekeeping($settings, $package)
 {
 	if (!$settings['logging']) return;
 
+	$adapter = Runtime::get_adapter();
 	// FIXME Yes, the interval's hard coded (again) for now.
-	$query = "DELETE FROM `" . $settings['log_table'] . "` WHERE `date` < DATE_SUB('" . bb2_db_date() . "', INTERVAL 7 DAY)";
-	bb2_db_query($query);
+	$query = "DELETE FROM `" . $settings['log_table'] . "` WHERE `date` < DATE_SUB('" . $adapter->get_date_string() . "', INTERVAL 7 DAY)";
+	$adapter->query($query);
 
 	// Waste a bunch more of the spammer's time, sometimes.
 	if (rand(1,1000) == 1)
 	{
 		$query = "OPTIMIZE TABLE `" . $settings['log_table'] . "`";
-		bb2_db_query($query);
+		$adapter->query($query);
 	}
 }
 
 function bb2_display_denial($settings, $package, $key, $previous_key = false)
 {
-	define('DONOTCACHEPAGE', true);	// WP Super Cache
+	define('DONOTCACHEPAGE', true);
 
 	if (!$previous_key) $previous_key = $key;
+	$adapter = Runtime::get_adapter();
 
 	if ($key == 'e87553e1')
 	{
@@ -33,14 +37,12 @@ function bb2_display_denial($settings, $package, $key, $previous_key = false)
 	}
 
 	// Create support key
-	$ip		= explode('.', $package['ip']);
-	$ip_hex	= '';
-
+	$ip	= explode('.', $package['ip']);
+	$ip_hex = '';
 	foreach ($ip as $octet)
 	{
 		$ip_hex .= str_pad(dechex((int) $octet), 2, 0, STR_PAD_LEFT);
 	}
-
 	$support_key = implode('-', str_split("$ip_hex$key", 4));
 
 	// Get response data
@@ -49,8 +51,8 @@ function bb2_display_denial($settings, $package, $key, $previous_key = false)
 	header('Status: ' . $response['response'] . ' Bad Behaviour');
 	$request_uri = $_SERVER['REQUEST_URI'];
 
-	if (!$request_uri) $request_uri = $_SERVER['SCRIPT_NAME'];	// IIS
-?>
+	if (!$request_uri) $request_uri = $_SERVER['SCRIPT_NAME']; // IIS
+	?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -63,13 +65,14 @@ function bb2_display_denial($settings, $package, $key, $previous_key = false)
 <p><?php echo $response['explanation']; ?></p>
 <p>Your technical support key is: <strong><?php echo $support_key; ?></strong></p>
 <p>You can use this key to <a href="https://www.ioerror.us/bb2-support-key?key=<?php echo $support_key; ?>">fix this problem yourself</a>.</p>
-<p>If you are unable to fix the problem yourself, please contact <a href="mailto:<?php echo htmlspecialchars(str_replace('@', '+nospam@nospam.', bb2_email())); ?>"><?php echo htmlspecialchars(str_replace('@', ' at ', bb2_email())); ?></a> and be sure to provide the technical support key shown above.</p>
+<p>If you are unable to fix the problem yourself, please contact <a href="mailto:<?php echo htmlspecialchars(str_replace('@', '+nospam@nospam.', $adapter->get_email())); ?>"><?php echo htmlspecialchars(str_replace('@', ' at ', $adapter->get_email())); ?></a> and be sure to provide the technical support key shown above.</p>
 <?php
 }
 
-function bb2_log_denial($settings, $package, $key, $previous_key=false)
+function bb2_log_denial($settings, $package, $key, $previous_key = false)
 {
 	if (!$settings['logging']) return;
 
-	bb2_db_query(bb2_insert($settings, $package, $key));
+	$adapter = Runtime::get_adapter();
+	$adapter->query($adapter->get_insert_sql($settings, $package, $key));
 }

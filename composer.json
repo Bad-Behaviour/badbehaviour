@@ -1,23 +1,35 @@
 {
-	"name" : "badbehaviour/badbehaviour",
-	"type" : "library",
-	"description" : "Bad Behaviour is a spam protection system that detects and blocks unwanted Web accesses.",
-	"license" : "LGPL-3.0-only",
-	"require" : {
-		"php" : "8.0 - 8.4"
-	},
-	"prefer-stable" : true,
-	"homepage" : "https://github.com/Bad-Behaviour/badbehaviour",
-	"keywords" : [
-		"comment",
-		"trackback",
-		"referrer",
-		"spam",
-		"robot",
-		"antispam"
-	],
-	"authors" : [{
-			"name" : "Michael Hampton"
-		}
-	]
+    "name": "badbehaviour/badbehaviour",
+    "type": "library",
+    "description": "Bad Behaviour is a spam protection system that detects and blocks unwanted Web accesses.",
+    "license": "LGPL-3.0-only",
+    "require": {
+        "php": "8.0 - 8.4"
+    },
+    "prefer-stable": true,
+    "homepage": "https://github.com/Bad-Behaviour/badbehaviour",
+    "keywords": [
+        "comment",
+        "trackback",
+        "referrer",
+        "spam",
+        "robot",
+        "antispam"
+    ],
+    "authors": [{
+        "name": "Michael Hampton"
+    }],
+    "autoload": {
+        "psr-4": {
+            "BadBehaviour\\": "src/"
+        }
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    }
 }

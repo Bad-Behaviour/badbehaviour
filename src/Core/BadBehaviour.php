@@ -32,7 +32,7 @@ class BadBehaviour
 		}
 	}
 
-	public function run(): void
+	public function run(): bool
 	{
 		if (php_sapi_name() === 'cli')
 		{
@@ -56,7 +56,11 @@ class BadBehaviour
 			// That logic is now bypassed.
 			// If you want the library to hard-stop execution, uncomment below:
 			// die();
+
+			return true;   // banned
 		}
+
+		return false;  // allowed
 	}
 
 	private function install(): void

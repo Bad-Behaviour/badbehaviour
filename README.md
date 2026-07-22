@@ -78,7 +78,11 @@ use BadBehaviour\Core\Adapter\GenericAdapter;
 $custom = ['strict' => true];
 $adapter = new GenericAdapter();
 $bb = new BadBehaviour($adapter, $custom);
-$bb->run();
+
+if ($bb->run())
+{
+	exit; // Bad Behaviour blocked the request
+}
 ```
 
 **For MediaWiki (e.g. `LocalSettings.php`):**
@@ -105,7 +109,11 @@ use BadBehaviour\Core\Adapter\WackoWikiAdapter;
 // Assuming $db is instantiated WackoWiki DB layer
 $adapter = new WackoWikiAdapter($db);
 $bb = new BadBehaviour($adapter);
-$bb->run();
+
+if ($bb->run())
+{
+	exit;
+}
 ```
 
 ### Option 2: Legacy Drop-In Usage

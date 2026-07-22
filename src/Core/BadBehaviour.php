@@ -36,7 +36,7 @@ class BadBehaviour
 	{
 		if (php_sapi_name() === 'cli')
 		{
-			return; // Do not run in CLI mode
+			return false; // Do not run in CLI mode
 		}
 
 		$this->install();
@@ -48,15 +48,9 @@ class BadBehaviour
 
 		$result = bb2_start($this->settings);
 
-		// If a ban occurred, bb2_display_denial handles output but don't die here.
-		// Let the host handle it, or we handle it safely.
+		// If a ban occurred, bb2_display_denial already handled the output.
 		if ($result)
 		{
-			// bb2_banned contains the die() statements in the original script.
-			// That logic is now bypassed.
-			// If you want the library to hard-stop execution, uncomment below:
-			// die();
-
 			return true;   // banned
 		}
 

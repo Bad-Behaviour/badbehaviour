@@ -1,6 +1,6 @@
 <?php
-/*
- * Legacy WackoWiki entry point. Forwarding shim.
+/**
+ * Bad Behaviour 3.0 - WackoWiki Entry Point
  */
 
 if (!defined('IN_WACKO')) die('I said no cheating!');
@@ -8,38 +8,21 @@ if (!defined('BB2_CWD')) define('BB2_CWD', __DIR__);
 
 require_once BB2_CWD . '/vendor/autoload.php';
 
-use BadBehaviour\Core\BadBehaviour;
-use BadBehaviour\Core\Adapter\WackoWikiAdapter;
+use BadBehaviour\Bootstrap;
+use BadBehaviour\Adapter\WackoWikiAdapter;
+use BadBehaviour\Configuration;
 
-$bb2_timer_start = microtime(true);
+global $db;
 
+$raw = @parse_ini_file('config/bb_settings.conf', true) ?: [];
 $adapter = new WackoWikiAdapter($db);
-$bb = new BadBehaviour($adapter);
-$bb->run();
+$config = Configuration::from_array($raw, $adapter);
 
-$GLOBALS['bb2_timer_total'] = microtime(true) - $bb2_timer_start;
+$bb = new \BadBehaviour\Core\BadBehaviour($config);
+$result = $bb->run();
 
-// Legacy helpers retained for existing templates / themes
-function bb2_timer()
-{
-	global $bb2_timer_total;
-	return '<!-- Bad Behaviour ' . BB2_VERSION . ' run time: '
-		. number_format(1000 * $bb2_timer_total, 3) . " ms -->\n";
+if (!$result->is_allowed()) {
+	$bb->handle_result($result);
 }
 
-function bb2_insert_stats($force = false)
-{
-	$adapter = \BadBehaviour\Core\Runtime::get_adapter();
-	$settings = $adapter->read_settings();
-
-	if ($force || $settings['display_stats'])
-	{
-		$result = $adapter->query(
-			"SELECT COUNT(log_id) AS n FROM " . $settings['log_table']
-			. " WHERE `status_key` NOT LIKE '00000000'"
-			);
-		$rows = $adapter->get_rows($result);
-		if ($rows !== false) return $rows[0]['n'];
-	}
-	return '';
-}
+$GLOBALS['bb2_timer_total'] = microtime(true) - ($_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true));

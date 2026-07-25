@@ -1,0 +1,28 @@
+; Bad Behaviour Whitelist
+; IP ranges (CIDR)
+[ip]
+internal = "10.0.0.0/8"
+office = "203.0.113.0/24"
+cloudflare = "173.245.48.0/20"
+
+; Exact User-Agent matches
+[useragent]
+monitoring = "InternalMonitor/1.0"
+api_client = "MyApp/2.0 (Internal)"
+
+; URL prefixes
+[url]
+health = "/health"
+webhook = "/webhook/"
+api = "/api/v1/status"
+
+; ASN numbers
+[asn]
+google = "AS15169"
+cloudflare = "AS13335"
+
+; Country codes (ISO 3166-1 alpha-2)
+[country]
+us = "US"
+ca = "CA"
+de = "DE"

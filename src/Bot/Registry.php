@@ -1,0 +1,418 @@
+<?php
+
+namespace BadBehaviour\Bot;
+
+use BadBehaviour\Bot\BotCategory;
+use BadBehaviour\Bot\BotAction;
+
+class Registry
+{
+	/**
+	 * @return array<string, BotDefinition>
+	 */
+	public static function all(): array
+	{
+		return array_merge(
+			self::search_engines(),
+			self::ai_crawlers(),
+			self::social_crawlers(),
+			self::seo_crawlers(),
+			self::archive_crawlers(),
+			self::monitoring(),
+		);
+	}
+
+	public static function search_engines(): array
+	{
+		return [
+			'googlebot' => new BotDefinition(
+				id: 'googlebot',
+				name: 'Googlebot',
+				user_agent_patterns: ['Googlebot', 'Google-PageRenderer', 'Google-Read-Aloud', 'GoogleProducer', 'DuplexWeb-Google'],
+				host_patterns: ['googlebot.com', 'google.com'],
+				ip_ranges: [
+					'64.233.160.0/19', '66.249.64.0/19', '66.102.0.0/20', '72.14.192.0/18',
+					'74.125.0.0/16', '209.85.128.0/17', '216.239.32.0/19', '203.208.32.0/19',
+					'172.217.0.0/16', '172.253.0.0/16', '108.177.0.0/17', '142.250.0.0/15',
+					'2404:6800:4000::/36', '2607:f8b0:4000::/36', '2800:3f0:4000::/36',
+					'2a00:1450:4000::/36', '2c0f:fb50:4000::/36'
+				],
+				verify_dns: true,
+				dns_suffix: 'googlebot.com',
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'Googlebot',
+			),
+			'bingbot' => new BotDefinition(
+				id: 'bingbot',
+				name: 'Bingbot',
+				user_agent_patterns: ['bingbot', 'MSNBot', 'MS Search', 'BingPreview'],
+				host_patterns: ['search.msn.com', 'msn.com', 'bing.com'],
+				ip_ranges: [
+					'13.107.21.0/24', '13.107.24.0/21', '40.76.0.0/14', '40.121.0.0/16',
+					'157.54.0.0/15', '157.56.0.0/14', '157.60.0.0/16', '207.46.0.0/16',
+					'65.52.0.0/14', '207.68.128.0/18', '207.68.192.0/20', '64.4.0.0/18',
+					'2620:1ec:4::/48', '2620:1ec:8::/48', '2620:1ec:a::/48', '2620:1ec:c::/48',
+				],
+				verify_dns: true,
+				dns_suffix: 'search.msn.com',
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'Bingbot',
+			),
+			'yandex' => new BotDefinition(
+				id: 'yandex',
+				name: 'YandexBot',
+				user_agent_patterns: ['YandexBot', 'YandexImages', 'YandexVideo', 'YandexMedia', 'YandexBlogs', 'YandexMetrika'],
+				host_patterns: ['yandex.ru', 'yandex.net', 'yandex.com'],
+				ip_ranges: [
+					'5.255.255.0/24', '5.255.253.0/24', '37.9.112.0/20', '37.140.128.0/18',
+					'77.88.0.0/17', '84.201.128.0/18', '87.250.255.0/24', '93.158.128.0/18',
+					'95.108.128.0/17', '100.43.64.0/18', '130.193.48.0/20', '141.8.128.0/17',
+					'178.154.128.0/17', '213.180.192.0/19', '2a02:6b8::/32',
+				],
+				verify_dns: true,
+				dns_suffix: 'yandex.ru',
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'YandexBot',
+			),
+			'baidu' => new BotDefinition(
+				id: 'baidu',
+				name: 'Baiduspider',
+				user_agent_patterns: ['Baiduspider', 'BaiduSpider'],
+				host_patterns: ['baidu.com', 'baidu.jp'],
+				ip_ranges: ['119.63.192.0/21', '123.125.71.0/24', '180.76.0.0/16', '220.181.0.0/16'],
+				verify_dns: false,
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'Baiduspider',
+			),
+			'duckduckgo' => new BotDefinition(
+				id: 'duckduckgo',
+				name: 'DuckDuckBot',
+				user_agent_patterns: ['DuckDuckBot', 'DuckDuckGo-Favicons-Bot'],
+				host_patterns: ['duckduckgo.com'],
+				ip_ranges: ['52.209.0.0/16', '52.208.0.0/16', '34.192.0.0/12', '52.0.0.0/11'],
+				verify_dns: false,
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'DuckDuckBot',
+			),
+			'brave' => new BotDefinition(
+				id: 'brave',
+				name: 'Brave Search',
+				user_agent_patterns: ['BraveSpider', 'BraveBot'],
+				host_patterns: ['search.brave.com'],
+				ip_ranges: ['185.199.108.0/22'],
+				verify_dns: false,
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'BraveSpider',
+			),
+			'kagi' => new BotDefinition(
+				id: 'kagi',
+				name: 'KagiBot',
+				user_agent_patterns: ['KagiBot'],
+				host_patterns: ['kagi.com'],
+				ip_ranges: [],
+				verify_dns: false,
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'KagiBot',
+			),
+		];
+	}
+
+	public static function ai_crawlers(): array
+	{
+		return [
+			'gptbot' => new BotDefinition(
+				id: 'gptbot',
+				name: 'OpenAI GPTBot',
+				user_agent_patterns: ['GPTBot', 'OAI-SearchBot'],
+				host_patterns: ['openai.com'],
+				ip_ranges: [
+					'20.15.240.0/20', '40.83.0.0/16', '40.112.0.0/16', '40.113.0.0/16',
+					'40.114.0.0/16', '40.115.0.0/16', '40.116.0.0/16', '40.117.0.0/16',
+					'40.118.0.0/16', '40.119.0.0/16', '104.214.0.0/16', '104.215.0.0/16'
+				],
+				verify_dns: true,
+				dns_suffix: 'openai.com',
+				category: BotCategory::AI_CRAWLER,
+				robots_txt_token: 'GPTBot',
+				default_action: BotAction::CHALLENGE,
+			),
+			'claude' => new BotDefinition(
+				id: 'claude',
+				name: 'Anthropic ClaudeBot',
+				user_agent_patterns: ['ClaudeBot', 'Claude-Web', 'anthropic-ai'],
+				host_patterns: ['anthropic.com'],
+				ip_ranges: [
+					'54.144.0.0/16', '54.145.0.0/16', '54.146.0.0/16', '54.147.0.0/16',
+					'54.148.0.0/16', '54.149.0.0/16', '54.150.0.0/16', '54.151.0.0/16'
+				],
+				verify_dns: true,
+				dns_suffix: 'anthropic.com',
+				category: BotCategory::AI_CRAWLER,
+				robots_txt_token: 'ClaudeBot',
+				default_action: BotAction::CHALLENGE,
+			),
+			'perplexity' => new BotDefinition(
+				id: 'perplexity',
+				name: 'PerplexityBot',
+				user_agent_patterns: ['PerplexityBot', 'Perplexity-User'],
+				host_patterns: ['perplexity.ai'],
+				ip_ranges: ['54.176.0.0/16', '54.177.0.0/16', '54.178.0.0/16'],
+				verify_dns: false,
+				category: BotCategory::AI_CRAWLER,
+				robots_txt_token: 'PerplexityBot',
+				default_action: BotAction::CHALLENGE,
+			),
+			'google_ai' => new BotDefinition(
+				id: 'google_ai',
+				name: 'Google AI (Vertex/Bard)',
+				user_agent_patterns: ['Google-Extended', 'VertexAI', 'Bard'],
+				host_patterns: ['google.com', 'googlebot.com'],
+				ip_ranges: [],
+				verify_dns: true,
+				dns_suffix: 'googlebot.com',
+				category: BotCategory::AI_CRAWLER,
+				robots_txt_token: 'Google-Extended',
+				default_action: BotAction::CHALLENGE,
+			),
+			'meta_ai' => new BotDefinition(
+				id: 'meta_ai',
+				name: 'Meta AI',
+				user_agent_patterns: ['Meta-ExternalAgent', 'Meta-ExternalFetcher'],
+				host_patterns: ['facebook.com'],
+				ip_ranges: [],
+				verify_dns: true,
+				dns_suffix: 'facebook.com',
+				category: BotCategory::AI_CRAWLER,
+				robots_txt_token: 'Meta-ExternalAgent',
+				default_action: BotAction::CHALLENGE,
+			),
+			'apple_ai' => new BotDefinition(
+				id: 'apple_ai',
+				name: 'Applebot-Extended',
+				user_agent_patterns: ['Applebot-Extended'],
+				host_patterns: ['apple.com'],
+				ip_ranges: [],
+				verify_dns: true,
+				dns_suffix: 'applebot.apple.com',
+				category: BotCategory::AI_CRAWLER,
+				robots_txt_token: 'Applebot-Extended',
+				default_action: BotAction::CHALLENGE,
+			),
+		];
+	}
+
+	public static function social_crawlers(): array
+	{
+		return [
+			'facebook' => new BotDefinition(
+				id: 'facebook',
+				name: 'Facebook Crawler',
+				user_agent_patterns: ['facebookexternalhit', 'FacebookBot', 'facebookcatalog'],
+				host_patterns: ['facebook.com', 'fbcdn.net'],
+				ip_ranges: [
+					'31.13.64.0/18', '45.64.40.0/22', '66.220.144.0/20', '69.63.176.0/20',
+					'69.171.224.0/19', '74.119.76.0/22', '103.4.96.0/22', '129.134.0.0/16',
+					'157.240.0.0/16', '173.252.64.0/18', '179.60.192.0/22', '185.60.216.0/22',
+				],
+				verify_dns: true,
+				dns_suffix: 'facebook.com',
+				category: BotCategory::SOCIAL_CRAWLER,
+			),
+			'twitter' => new BotDefinition(
+				id: 'twitter',
+				name: 'Twitter/X Bot',
+				user_agent_patterns: ['Twitterbot'],
+				host_patterns: ['twitter.com', 't.co'],
+				ip_ranges: ['104.244.42.0/24', '104.244.43.0/24', '199.16.156.0/22', '199.59.148.0/22'],
+				verify_dns: false,
+				category: BotCategory::SOCIAL_CRAWLER,
+			),
+			'linkedin' => new BotDefinition(
+				id: 'linkedin',
+				name: 'LinkedIn Bot',
+				user_agent_patterns: ['LinkedInBot'],
+				host_patterns: ['linkedin.com'],
+				ip_ranges: ['108.174.0.0/15'],
+				verify_dns: false,
+				category: BotCategory::SOCIAL_CRAWLER,
+			),
+			'discord' => new BotDefinition(
+				id: 'discord',
+				name: 'Discord Bot',
+				user_agent_patterns: ['Discordbot'],
+				host_patterns: ['discord.com', 'discordapp.com'],
+				ip_ranges: ['162.159.128.0/17'],
+				verify_dns: false,
+				category: BotCategory::SOCIAL_CRAWLER,
+			),
+			'slack' => new BotDefinition(
+				id: 'slack',
+				name: 'Slack Bot',
+				user_agent_patterns: ['Slackbot', 'Slackbot-LinkExpanding'],
+				host_patterns: ['slack.com'],
+				ip_ranges: ['52.11.0.0/16', '52.12.0.0/16', '52.24.0.0/15'],
+				verify_dns: false,
+				category: BotCategory::SOCIAL_CRAWLER,
+			),
+			'telegram' => new BotDefinition(
+				id: 'telegram',
+				name: 'Telegram Bot',
+				user_agent_patterns: ['TelegramBot'],
+				host_patterns: ['telegram.org'],
+				ip_ranges: ['149.154.160.0/20', '91.108.4.0/22'],
+				verify_dns: false,
+				category: BotCategory::SOCIAL_CRAWLER,
+			),
+			'whatsapp' => new BotDefinition(
+				id: 'whatsapp',
+				name: 'WhatsApp Bot',
+				user_agent_patterns: ['WhatsApp'],
+				host_patterns: ['whatsapp.net'],
+				ip_ranges: ['31.13.64.0/18', '157.240.0.0/16'],
+				verify_dns: false,
+				category: BotCategory::SOCIAL_CRAWLER,
+			),
+			'pinterest' => new BotDefinition(
+				id: 'pinterest',
+				name: 'Pinterest Bot',
+				user_agent_patterns: ['Pinterestbot'],
+				host_patterns: ['pinterest.com'],
+				ip_ranges: ['54.236.0.0/16'],
+				verify_dns: false,
+				category: BotCategory::SOCIAL_CRAWLER,
+			),
+			'reddit' => new BotDefinition(
+				id: 'reddit',
+				name: 'Reddit Bot',
+				user_agent_patterns: ['RedditBot'],
+				host_patterns: ['reddit.com'],
+				ip_ranges: ['151.101.0.0/16'],
+				verify_dns: false,
+				category: BotCategory::SOCIAL_CRAWLER,
+			),
+		];
+	}
+
+	public static function seo_crawlers(): array
+	{
+		return [
+			'semrush' => new BotDefinition(
+				id: 'semrush',
+				name: 'SemrushBot',
+				user_agent_patterns: ['SemrushBot'],
+				host_patterns: ['semrush.com'],
+				ip_ranges: [],
+				verify_dns: false,
+				category: BotCategory::SEO_CRAWLER,
+				robots_txt_token: 'SemrushBot',
+				default_action: BotAction::CHALLENGE,
+			),
+			'ahrefs' => new BotDefinition(
+				id: 'ahrefs',
+				name: 'AhrefsBot',
+				user_agent_patterns: ['AhrefsBot'],
+				host_patterns: ['ahrefs.com'],
+				ip_ranges: [],
+				verify_dns: false,
+				category: BotCategory::SEO_CRAWLER,
+				robots_txt_token: 'AhrefsBot',
+				default_action: BotAction::CHALLENGE,
+			),
+			'mj12' => new BotDefinition(
+				id: 'mj12',
+				name: 'MJ12bot',
+				user_agent_patterns: ['MJ12bot'],
+				host_patterns: ['mj12bot.com'],
+				ip_ranges: [],
+				verify_dns: false,
+				category: BotCategory::SEO_CRAWLER,
+				robots_txt_token: 'MJ12bot',
+				default_action: BotAction::CHALLENGE,
+			),
+			'dotbot' => new BotDefinition(
+				id: 'dotbot',
+				name: 'DotBot (Moz)',
+				user_agent_patterns: ['DotBot'],
+				host_patterns: ['dotbot.net', 'moz.com'],
+				ip_ranges: [],
+				verify_dns: false,
+				category: BotCategory::SEO_CRAWLER,
+				robots_txt_token: 'DotBot',
+				default_action: BotAction::CHALLENGE,
+			),
+			'petalbot' => new BotDefinition(
+				id: 'petalbot',
+				name: 'PetalBot (Huawei)',
+				user_agent_patterns: ['PetalBot'],
+				host_patterns: ['petalbot.com'],
+				ip_ranges: [],
+				verify_dns: false,
+				category: BotCategory::SEO_CRAWLER,
+				robots_txt_token: 'PetalBot',
+				default_action: BotAction::CHALLENGE,
+			),
+		];
+	}
+
+	public static function archive_crawlers(): array
+	{
+		return [
+			'commoncrawl' => new BotDefinition(
+				id: 'commoncrawl',
+				name: 'Common Crawl',
+				user_agent_patterns: ['CCBot'],
+				host_patterns: ['commoncrawl.org'],
+				ip_ranges: ['38.107.191.0/24'],
+				verify_dns: false,
+				category: BotCategory::ARCHIVE_CRAWLER,
+				robots_txt_token: 'CCBot',
+			),
+			'internet_archive' => new BotDefinition(
+				id: 'internet_archive',
+				name: 'Internet Archive',
+				user_agent_patterns: ['ia_archiver', 'archive.org_bot'],
+				host_patterns: ['archive.org'],
+				ip_ranges: ['207.241.224.0/19'],
+				verify_dns: false,
+				category: BotCategory::ARCHIVE_CRAWLER,
+				robots_txt_token: 'ia_archiver',
+			),
+		];
+	}
+
+	public static function monitoring(): array
+	{
+		return [
+			'uptimerobot' => new BotDefinition(
+				id: 'uptimerobot',
+				name: 'UptimeRobot',
+				user_agent_patterns: ['UptimeRobot'],
+				host_patterns: ['uptimerobot.com'],
+				ip_ranges: [],
+				verify_dns: false,
+				category: BotCategory::MONITORING,
+				default_action: BotAction::ALLOW,
+			),
+			'pingdom' => new BotDefinition(
+				id: 'pingdom',
+				name: 'Pingdom',
+				user_agent_patterns: ['Pingdom.com_bot'],
+				host_patterns: ['pingdom.com'],
+				ip_ranges: [],
+				verify_dns: false,
+				category: BotCategory::MONITORING,
+				default_action: BotAction::ALLOW,
+			),
+			'statuscake' => new BotDefinition(
+				id: 'statuscake',
+				name: 'StatusCake',
+				user_agent_patterns: ['StatusCake'],
+				host_patterns: ['statuscake.com'],
+				ip_ranges: [],
+				verify_dns: false,
+				category: BotCategory::MONITORING,
+				default_action: BotAction::ALLOW,
+			),
+		];
+	}
+}

@@ -60,6 +60,7 @@ class BadBehaviour
 
 		$this->install();
 
+		// Build request package
 		if ($server !== null) {
 			$package = RequestPackage::from_server_globals([
 				'reverse_proxy' => $this->config->reverse_proxy,
@@ -74,7 +75,7 @@ class BadBehaviour
 			]);
 		}
 
-		// === SKIP STATIC RESOURCES (NEW: uses skip_extensions + skip_paths) ===
+		// Skip static resources
 		if ($this->should_skip_static($package->request_uri)) {
 			return Result::allow($package);
 		}
@@ -96,9 +97,14 @@ class BadBehaviour
 		// Run detection pipeline
 		$result = $this->detect($package);
 
-		// Log result
+		// Always log blocked/challenged requests
+		// Only log allowed requests when verbose = true
 		if ($this->config->logging) {
-			$this->adapter->log_request($package, $result);
+			$should_log = !$result->is_allowed() || $this->config->verbose;
+
+			if ($should_log) {
+				$this->adapter->log_request($package, $result);
+			}
 		}
 
 		return $result;
@@ -109,20 +115,25 @@ class BadBehaviour
 		if ($this->should_skip_static($package->request_uri)) {
 			return Result::allow($package);
 		}
-
+		
 		$ja3 = HeaderUtil::get_ja3_fingerprint();
 		$h2 = HeaderUtil::get_h2_settings();
 		$package = $package->with_enrichment(null, null, $ja3, $h2);
-
+		
 		$result = $this->detect($package);
-
+		
+		// Same logging logic
 		if ($this->config->logging) {
-			$this->adapter->log_request($package, $result);
+			$should_log = !$result->is_allowed() || $this->config->verbose;
+			
+			if ($should_log) {
+				$this->adapter->log_request($package, $result);
+			}
 		}
-
+		
 		return $result;
 	}
-
+	
 	public function handle_result(Result $result): never
 	{
 		if ($result->is_allowed()) {

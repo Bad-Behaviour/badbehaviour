@@ -8,6 +8,7 @@ use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
 use BadBehaviour\Util\HeaderUtil;
+use BadBehaviour\Util\IpUtil;
 
 class BehavioralDetector
 {
@@ -27,6 +28,58 @@ class BehavioralDetector
 		$headers = $package->headers_mixed;
 		$method = $package->request_method;
 		$ua_browser = $package->ua_browser ?? '';
+
+		// === BROWSER-SPECIFIC CHECKS (Legacy: only for traditional requests) ===
+		$is_traditional_request = !$package->is_ajax()
+		&& !$package->is_json_body()
+		&& !$package->is_multipart_form()
+		&& $method === 'GET';
+
+		if ($is_traditional_request) {
+			// MSIE check - also check raw UA as fallback (legacy behavior)
+			$is_msie = stripos($ua, '; MSIE') !== false;
+			$is_ie_browser = $ua_browser === 'Internet Explorer';
+
+			if ($is_msie || $is_ie_browser) {
+				$result = $this->check_msie($package, $headers, $ua);
+				if ($result) return $result;
+			}
+			// Konqueror
+			elseif (stripos($ua, 'Konqueror') !== false) {
+				if ($result = $this->check_konqueror($package, $headers, $ua)) return $result;
+			}
+			// Opera
+			elseif (stripos($ua, 'Opera') !== false) {
+				if ($result = $this->check_opera($package, $headers)) return $result;
+			}
+			// Safari (not Chrome)
+			elseif (stripos($ua, 'Safari') !== false && stripos($ua, 'Chrome') === false) {
+				if ($result = $this->check_safari($package, $headers)) return $result;
+			}
+			// Lynx
+			elseif (stripos($ua, 'Lynx') !== false) {
+				if ($result = $this->check_lynx($package, $headers)) return $result;
+			}
+			// Mozilla at start (catch-all for other Mozilla-based)
+			elseif (stripos($ua, 'Mozilla') === 0) {
+				if ($result = $this->check_mozilla($package, $headers, $ua)) return $result;
+			}
+			// Fallback: if UA parser identified a known browser, check Accept header
+			elseif ($this->looks_like_browser($ua_browser)) {
+				if (empty($headers['Accept'])) {
+					return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept\' missing', $package, [
+						'type' => 'browser_no_accept',
+						'browser' => $ua_browser,
+					]);
+				}
+				if ($this->config->strict && empty($headers['Accept-Encoding'])) {
+					return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept-Encoding\' missing', $package, [
+						'type' => 'browser_no_encoding',
+						'browser' => $ua_browser,
+					]);
+				}
+			}
+		}
 
 		// === 1. SESSION-BASED BEHAVIORAL ANALYSIS ===
 		if ($session_id) {
@@ -55,7 +108,7 @@ class BehavioralDetector
 				$behavior['static_count']++;
 			}
 
-			$timespan = time() - $behavior['first_seen'];
+			$timespan = time() - ($behavior['first_seen'] ?? time());
 
 			if ($behavior['count'] > 100 && $timespan < 60) {
 				return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Rapid requests detected', $package, [
@@ -79,10 +132,11 @@ class BehavioralDetector
 				]);
 			}
 
-			if ($behavior['total_count'] > 20 && $behavior['static_count'] / $behavior['total_count'] < 0.1) {
+			$total = $behavior['total_count'] ?? 1;
+			if ($total > 20 && ($behavior['static_count'] ?? 0) / $total < 0.1) {
 				return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'No static resources requested', $package, [
 					'type' => 'no_static',
-					'ratio' => $behavior['static_count'] / $behavior['total_count'],
+					'ratio' => ($behavior['static_count'] ?? 0) / $total,
 				]);
 			}
 
@@ -96,7 +150,6 @@ class BehavioralDetector
 		}
 
 		// === 2. FORM TIMING CHECK (Legacy: think time between form load and submit) ===
-		// Only for traditional form POSTs (not AJAX, not JSON, not multipart)
 		if ($method === 'POST' && $package->is_traditional_form_post() && $session_id) {
 			$behavior = $this->adapter->get_behavior_profile($session_id) ?? [];
 			$form_load_time = $behavior['form_load_time'] ?? 0;
@@ -104,7 +157,6 @@ class BehavioralDetector
 			if ($form_load_time > 0) {
 				$think_time = time() - $form_load_time;
 
-				// Less than 2 seconds = too fast for human form submission
 				if ($think_time < 2) {
 					return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'POST too fast after form load', $package, [
 						'type' => 'too_fast_post',
@@ -115,7 +167,6 @@ class BehavioralDetector
 		}
 
 		// === 3. RECORD FORM LOAD TIME ON GET REQUESTS ===
-		// Heuristic: pages that typically contain forms
 		if ($method === 'GET' && $session_id) {
 			$path = parse_url($package->request_uri, PHP_URL_PATH) ?? '';
 			$has_form = str_contains($path, 'edit')
@@ -133,43 +184,46 @@ class BehavioralDetector
 			}
 		}
 
-		// === 4. ACCEPT HEADER CHECKS (Legacy: only for verified traditional browsers) ===
-		$accepts_html = isset($headers['Accept']) && str_contains($headers['Accept'], 'text/html');
-		$is_ajax = $package->is_ajax();
-		$is_json = $package->is_json_body();
-		$is_multipart = $package->is_multipart_form();
+		// === 4. ACCEPT HEADER CHECKS (Legacy: only for traditional browser page loads) ===
+		if ($is_traditional_request && $this->looks_like_browser($ua_browser)) {
+			if (empty($headers['Accept'])) {
+				return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept\' missing', $package, [
+					'type' => 'browser_no_accept',
+					'browser' => $ua_browser,
+				]);
+			}
 
-		// Only enforce for traditional browser page loads
-		$is_traditional_browser =
-			$this->looks_like_browser($ua_browser)
-			&& !$is_ajax
-			&& !$is_json
-			&& !$is_multipart
-			&& $accepts_html;
-
-		if ($is_traditional_browser && empty($headers['Accept'])) {
-			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Browser missing Accept header', $package, [
-				'type' => 'browser_no_accept',
-				'browser' => $ua_browser,
-			]);
+			// Accept-Encoding only in strict mode
+			if ($this->config->strict && empty($headers['Accept-Encoding'])) {
+				return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept-Encoding\' missing', $package, [
+					'type' => 'browser_no_encoding',
+					'browser' => $ua_browser,
+				]);
+			}
 		}
 
-		// Accept-Encoding only in strict mode + traditional browser
-		if ($this->config->strict && $is_traditional_browser && empty($headers['Accept-Encoding'])) {
-			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Browser missing Accept-Encoding', $package, [
-				'type' => 'browser_no_encoding',
-				'browser' => $ua_browser,
-			]);
+		// === 5. REFERER CHECKS (Legacy: only for traditional form POSTs) ===
+		if ($method === 'POST' && $package->is_traditional_form_post()) {
+			if (!isset($headers['Referer']) || empty($headers['Referer'])) {
+				return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Header \'Referer\' present but blank', $package, [
+					'type' => 'empty_referer',
+				]);
+			}
+			if (!str_contains($headers['Referer'], ':')) {
+				return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Header \'Referer\' is corrupt', $package, [
+					'type' => 'relative_referer',
+				]);
+			}
 		}
 
-		// === 5. DNT CONTRADICTION ===
+		// === 6. DNT CONTRADICTION ===
 		if (($headers['Dnt'] ?? '') === '1' && $this->has_tracking_params($package->request_uri)) {
 			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'DNT header with tracking params', $package, [
 				'type' => 'dnt_contradiction',
 			]);
 		}
 
-		// === 6. CONNECTION HEADER CONFLICTS ===
+		// === 7. CONNECTION HEADER CONFLICTS ===
 		if (!empty($headers['Connection'])) {
 			$conn = strtolower($headers['Connection']);
 			if (str_contains($conn, 'keep-alive') && str_contains($conn, 'close')) {
@@ -216,7 +270,7 @@ class BehavioralDetector
 				]);
 			}
 			foreach ($ips as $xff_ip) {
-				if (\BadBehaviour\Util\IpUtil::is_private($xff_ip) && !$package->behind_proxy) {
+				if (IpUtil::is_private($xff_ip) && !$package->behind_proxy) {
 					return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Private IP in X-Forwarded-For', $package, [
 						'type' => 'xff_private',
 					]);
@@ -233,6 +287,80 @@ class BehavioralDetector
 
 		return null;
 	}
+
+	// === BROWSER-SPECIFIC CHECK METHODS ===
+
+	private function check_msie(RequestPackage $package, array $headers, string $ua): ?Result
+	{
+		if (!isset($headers['Accept'])) {
+			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept\' missing', $package);
+		}
+
+		if (str_contains($ua, 'Windows ME')
+			|| str_contains($ua, 'Windows XP')
+			|| str_contains($ua, 'Windows 2000')
+			|| str_contains($ua, 'Win32')) {
+			return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'User-Agent claimed to be MSIE, with invalid Windows version', $package);
+		}
+
+		if (!isset($headers['Akamai-Origin-Hop'])
+			&& !str_contains($ua, 'IEMobile')
+			&& preg_match('/\bTE\b/i', $headers['Connection'] ?? '')) {
+			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Connection: TE present, not supported by MSIE', $package);
+		}
+
+		return null;
+	}
+
+	private function check_konqueror(RequestPackage $package, array $headers, string $ua): ?Result
+	{
+		if (stripos($ua, 'YahooSeeker/CafeKelsa') !== false
+			&& IpUtil::match_cidr($package->ip, '209.73.160.0/19')) {
+			return null;
+		}
+		if (!isset($headers['Accept'])) {
+			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept\' missing', $package);
+		}
+		return null;
+	}
+
+	private function check_opera(RequestPackage $package, array $headers): ?Result
+	{
+		if (!isset($headers['Accept'])) {
+			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept\' missing', $package);
+		}
+		return null;
+	}
+
+	private function check_safari(RequestPackage $package, array $headers): ?Result
+	{
+		if (!isset($headers['Accept'])) {
+			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept\' missing', $package);
+		}
+		return null;
+	}
+
+	private function check_lynx(RequestPackage $package, array $headers): ?Result
+	{
+		if (!isset($headers['Accept'])) {
+			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept\' missing', $package);
+		}
+		return null;
+	}
+
+	private function check_mozilla(RequestPackage $package, array $headers, string $ua): ?Result
+	{
+		if (str_contains($ua, 'Google Desktop')
+			|| str_contains($ua, 'PLAYSTATION 3')) {
+			return null;
+		}
+		if (!isset($headers['Accept'])) {
+			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Required header \'Accept\' missing', $package);
+		}
+		return null;
+	}
+
+	// === HELPER METHODS ===
 
 	private function is_static_resource(string $uri): bool
 	{
@@ -266,11 +394,6 @@ class BehavioralDetector
 	private function looks_like_browser(string $ua_browser): bool
 	{
 		return in_array($ua_browser, ['Chrome', 'Firefox', 'Safari', 'Edge', 'Opera', 'Internet Explorer'], true);
-	}
-
-	private function looks_like_modern_browser(string $ua_browser): bool
-	{
-		return in_array($ua_browser, ['Chrome', 'Edge', 'Brave', 'Vivaldi', 'Opera', 'Chromium', 'Firefox', 'Safari'], true);
 	}
 
 	private function has_tracking_params(string $uri): bool

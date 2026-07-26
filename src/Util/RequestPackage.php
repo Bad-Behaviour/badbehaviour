@@ -185,21 +185,31 @@ readonly class RequestPackage
 			array $entity = []
 			): self {
 				$ua_parsed = UaParser::parse($user_agent);
-				$headers_mixed = HeaderUtil::normalize_keys($headers);
 
-				// Add default headers if not present
-				$headers_mixed = array_merge([
+				// Don't auto-add defaults if explicitly provided (even if empty)
+				$defaults = [
 					'User-Agent' => $user_agent,
 					'Accept' => 'text/html',
 					'Accept-Language' => 'en-US',
 					'Accept-Encoding' => 'gzip, deflate',
 					'Connection' => 'keep-alive',
 					'Host' => 'example.com',
-				], $headers_mixed);
+				];
+
+				// Only apply defaults for keys NOT in $headers
+				$headers_mixed = $defaults;
+				foreach ($headers as $k => $v) {
+					$normalized_key = HeaderUtil::normalize_key($k);
+					if ($v === '') {
+						unset($headers_mixed[$normalized_key]);  // Allow explicit empty to remove
+					} else {
+						$headers_mixed[$normalized_key] = $v;
+					}
+				}
 
 				return new self(
 					ip: $ip,
-					headers: $headers,
+					headers: [],
 					headers_mixed: $headers_mixed,
 					request_method: $method,
 					request_uri: $uri,

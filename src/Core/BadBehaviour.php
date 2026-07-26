@@ -168,34 +168,38 @@ class BadBehaviour
 			return $result;
 		}
 
-		// 3. Known Bots (Search, AI, Social, SEO, Archive, Monitoring)
+		// 3. Known Bots (verified search engines/AI BYPASS ALL)
 		if ($result = $this->bot_detector->detect($package)) {
 			return $result;
 		}
 
-		// 4. Blacklist (Malicious UA, Attack Patterns) - BEFORE Fingerprint & DNSBL
+		// 4. Blacklist (malicious UA, URL attacks, form body)
 		if ($result = $this->blacklist_detector->detect($package)) {
 			return $result;
 		}
 
-		// 5. Fingerprint Analysis - AFTER Blacklist
-		if ($this->config->enable_fingerprinting && $result = $this->fingerprint_detector->detect($package)) {
+		// 5. Behavioral (rate anomalies, rotating UA, think time, headers)
+		if ($result = $this->behavioral_detector->detect($package)) {
 			return $result;
 		}
 
-		// 6. DNSBL / http:BL - AFTER Fingerprint
-		if ($result = $this->dnsbl_detector->detect($package)) {
-			return $result;
-		}
-
-		// 7. Behavioral Analysis
-		if ($this->config->enable_behavioral_analysis && $result = $this->behavioral_detector->detect($package)) {
-			return $result;
-		}
-
-		// 8. Rate Limiting
+		// 6. Rate limiting
 		if ($result = $this->rate_limit_detector->detect($package)) {
 			return $result;
+		}
+
+		// 7. DNSBL / http:BL (LAST - opt-in, can be slow, false positives)
+		if ($this->config->dnsbl_enabled ?? false) {  // DEFAULT FALSE
+			if ($result = $this->dnsbl_detector->detect($package)) {
+				return $result;
+			}
+		}
+
+		// 8. Fingerprinting (opt-in)
+		if ($this->config->enable_fingerprinting) {
+			if ($result = $this->fingerprint_detector->detect($package)) {
+				return $result;
+			}
 		}
 
 		return Result::allow($package);

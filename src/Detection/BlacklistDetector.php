@@ -11,7 +11,6 @@ class BlacklistDetector
 {
 	private Configuration $config;
 
-	// Prefixes that indicate malicious bots (legitimate tools like curl/wget REMOVED)
 	private const MALICIOUS_PREFIXES = [
 		'sqlmap', 'nmap', 'nikto', 'nessus', 'openvas', 'acunetix', 'w3af', 'skipfish',
 		'havij', 'pangolin', 'safe3', 'bsqlbf', 'sqlninja', 'thesqlinjector',
@@ -37,7 +36,6 @@ class BlacklistDetector
 		'onyphe', 'spyse', 'criminalip',
 	];
 
-	// Substrings that indicate malicious intent
 	private const MALICIOUS_SUBSTRINGS = [
 		'<script', 'alert(', 'onerror=', 'onload=', 'eval(', 'document.',
 		'union select', 'select * from', 'insert into', 'drop table',
@@ -54,7 +52,6 @@ class BlacklistDetector
 		'dridex', 'zeus', 'gozi', 'ramnit', 'ursnif', 'dana bot',
 	];
 
-	// URL patterns for SQLi, XSS, path traversal, etc.
 	private const URL_PATTERNS = [
 		'/union\s+all\s+select/i',
 		'/union\s+select/i',
@@ -168,7 +165,6 @@ class BlacklistDetector
 		'/w00tw00t/i',
 	];
 
-	// UA regex patterns for suspicious patterns
 	private const UA_REGEX = [
 		'/^[a-z0-9]{20,}$/i',
 		'/mozilla\/(\d{2,})\.0/i',
@@ -199,7 +195,7 @@ class BlacklistDetector
 			return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'Empty or invalid User-Agent', $package);
 		}
 
-		// UA parser detected bot - check this FIRST
+		// UA parser detected bot
 		if ($package->ua_is_bot) {
 			return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'Bot detected by UA parser', $package, [
 				'device_type' => $package->ua_device,
@@ -207,11 +203,9 @@ class BlacklistDetector
 			]);
 		}
 
-		// === SKIP PREFIX/SUBSTRING CHECKS FOR HTTP TOOLS (curl, wget, etc.) ===
-		// These are legitimate tools, not bots
+		// Skip prefix/substring checks for HTTP tools
 		$is_http_tool = $package->is_http_tool();
 
-		// Prefix matches (only if NOT an HTTP tool)
 		if (!$is_http_tool) {
 			foreach (self::MALICIOUS_PREFIXES as $prefix) {
 				if (str_starts_with($ua_lower, $prefix) ||
@@ -219,10 +213,7 @@ class BlacklistDetector
 					return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, "Malicious UA prefix: $prefix", $package);
 				}
 			}
-		}
 
-		// Substring matches (only if NOT an HTTP tool)
-		if (!$is_http_tool) {
 			foreach (self::MALICIOUS_SUBSTRINGS as $substr) {
 				if (stripos($ua, $substr) !== false) {
 					return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, "Malicious UA substring: $substr", $package);
@@ -230,14 +221,13 @@ class BlacklistDetector
 			}
 		}
 
-		// Regex matches (apply to all - these are structural patterns)
 		foreach (self::UA_REGEX as $pattern) {
 			if (preg_match($pattern, $ua)) {
 				return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, "Malicious UA pattern", $package);
 			}
 		}
 
-		// URL patterns (apply to all - these are attack payloads in URL)
+		// URL patterns (normalized)
 		$normalized_uri = urldecode($uri);
 		foreach (self::URL_PATTERNS as $pattern) {
 			if (preg_match($pattern, $normalized_uri)) {
@@ -245,17 +235,17 @@ class BlacklistDetector
 			}
 		}
 
-		// Request body for POST/PUT/PATCH - ONLY for form data
+		// Request body - ONLY for form data
 		if (in_array($method, ['POST', 'PUT', 'PATCH'], true) && !empty($package->request_entity)) {
 			$content_type = $headers['Content-Type'] ?? '';
-			$is_json = str_contains($content_type, 'application/json');
-			$is_multipart = str_starts_with($content_type, 'multipart/form-data');
-			$is_form = str_contains($content_type, 'application/x-www-form-urlencoded');
+			$content_type_lower = strtolower($content_type);
 
-			// Skip JSON and multipart (legacy never inspected these)
-			if ($is_json || $is_multipart) {
-				// Do nothing
-			} elseif ($is_form) {
+			$is_json = str_contains($content_type_lower, 'application/json');
+			$is_multipart = str_starts_with($content_type_lower, 'multipart/form-data');
+			$is_form = str_contains($content_type_lower, 'application/x-www-form-urlencoded');
+
+			// Debug: log content type for testing
+			if ($is_form) {
 				$entity = $package->request_entity;
 
 				// Trackback detection
@@ -273,10 +263,22 @@ class BlacklistDetector
 					}
 				}
 
-				// Offsite forms check
+				// Offsite forms
 				if (!$this->config->offsite_forms && isset($headers['Referer'])) {
 					if ($this->is_offsite_form($headers, $package)) {
 						return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, 'Offsite form submission', $package);
+					}
+				}
+
+				// Attack patterns in form values
+				foreach ($entity as $key => $value) {
+					$value_str = is_string($value) ? $value : (is_array($value) ? json_encode($value) : '');
+					$normalized_value = urldecode($value_str);
+
+					foreach (self::URL_PATTERNS as $pattern) {
+						if (preg_match($pattern, $normalized_value)) {
+							return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Attack pattern in request body", $package);
+						}
 					}
 				}
 			}
@@ -289,18 +291,15 @@ class BlacklistDetector
 	{
 		$ua = $headers['User-Agent'] ?? '';
 
-		// Browser sending trackback?
 		if ($this->looks_like_browser($this->parse_browser($ua))) {
 			return true;
 		}
 
-		// Proxy headers present?
 		if (isset($headers['Via']) || isset($headers['Max-Forwards'])
 			|| isset($headers['X-Forwarded-For']) || isset($headers['Client-Ip'])) {
 			return true;
 		}
 
-		// WordPress trackback without charset
 		if (stripos($ua, 'WordPress/') !== false) {
 			$ct = $headers['Content-Type'] ?? '';
 			if (!str_contains($ct, 'charset=')) {
@@ -335,7 +334,6 @@ class BlacklistDetector
 
 	private function parse_browser(string $ua): string
 	{
-		// Quick browser detection for trackback check
 		if (stripos($ua, 'Edg/') !== false) return 'Edge';
 		if (stripos($ua, 'OPR/') !== false || stripos($ua, 'Opera/') !== false) return 'Opera';
 		if (stripos($ua, 'Brave/') !== false) return 'Brave';

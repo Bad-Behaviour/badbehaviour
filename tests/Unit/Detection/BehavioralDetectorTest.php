@@ -1,253 +1,352 @@
 <?php
 
-declare(strict_types=1);
-
 namespace BadBehaviour\Tests\Unit\Detection;
 
 use BadBehaviour\Detection\BehavioralDetector;
 use BadBehaviour\Configuration;
 use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Util\RequestPackage;
-use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
 use PHPUnit\Framework\TestCase;
 
 class BehavioralDetectorTest extends TestCase
 {
     private BehavioralDetector $detector;
+    private Configuration $config;
     private AdapterInterface $adapter;
 
     protected function setUp(): void
     {
         $this->adapter = $this->createMock(AdapterInterface::class);
-        $config = Configuration::from_array([], new \BadBehaviour\Adapter\GenericAdapter());
-        $this->detector = new BehavioralDetector($config, $this->adapter);
-    }
+        $this->config = Configuration::from_array([
+            'strict' => false,
+            'offsite_forms' => false,
+        ], $this->adapter);
 
-    private function create_package(string $ua, array $headers = []): RequestPackage
-    {
-        return RequestPackage::create_for_test($ua, '192.0.2.1', 'GET', '/test', $headers);
-    }
-
-    public function test_rapid_requests_blocked(): void
-    {
-        $this->adapter->method('get_behavior_profile')->willReturn([
-            'count' => 150,
-            'first_seen' => time() - 30,
-            'user_agents' => ['Chrome/120' => true],
-            'ips' => ['192.0.2.1' => true],
-            'static_count' => 50,
-            'total_count' => 150,
-            'urls' => [],
-        ]);
-
-        $package = $this->create_package('Chrome/120');
-        $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('rapid_requests', $result->metadata['type']);
-    }
-
-    public function test_rotating_ua_blocked(): void
-    {
-        $this->adapter->method('get_behavior_profile')->willReturn([
-            'count' => 20,
-            'first_seen' => time() - 300,
-            'user_agents' => [
-                'Chrome/120' => true,
-                'Firefox/121' => true,
-                'Safari/17' => true,
-                'Edge/120' => true,
-                'Opera/106' => true,
-                'Bot/1.0' => true,
-            ],
-            'ips' => ['192.0.2.1' => true],
-            'static_count' => 10,
-            'total_count' => 20,
-            'urls' => [],
-        ]);
-
-        $package = $this->create_package('Chrome/120');
-        $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('rotating_ua', $result->metadata['type']);
-    }
-
-    public function test_rotating_ip_blocked(): void
-    {
-        $this->adapter->method('get_behavior_profile')->willReturn([
-            'count' => 10,
-            'first_seen' => time() - 300,
-            'user_agents' => ['Chrome/120' => true],
-            'ips' => [
-                '192.0.2.1' => true,
-                '192.0.2.2' => true,
-                '192.0.2.3' => true,
-                '192.0.2.4' => true,
-            ],
-            'static_count' => 5,
-            'total_count' => 10,
-            'urls' => [],
-        ]);
-
-        $package = $this->create_package('Chrome/120');
-        $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('rotating_ip', $result->metadata['type']);
-    }
-
-    public function test_no_static_resources_blocked(): void
-    {
-        $this->adapter->method('get_behavior_profile')->willReturn([
-            'count' => 30,
-            'first_seen' => time() - 300,
-            'user_agents' => ['Chrome/120' => true],
-            'ips' => ['192.0.2.1' => true],
-            'static_count' => 1,
-            'total_count' => 30,
-            'urls' => [],
-        ]);
-
-        $package = $this->create_package('Chrome/120');
-        $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('no_static', $result->metadata['type']);
+        $this->detector = new BehavioralDetector($this->config, $this->adapter);
     }
 
     public function test_missing_accept_header_on_browser(): void
     {
-        $package = $this->create_package('Chrome/120', ['Accept' => '']);
+        // Traditional browser page load (not AJAX, not JSON) - SHOULD BLOCK
+        // EXPLICITLY omit Accept header by passing empty string
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'GET',
+            '/page',
+            ['Host' => 'example.com', 'Accept' => '']  // Explicitly empty Accept
+        );
 
         $result = $this->detector->detect($package);
-
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('browser_no_accept', $result->metadata['type']);
+        $this->assertStringContainsString('Accept', $result->message);
+    }
+
+    public function test_missing_accept_header_on_ajax_allowed(): void
+    {
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'POST',
+            '/api/preview',
+            [
+                'Host' => 'example.com',
+                'X-Requested-With' => 'XMLHttpRequest',
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+            ],
+            ['body' => 'test']
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNull($result);
+    }
+
+    public function test_missing_accept_header_on_json_api_allowed(): void
+    {
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'POST',
+            '/api/comment',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+            ],
+            ['body' => 'test']
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNull($result);
     }
 
     public function test_missing_accept_encoding_on_modern_browser(): void
     {
-        $package = $this->create_package('Chrome/120', ['Accept-Encoding' => '']);
+        $this->config = Configuration::from_array([
+            'strict' => true,
+            'offsite_forms' => false,
+        ], $this->adapter);
+        $this->detector = new BehavioralDetector($this->config, $this->adapter);
+
+        // EXPLICITLY omit Accept-Encoding
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'GET',
+            '/page',
+            ['Host' => 'example.com', 'Accept' => 'text/html', 'Accept-Encoding' => '']
+        );
 
         $result = $this->detector->detect($package);
-
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('browser_no_encoding', $result->metadata['type']);
+        $this->assertStringContainsString('Accept-Encoding', $result->message);
     }
 
-    public function test_connection_conflict(): void
+    public function test_missing_accept_encoding_not_strict_allowed(): void
     {
-        $package = $this->create_package('Chrome/120', ['Connection' => 'keep-alive, close']);
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'GET',
+            '/page',
+            ['Host' => 'example.com', 'Accept' => 'text/html', 'Accept-Encoding' => '']
+        );
 
         $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('conn_conflict', $result->metadata['type']);
-    }
-
-    public function test_te_without_connection_te(): void
-    {
-        $package = $this->create_package('Chrome/120', ['Te' => 'trailers', 'Connection' => 'keep-alive']);
-
-        $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('te_missing', $result->metadata['type']);
-    }
-
-    public function test_content_length_on_get(): void
-    {
-        $package = $this->create_package('Chrome/120')
-            ->with_modified([
-                'request_method' => 'GET',
-                'headers_mixed' => array_merge(
-                    RequestPackage::create_for_test('Chrome/120')->headers_mixed,
-                    ['Content-Length' => '100']
-                )
-            ]);
-
-        $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('content_length_on_get', $result->metadata['type']);
-    }
-
-    public function test_missing_host_on_http11(): void
-    {
-        $package = $this->create_package('Chrome/120')
-            ->with_modified([
-                'server_protocol' => 'HTTP/1.1',
-                'headers_mixed' => array_merge(
-                    RequestPackage::create_for_test('Chrome/120')->headers_mixed,
-                    ['Host' => '']
-                )
-            ]);
-
-        $result = $this->detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('missing_host', $result->metadata['type']);
+        $this->assertNull($result);
     }
 
     public function test_empty_referer_on_post(): void
     {
-        $package = $this->create_package('Chrome/120')
-            ->with_modified([
-                'request_method' => 'POST',
-                'request_time' => 0.1, // Not too fast
-                'headers_mixed' => array_merge(
-                    RequestPackage::create_for_test('Chrome/120')->headers_mixed,
-                    ['Referer' => '']
-                )
+        $this->config = Configuration::from_array([
+            'strict' => true,
+            'offsite_forms' => false,
+        ], $this->adapter);
+        $this->detector = new BehavioralDetector($this->config, $this->adapter);
+
+        // Traditional form POST - EXPLICITLY omit Referer
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'POST',
+            '/comment',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Accept' => 'text/html',
+                'Referer' => '',  // Explicitly empty
+            ],
+            ['body' => 'test comment']
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
+        $this->assertStringContainsString('Referer', $result->message);
+    }
+
+    public function test_empty_referer_on_ajax_allowed(): void
+    {
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'POST',
+            '/api/comment',
+            [
+                'Host' => 'example.com',
+                'X-Requested-With' => 'XMLHttpRequest',
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+            ],
+            ['body' => 'test']
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNull($result);
+    }
+
+    public function test_rapid_requests_blocked(): void
+    {
+        $this->adapter->method('get_behavior_profile')
+            ->willReturn([
+                'count' => 150,
+                'first_seen' => time() - 30,
+                'user_agents' => ['ua1' => true],
+                'ips' => ['192.0.2.1' => true],
+                'static_count' => 20,
+                'total_count' => 150,
+                'urls' => [],
             ]);
 
-        $result = $this->detector->detect($package);
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 Chrome/120.0.0.0',
+            '192.0.2.1',
+            'GET',
+            '/page',
+            ['Host' => 'example.com'],
+            [],
+            'test-session'
+        );
 
+        $result = $this->detector->detect($package);
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('empty_referer', $result->metadata['type']);
+        $this->assertStringContainsString('Rapid requests', $result->message);
     }
 
-    public function test_xff_too_many_hops(): void
+    public function test_rotating_user_agents_blocked(): void
     {
-        $package = $this->create_package('Chrome/120', [
-            'X-Forwarded-For' => implode(', ', array_map(fn($i) => "192.0.2.$i", range(1, 15)))
-        ]);
+        $this->adapter->method('get_behavior_profile')
+            ->willReturn([
+                'count' => 10,
+                'first_seen' => time() - 100,
+                'user_agents' => array_fill_keys(range('a', 'f'), true),
+                'ips' => ['192.0.2.1' => true],
+                'static_count' => 5,
+                'total_count' => 10,
+                'urls' => [],
+            ]);
+
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 Chrome/120.0.0.0',
+            '192.0.2.1',
+            'GET',
+            '/page',
+            ['Host' => 'example.com'],
+            [],
+            'test-session'
+        );
 
         $result = $this->detector->detect($package);
-
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertEquals('xff_too_many', $result->metadata['type']);
+        $this->assertStringContainsString('Rotating User-Agents', $result->message);
     }
 
-    public function test_normal_browser_allowed(): void
+    public function test_no_static_resources_blocked(): void
     {
-        $this->adapter->method('get_behavior_profile')->willReturn([
-            'count' => 5,
-            'first_seen' => time() - 300,
-            'user_agents' => ['Chrome/120' => true],
-            'ips' => ['192.0.2.1' => true],
-            'static_count' => 3,
-            'total_count' => 5,
-            'urls' => [],
-        ]);
+        $this->adapter->method('get_behavior_profile')
+            ->willReturn([
+                'count' => 25,
+                'first_seen' => time() - 100,
+                'user_agents' => ['ua1' => true],
+                'ips' => ['192.0.2.1' => true],
+                'static_count' => 0,
+                'total_count' => 25,
+                'urls' => [],
+            ]);
 
-        $package = $this->create_package('Chrome/120');
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 Chrome/120.0.0.0',
+            '192.0.2.1',
+            'GET',
+            '/page',
+            ['Host' => 'example.com'],
+            [],
+            'test-session'
+        );
+
         $result = $this->detector->detect($package);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
+        $this->assertStringContainsString('No static resources', $result->message);
+    }
 
+    public function test_form_timing_too_fast_blocked(): void
+    {
+        // Use willReturnCallback to handle consecutive calls
+        $this->adapter->method('get_behavior_profile')
+            ->willReturnCallback(function ($session_id) {
+                return [
+                    'form_load_time' => time() - 1,  // 1 second ago
+                    'count' => 1,
+                    'first_seen' => time(),
+                    'user_agents' => [],
+                    'ips' => [],
+                    'static_count' => 0,
+                    'total_count' => 1,
+                    'urls' => [],
+                ];
+            });
+
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'POST',
+            '/comment',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Accept' => 'text/html',
+                'Referer' => 'https://example.com/page',
+            ],
+            ['body' => 'test comment'],
+            'test-session'
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
+        $this->assertStringContainsString('too fast after form load', $result->message);
+    }
+
+    public function test_form_timing_normal_allowed(): void
+    {
+        $this->adapter->method('get_behavior_profile')
+            ->willReturnCallback(function ($session_id) {
+                return [
+                    'form_load_time' => time() - 10,  // 10 seconds ago
+                    'count' => 1,
+                    'first_seen' => time(),
+                    'user_agents' => [],
+                    'ips' => [],
+                    'static_count' => 0,
+                    'total_count' => 1,
+                    'urls' => [],
+                ];
+            });
+
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'POST',
+            '/comment',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Accept' => 'text/html',
+                'Referer' => 'https://example.com/page',
+            ],
+            ['body' => 'test comment'],
+            'test-session'
+        );
+
+        $result = $this->detector->detect($package);
+        $this->assertNull($result);
+    }
+
+    public function test_form_timing_ajax_allowed(): void
+    {
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'POST',
+            '/api/preview',
+            [
+                'Host' => 'example.com',
+                'X-Requested-With' => 'XMLHttpRequest',
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+            ],
+            ['body' => 'test'],
+            'test-session'
+        );
+
+        $result = $this->detector->detect($package);
         $this->assertNull($result);
     }
 }

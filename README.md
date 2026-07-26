@@ -228,15 +228,16 @@ strict_ai = false
 
 [rate_limits]
 enabled = true
-global_requests = 1000
-global_window = 3600
-per_minute_requests = 60
-per_minute_window = 60
-post_requests = 30
-post_window = 3600
-login_requests = 10
-login_window = 900
+global.requests = 1000
+global.window = 3600
+per_minute.requests = 60
+per_minute.window = 60
+post.requests = 30
+post.window = 3600
+login.requests = 10
+login.window = 900
 ```
+> **Note**: The parser automatically converts all formats (dot notation, arrays, comma-separated) to the nested array structure expected by the code. Use whichever style you prefer — they're interchangeable.
 
 ### Core Settings (`[core]`)
 

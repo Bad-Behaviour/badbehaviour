@@ -28,15 +28,16 @@ strict_ai = false
 
 [rate_limits]
 enabled = true
-global_requests = 1000
-global_window = 3600
-per_minute_requests = 60
-per_minute_window = 60
-post_requests = 30
-post_window = 3600
-login_requests = 10
-login_window = 900
+global.requests = 1000
+global.window = 3600
+per_minute.requests = 60
+per_minute.window = 60
+post.requests = 30
+post.window = 3600
+login.requests = 10
+login.window = 900
 ```
+> **Note**: The parser automatically converts all formats (dot notation, arrays, comma-separated) to the nested array structure expected by the code. Use whichever style you prefer — they're interchangeable.
 
 ---
 
@@ -107,14 +108,14 @@ login_window = 900
 | Setting | Type | Default | Risk | Tuning |
 |---------|------|---------|------|--------|
 | `enabled` | bool | `true` | **LOW** | Keep enabled |
-| `global_requests` | int | `1000` | **LOW** | Per IP per `global_window` |
-| `global_window` | int | `3600` | — | Seconds (1 hour) |
-| `per_minute_requests` | int | `60` | **LOW** | Burst protection |
-| `per_minute_window` | int | `60` | — | Seconds |
-| `post_requests` | int | `30` | **LOW** | Form spam protection |
-| `post_window` | int | `3600` | — | Seconds (1 hour) |
-| `login_requests` | int | `10` | **LOW** | Brute force protection |
-| `login_window` | int | `900` | — | Seconds (15 min) |
+| `global.requests` | int | `1000` | **LOW** | Per IP per `global_window` |
+| `global.window` | int | `3600` | — | Seconds (1 hour) |
+| `per_minute.requests` | int | `60` | **LOW** | Burst protection |
+| `per_minute.window` | int | `60` | — | Seconds |
+| `post.requests` | int | `30` | **LOW** | Form spam protection |
+| `post.window` | int | `3600` | — | Seconds (1 hour) |
+| `login.requests` | int | `10` | **LOW** | Brute force protection |
+| `login.window` | int | `900` | — | Seconds (15 min) |
 
 **Login endpoint detection**: Automatically triggers on URLs matching `/(login|signin|auth|password)/i`.
 

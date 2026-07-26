@@ -504,14 +504,14 @@ Multi-tier rate limiting with adapter-backed storage:
 ```ini
 [rate_limits]
 enabled = true
-global_requests = 1000      ; per hour
-global_window = 3600
-per_minute_requests = 60
-per_minute_window = 60
-post_requests = 30          ; per hour
-post_window = 3600
-login_requests = 10         ; per 15 min
-login_window = 900
+global.requests = 1000      ; per hour
+global.window = 3600
+per_minute.requests = 60
+per_minute.window = 60
+post.requests = 30          ; per hour
+post.window = 3600
+login.requests = 10         ; per 15 min
+login.window = 900
 ```
 
 ---

@@ -65,9 +65,6 @@ class FingerprintDetector
 			]);
 		}
 
-		// REMOVED: Browser header order mismatch check (causing false positives)
-		// REMOVED: Engine mismatch check (causing false positives)
-
 		return null;
 	}
 }

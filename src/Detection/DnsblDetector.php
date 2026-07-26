@@ -6,7 +6,7 @@ use BadBehaviour\Configuration;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
-use BadBehaviour\Util\IpUtil;  // ADD THIS IMPORT
+use BadBehaviour\Util\IpUtil;
 
 class DnsblDetector
 {

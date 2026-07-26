@@ -4,6 +4,7 @@ namespace BadBehaviour\Adapter;
 
 use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Core\Interfaces\CacheInterface;
+use BadBehaviour\Util\ConfigUtil;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
 

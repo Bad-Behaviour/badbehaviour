@@ -33,6 +33,30 @@ enum ResultCode: string
 		};
 	}
 
+	// In src/Core/ResultCode.php
+	public function getMessage(): ?string
+	{
+		return match($this) {
+			self::BLOCKED_BOT => 'Known bot blocked',
+			self::BLOCKED_AI_CRAWLER => 'AI crawler blocked',
+			self::BLOCKED_SEO_CRAWLER => 'SEO crawler blocked',
+			self::BLOCKED_MALICIOUS_UA => 'Malicious User-Agent',
+			self::BLOCKED_ATTACK_PATTERN => 'Attack payload detected',
+			self::BLOCKED_DNSBL => 'DNSBL match',
+			self::BLOCKED_HTTPBL => 'http:BL match',
+			self::BLOCKED_BEHAVIORAL => 'Behavioral anomaly',
+			self::BLOCKED_FINGERPRINT => 'Bad fingerprint',
+			self::BLOCKED_RATE_LIMIT => 'Rate limit exceeded',
+			self::BLOCKED_CUSTOM_RULE => 'Custom rule match',
+			self::BLOCKED_GEOIP => 'GeoIP block',
+			self::CHALLENGE_REQUIRED => 'Challenge required',
+			self::CHALLENGE_FAILED => 'Challenge failed',
+			self::ERROR_INTERNAL => 'Internal error',
+			self::ERROR_CONFIGURATION => 'Configuration error',
+			default => null,
+		};
+	}
+
 	public function is_blocked(): bool
 	{
 		return str_starts_with($this->value, 'blocked.') || $this === self::CHALLENGE_FAILED;

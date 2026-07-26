@@ -52,14 +52,14 @@ blocked[] = "malicious"
 
 [rate_limits]
 enabled = true
-global_requests = 1000
-global_window = 3600
-per_minute_requests = 60
-per_minute_window = 60
-post_requests = 30
-post_window = 3600
-login_requests = 10
-login_window = 900
+global.requests = 1000
+global.window = 3600
+per_minute.requests = 60
+per_minute.window = 60
+post.requests = 30
+post.window = 3600
+login.requests = 10
+login.window = 900
 
 [custom_rules]
 ; rules[] = {"type": "ip", "value": "192.0.2.0/24", "action": "block", "id": "test_network"}

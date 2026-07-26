@@ -236,10 +236,14 @@ strict_ai = false
 
 [rate_limits]
 enabled = true
-global_requests = 1000
-per_minute_requests = 60
-post_requests = 30
-login_requests = 10
+global.requests = 1000
+global.window = 3600
+per_minute.requests = 60
+per_minute.window = 60
+post.requests = 30
+post.window = 3600
+login.requests = 10
+login.window = 900
 
 [performance]
 skip_extensions[] = "css"

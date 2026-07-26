@@ -52,18 +52,6 @@ class BadBehaviour
 		$this->dnsbl_detector = new DnsblDetector($this->config);
 	}
 
-	/**
-	 * Convenience factory for simple adapter-only usage
-	 */
-	public static function withAdapter(
-		\BadBehaviour\Core\Interfaces\AdapterInterface $adapter,
-		array $configOverrides = []
-		): self
-		{
-			$config = Configuration::from_array($configOverrides, $adapter);
-			return new self($config);
-	}
-
 	public function run(array $server = null): Result
 	{
 		if (php_sapi_name() === 'cli') {
@@ -72,7 +60,6 @@ class BadBehaviour
 
 		$this->install();
 
-		// Build request package
 		if ($server !== null) {
 			$package = RequestPackage::from_server_globals([
 				'reverse_proxy' => $this->config->reverse_proxy,
@@ -87,7 +74,7 @@ class BadBehaviour
 			]);
 		}
 
-		// Skip static resources
+		// === SKIP STATIC RESOURCES (NEW: uses skip_extensions + skip_paths) ===
 		if ($this->should_skip_static($package->request_uri)) {
 			return Result::allow($package);
 		}
@@ -117,25 +104,18 @@ class BadBehaviour
 		return $result;
 	}
 
-	/**
-	 * Run detection on a pre-built RequestPackage (for testing)
-	 */
 	public function run_test_package(RequestPackage $package): Result
 	{
-		// Skip static resources
 		if ($this->should_skip_static($package->request_uri)) {
 			return Result::allow($package);
 		}
 
-		// Enrich with fingerprints
 		$ja3 = HeaderUtil::get_ja3_fingerprint();
 		$h2 = HeaderUtil::get_h2_settings();
 		$package = $package->with_enrichment(null, null, $ja3, $h2);
 
-		// Run detection pipeline - FORCE FULL PIPELINE
 		$result = $this->detect($package);
 
-		// Log result
 		if ($this->config->logging) {
 			$this->adapter->log_request($package, $result);
 		}
@@ -179,17 +159,21 @@ class BadBehaviour
 		}
 
 		// 5. Behavioral (rate anomalies, rotating UA, think time, headers)
-		if ($result = $this->behavioral_detector->detect($package)) {
-			return $result;
+		if ($this->config->enable_behavioral_analysis) {
+			if ($result = $this->behavioral_detector->detect($package)) {
+				return $result;
+			}
 		}
 
 		// 6. Rate limiting
-		if ($result = $this->rate_limit_detector->detect($package)) {
-			return $result;
+		if ($this->config->rate_limit_enabled) {
+			if ($result = $this->rate_limit_detector->detect($package)) {
+				return $result;
+			}
 		}
 
-		// 7. DNSBL / http:BL (LAST - opt-in, can be slow, false positives)
-		if ($this->config->dnsbl_enabled ?? false) {  // DEFAULT FALSE
+		// 7. DNSBL / http:BL (opt-in, runs last)
+		if ($this->config->dnsbl_enabled) {
 			if ($result = $this->dnsbl_detector->detect($package)) {
 				return $result;
 			}
@@ -205,21 +189,40 @@ class BadBehaviour
 		return Result::allow($package);
 	}
 
+	// === NEW: Static Resource Skip Logic ===
+	private function should_skip_static(string $uri): bool
+	{
+		$path = parse_url($uri, PHP_URL_PATH) ?? $uri;
+
+		// Check skip_extensions
+		foreach ($this->config->skip_static_extensions as $ext) {
+			if (str_ends_with(strtolower($path), '.' . $ext)) {
+				return true;
+			}
+		}
+
+		// Check skip_paths
+		foreach ($this->config->skip_static_paths as $prefix) {
+			if (str_starts_with($path, $prefix)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	private function is_whitelisted(RequestPackage $package): bool
 	{
 		$whitelist = $this->adapter->get_whitelist();
 
-		// IP
 		if (!empty($whitelist['ip']) && IpUtil::match_any($package->ip, $whitelist['ip'])) {
 			return true;
 		}
 
-		// User-Agent (exact)
 		if (!empty($whitelist['useragent']) && in_array($package->user_agent, $whitelist['useragent'], true)) {
 			return true;
 		}
 
-		// URL prefix
 		if (!empty($whitelist['url'])) {
 			$clean = strtok($package->request_uri, '?');
 			foreach ($whitelist['url'] as $prefix) {
@@ -229,12 +232,10 @@ class BadBehaviour
 			}
 		}
 
-		// ASN
 		if (!empty($whitelist['asn']) && $package->asn && in_array($package->asn, $whitelist['asn'], true)) {
 			return true;
 		}
 
-		// Country
 		if (!empty($whitelist['country']) && $package->country && in_array($package->country, $whitelist['country'], true)) {
 			return true;
 		}
@@ -268,34 +269,16 @@ class BadBehaviour
 		return null;
 	}
 
-	private function should_skip_static(string $uri): bool
-	{
-		$path = parse_url($uri, PHP_URL_PATH) ?? $uri;
-
-		foreach ($this->config->skip_static_extensions as $ext) {
-			if (str_ends_with(strtolower($path), '.' . $ext)) {
-				return true;
-			}
-		}
-
-		foreach ($this->config->skip_static_paths as $prefix) {
-			if (str_starts_with($path, $prefix)) {
-				return true;
-			}
-		}
-
-		return false;
-	}
-
 	private function install(): void
 	{
 		if (defined('BB2_NO_CREATE') || !$this->config->logging) {
 			return;
 		}
-		$schema = $this->adapter->get_table_schema(
-			$this->config->adapter->get_settings()['log_table'] ?? 'bad_behaviour'
-			);
 
+		$table = $this->config->adapter->get_settings()['log_table'] ?? 'bad_behaviour';
+		$schema = $this->adapter->get_table_schema($table);
+
+		// Handle both array (SQLite) and string (MySQL)
 		$statements = is_array($schema) ? $schema : [$schema];
 
 		foreach ($statements as $sql) {
@@ -348,5 +331,15 @@ HTML;
 			'turnstile'   => new \BadBehaviour\Challenge\TurnstileChallenge($this->config),
 			default       => new \BadBehaviour\Challenge\BuiltinChallenge($this->config, $this->adapter),
 		};
+	}
+
+	// Convenience factory
+	public static function withAdapter(
+		\BadBehaviour\Core\Interfaces\AdapterInterface $adapter,
+		array $configOverrides = []
+	): self
+	{
+		$config = Configuration::from_array($configOverrides, $adapter);
+		return new self($config);
 	}
 }

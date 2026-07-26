@@ -4,6 +4,7 @@ namespace BadBehaviour\Adapter;
 
 use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Core\Interfaces\CacheInterface;
+use BadBehaviour\Util\ConfigUtil;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
 
@@ -22,13 +23,14 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 	public function get_settings(): array
 	{
 		$file = __DIR__ . '/../../settings.ini';
-		return @parse_ini_file($file, true) ?: $this->defaults;
+		$settings = ConfigUtil::parse_ini($file);
+		return ConfigUtil::merge_with_defaults($settings, $this->defaults);
 	}
 
 	public function get_whitelist(): array
 	{
 		$file = __DIR__ . '/../../whitelist.ini';
-		return @parse_ini_file($file, true) ?: [];
+		return ConfigUtil::parse_ini($file, expand_dots: false);
 	}
 
 	public function get_email(): string

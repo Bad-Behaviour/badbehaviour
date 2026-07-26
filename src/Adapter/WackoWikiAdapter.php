@@ -127,25 +127,30 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		}
 
 		$table = $this->get_settings()['log_table'];
-		$ip = $this->db->quote($package->ip);
-		$date = $this->db->quote(gmdate('Y-m-d H:i:s'));
-		$method = $this->db->quote($package->request_method);
-		$uri = $this->db->quote($package->request_uri);
-		$ua = $this->db->quote($package->user_agent);
-		$code = $this->db->quote($result->code->value);
-		$message = $this->db->quote($result->message);
-		$support = $this->db->quote($result->support_key);
-		$bot_cat = $this->db->quote($result->metadata['bot_category'] ?? '');
-		$bot_ver = $result->metadata['bot_verified'] ?? false ? 1 : 0;
-		$ja3 = $this->db->quote($package->ja3 ?? '');
-		$h2 = $this->db->quote($package->h2_settings ? substr(hash('sha256', $package->h2_settings), 0, 16) : '');
-		$hdr = $this->db->quote(substr(hash('sha256', implode(',', array_keys($package->headers_mixed))), 0, 16));
-		$asn = $this->db->quote($package->asn ?? '');
-		$country = $this->db->quote($package->country ?? '');
-		$time_ms = (int)($package->request_time * 1000);
 
-		$sql = "INSERT INTO `$table` (`ip`,`date`,`method`,`uri`,`ua`,`status_code`,`status_message`,`support_key`,`bot_category`,`bot_verified`,`ja3`,`h2_hash`,`header_order_hash`,`asn`,`country`,`request_time_ms`)
-			VALUES ($ip,$date,$method,$uri,$ua,$code,$message,$support,$bot_cat,$bot_ver,$ja3,$h2,$hdr,$asn,$country,$time_ms)";
+		// Use WackoWiki's q() method: escapes AND wraps in single quotes
+		$q = $this->db->q(...);
+
+		$ip       = $q($package->ip);
+		$date     = $q(gmdate('Y-m-d H:i:s'));
+		$method   = $q($package->request_method);
+		$uri      = $q($package->request_uri);
+		$ua       = $q($package->user_agent);
+		$code     = $q($result->code->value);
+		$message  = $q($result->message);
+		$support  = $q($result->support_key ?? '');
+		$bot_cat  = $q($result->metadata['bot_category'] ?? '');
+		$bot_ver  = ($result->metadata['bot_verified'] ?? false) ? 1 : 0;  // integer, no quotes
+		$ja3      = $q($package->ja3 ?? '');
+		$h2       = $q($package->h2_settings ? substr(hash('sha256', $package->h2_settings), 0, 16) : '');
+		$hdr      = $q(substr(hash('sha256', implode(',', array_keys($package->headers_mixed))), 0, 16));
+		$asn      = $q($package->asn ?? '');
+		$country  = $q($package->country ?? '');
+		$time_ms  = (int)($package->request_time * 1000);  // integer
+
+		$sql = "INSERT INTO `$table`
+        (`ip`,`date`,`method`,`uri`,`ua`,`status_code`,`status_message`,`support_key`,`bot_category`,`bot_verified`,`ja3`,`h2_hash`,`header_order_hash`,`asn`,`country`,`request_time_ms`)
+        VALUES ($ip,$date,$method,$uri,$ua,$code,$message,$support,$bot_cat,$bot_ver,$ja3,$h2,$hdr,$asn,$country,$time_ms)";
 
 		$this->db->ll_query($sql);
 	}

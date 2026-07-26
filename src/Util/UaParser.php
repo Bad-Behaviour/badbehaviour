@@ -31,7 +31,16 @@ class UaParser
 	];
 
 	private static array $device_patterns = [
-		'bot'         => ['/bot/i', '/crawler/i', '/spider/i', '/scraper/i', '/headless/i', '/puppeteer/i', '/playwright/i', '/selenium/i', '/phantomjs/i', '/curl/i', '/wget/i', '/python-requests/i', '/go-http-client/i', '/java\//i', '/okhttp/i', '/apache-httpclient/i'],
+		'bot'         => [
+			'/bot/i', '/crawler/i', '/spider/i', '/scraper/i',
+			'/headless/i', '/puppeteer/i', '/playwright/i',
+			'/selenium/i', '/phantomjs/i'
+		],
+		'http_tool'   => [
+			'/^curl\//i', '/^wget\//i', '/^python-requests\//i',
+			'/^go-http-client\//i', '/^java\//i', '/^okhttp\//i',
+			'/^apache-httpclient\//i', '/^axios\//i', '/^node-fetch\//i'
+		],
 		'mobile'      => ['/Mobile/i', '/Android.*Mobile/i', '/iPhone/i', '/iPod/i'],
 		'tablet'      => ['/iPad/i', '/Android.*(?!Mobile)/i', '/Tablet/i'],
 		'desktop'     => ['/Windows NT/i', '/Macintosh/i', '/X11/i', '/Linux/i'],
@@ -50,7 +59,7 @@ class UaParser
 		$result = [
 			'browser'  => ['name' => 'Unknown', 'version' => null, 'major' => null],
 			'os'       => ['name' => 'Unknown', 'version' => null],
-			'device'   => ['type' => 'desktop', 'is_mobile' => false, 'is_tablet' => false, 'is_bot' => false],
+			'device'   => ['type' => 'desktop', 'is_mobile' => false, 'is_tablet' => false, 'is_bot' => false, 'is_http_tool' => false],
 			'engine'   => ['name' => 'Unknown'],
 			'raw'      => $ua,
 		];
@@ -87,10 +96,11 @@ class UaParser
 			}
 		}
 
-		// Device - check bot FIRST
+		// Device - check bot FIRST, then http_tool
 		$is_mobile = false;
 		$is_tablet = false;
 		$is_bot = false;
+		$is_http_tool = false;
 
 		foreach (self::$device_patterns as $type => $patterns) {
 			foreach ($patterns as $pattern) {
@@ -105,6 +115,9 @@ class UaParser
 						case 'bot':
 							$is_bot = true;
 							break;
+						case 'http_tool':
+							$is_http_tool = true;
+							break;
 					}
 				}
 			}
@@ -112,6 +125,8 @@ class UaParser
 
 		if ($is_bot) {
 			$result['device']['type'] = 'bot';
+		} elseif ($is_http_tool) {
+			$result['device']['type'] = 'http_tool';
 		} elseif ($is_tablet) {
 			$result['device']['type'] = 'tablet';
 		} elseif ($is_mobile) {
@@ -121,6 +136,7 @@ class UaParser
 		$result['device']['is_mobile'] = $is_mobile;
 		$result['device']['is_tablet'] = $is_tablet;
 		$result['device']['is_bot'] = $is_bot;
+		$result['device']['is_http_tool'] = $is_http_tool;
 
 		// Engine - Blink first for Chrome/Edge
 		foreach (self::$engine_patterns as $name => $patterns) {
@@ -139,6 +155,12 @@ class UaParser
 	{
 		$parsed = self::parse($ua);
 		return $parsed['device']['is_bot'];
+	}
+
+	public static function is_http_tool(string $ua): bool
+	{
+		$parsed = self::parse($ua);
+		return $parsed['device']['is_http_tool'];
 	}
 
 	public static function is_mobile(string $ua): bool

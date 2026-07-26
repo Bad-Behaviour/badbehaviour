@@ -6,6 +6,13 @@ logging = true
 verbose = false
 strict = false
 
+; (opt-in)
+; inspect_json_body = false        ; Inspect JSON POST bodies for attacks (BREAKS AJAX)
+; inspect_multipart_body = false   ; Inspect multipart uploads (BREAKS FILE UPLOADS)
+; enable_fingerprinting = false    ; JA3/H2/header-order analysis (FP RISK)
+; enable_behavioral_analysis = true ; Rate anomalies, rotating UA/IP (SAFE)
+; enable_ai_crawler_control = true ; AI crawler management (SAFE)
+
 [reverse_proxy]
 enabled = true
 header = "CF-Connecting-IP"

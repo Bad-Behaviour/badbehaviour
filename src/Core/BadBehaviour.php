@@ -52,6 +52,18 @@ class BadBehaviour
 		$this->dnsbl_detector = new DnsblDetector($this->config);
 	}
 
+	/**
+	 * Convenience factory for simple adapter-only usage
+	 */
+	public static function withAdapter(
+		\BadBehaviour\Core\Interfaces\AdapterInterface $adapter,
+		array $configOverrides = []
+		): self
+		{
+			$config = Configuration::from_array($configOverrides, $adapter);
+			return new self($config);
+	}
+
 	public function run(array $server = null): Result
 	{
 		if (php_sapi_name() === 'cli') {
@@ -167,7 +179,7 @@ class BadBehaviour
 		}
 
 		// 5. Fingerprint Analysis - AFTER Blacklist
-		if ($result = $this->fingerprint_detector->detect($package)) {
+		if ($this->config->enable_fingerprinting && $result = $this->fingerprint_detector->detect($package)) {
 			return $result;
 		}
 
@@ -177,7 +189,7 @@ class BadBehaviour
 		}
 
 		// 7. Behavioral Analysis
-		if ($result = $this->behavioral_detector->detect($package)) {
+		if ($this->config->enable_behavioral_analysis && $result = $this->behavioral_detector->detect($package)) {
 			return $result;
 		}
 
@@ -276,8 +288,15 @@ class BadBehaviour
 		if (defined('BB2_NO_CREATE') || !$this->config->logging) {
 			return;
 		}
-		$schema = $this->adapter->get_table_schema($this->config->adapter->get_settings()['log_table'] ?? 'bad_behaviour');
-		$this->adapter->query($schema);
+		$schema = $this->adapter->get_table_schema(
+			$this->config->adapter->get_settings()['log_table'] ?? 'bad_behaviour'
+			);
+
+		$statements = is_array($schema) ? $schema : [$schema];
+
+		foreach ($statements as $sql) {
+			$this->adapter->query($sql);
+		}
 	}
 
 	private function serve_challenge(Result $result): never

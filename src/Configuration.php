@@ -15,6 +15,11 @@ readonly class Configuration
 		public bool $verbose = false,
 		public bool $strict = false,
 
+		public bool $inspect_json_body = false,
+		public bool $inspect_multipart_body = false,
+		public bool $enable_fingerprinting = false,
+		public bool $enable_behavioral_analysis = true,
+
 		// Reverse Proxy
 		public bool $reverse_proxy = false,
 		public string $reverse_proxy_header = 'X-Forwarded-For',

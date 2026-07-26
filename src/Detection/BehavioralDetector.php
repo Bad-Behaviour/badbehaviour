@@ -26,8 +26,9 @@ class BehavioralDetector
 		$ua = $package->user_agent;
 		$headers = $package->headers_mixed;
 		$method = $package->request_method;
+		$ua_browser = $package->ua_browser ?? '';
 
-		// Session-based behavioral analysis
+		// === 1. SESSION-BASED BEHAVIORAL ANALYSIS ===
 		if ($session_id) {
 			$behavior = $this->adapter->get_behavior_profile($session_id) ?? [
 				'count' => 0,
@@ -37,6 +38,7 @@ class BehavioralDetector
 				'static_count' => 0,
 				'total_count' => 0,
 				'urls' => [],
+				'form_load_time' => 0,
 			];
 
 			$behavior['count']++;
@@ -93,55 +95,81 @@ class BehavioralDetector
 			$this->adapter->save_behavior_profile($session_id, $behavior, 3600);
 		}
 
-		// Request timing - CHECK FIRST for POST
-		if ($method === 'POST' && $package->request_time < 0.05) {
-			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Request too fast for human', $package, [
-				'type' => 'too_fast_post',
-				'time' => $package->request_time,
-			]);
-		}
+		// === 2. FORM TIMING CHECK (Legacy: think time between form load and submit) ===
+		// Only for traditional form POSTs (not AJAX, not JSON, not multipart)
+		if ($method === 'POST' && $package->is_traditional_form_post() && $session_id) {
+			$behavior = $this->adapter->get_behavior_profile($session_id) ?? [];
+			$form_load_time = $behavior['form_load_time'] ?? 0;
 
-		// Referer validation for POST - CHECK SECOND
-		if ($method === 'POST' && isset($headers['Referer'])) {
-			$referer = $headers['Referer'];
-			if (empty($referer)) {
-				return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Empty Referer on POST', $package, [
-					'type' => 'empty_referer',
-				]);
-			}
-			if (!str_contains($referer, '://')) {
-				return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Relative Referer on POST', $package, [
-					'type' => 'relative_referer',
-				]);
+			if ($form_load_time > 0) {
+				$think_time = time() - $form_load_time;
+
+				// Less than 2 seconds = too fast for human form submission
+				if ($think_time < 2) {
+					return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'POST too fast after form load', $package, [
+						'type' => 'too_fast_post',
+						'think_time' => $think_time,
+					]);
+				}
 			}
 		}
 
-		// Use parsed UA for browser checks - use ua_browser directly
-		$ua_browser = $package->ua_browser ?? '';
-		if ($this->looks_like_browser($ua_browser) && empty($headers['Accept'])) {
+		// === 3. RECORD FORM LOAD TIME ON GET REQUESTS ===
+		// Heuristic: pages that typically contain forms
+		if ($method === 'GET' && $session_id) {
+			$path = parse_url($package->request_uri, PHP_URL_PATH) ?? '';
+			$has_form = str_contains($path, 'edit')
+				|| str_contains($path, 'comment')
+				|| str_contains($path, 'new')
+				|| str_contains($path, 'post')
+				|| str_contains($path, 'reply')
+				|| str_contains($path, 'login')
+				|| str_contains($path, 'register');
+
+			if ($has_form) {
+				$behavior = $this->adapter->get_behavior_profile($session_id) ?? [];
+				$behavior['form_load_time'] = time();
+				$this->adapter->save_behavior_profile($session_id, $behavior, 3600);
+			}
+		}
+
+		// === 4. ACCEPT HEADER CHECKS (Legacy: only for verified traditional browsers) ===
+		$accepts_html = isset($headers['Accept']) && str_contains($headers['Accept'], 'text/html');
+		$is_ajax = $package->is_ajax();
+		$is_json = $package->is_json_body();
+		$is_multipart = $package->is_multipart_form();
+
+		// Only enforce for traditional browser page loads
+		$is_traditional_browser =
+			$this->looks_like_browser($ua_browser)
+			&& !$is_ajax
+			&& !$is_json
+			&& !$is_multipart
+			&& $accepts_html;
+
+		if ($is_traditional_browser && empty($headers['Accept'])) {
 			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Browser missing Accept header', $package, [
 				'type' => 'browser_no_accept',
 				'browser' => $ua_browser,
-				'version' => $package->ua_version,
 			]);
 		}
 
-		if ($this->looks_like_modern_browser($ua_browser) && empty($headers['Accept-Encoding'])) {
-			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Modern browser missing Accept-Encoding', $package, [
+		// Accept-Encoding only in strict mode + traditional browser
+		if ($this->config->strict && $is_traditional_browser && empty($headers['Accept-Encoding'])) {
+			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Browser missing Accept-Encoding', $package, [
 				'type' => 'browser_no_encoding',
 				'browser' => $ua_browser,
-				'version' => $package->ua_version,
 			]);
 		}
 
-		// DNT contradiction
+		// === 5. DNT CONTRADICTION ===
 		if (($headers['Dnt'] ?? '') === '1' && $this->has_tracking_params($package->request_uri)) {
 			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'DNT header with tracking params', $package, [
 				'type' => 'dnt_contradiction',
 			]);
 		}
 
-		// Connection header conflicts
+		// === 6. CONNECTION HEADER CONFLICTS ===
 		if (!empty($headers['Connection'])) {
 			$conn = strtolower($headers['Connection']);
 			if (str_contains($conn, 'keep-alive') && str_contains($conn, 'close')) {
@@ -196,7 +224,7 @@ class BehavioralDetector
 			}
 		}
 
-		// Host header missing on HTTP/1.1 - CHECK LAST
+		// Host header missing on HTTP/1.1
 		if ($package->server_protocol === 'HTTP/1.1' && empty($headers['Host'])) {
 			return Result::block(ResultCode::BLOCKED_BEHAVIORAL, 'Missing Host header', $package, [
 				'type' => 'missing_host',

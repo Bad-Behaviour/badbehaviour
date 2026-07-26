@@ -1,6 +1,6 @@
 {
 	"name": "bad-behaviour/bad-behaviour",
-	"description": "Modern bot detection and blocking for PHP applications",
+	"description": "Bad Behaviour is a modern bot detection and blocking for PHP applications",
 	"type": "library",
 	"license": "GPL-2.0-or-later",
 	"require": {
@@ -15,6 +15,24 @@
 		"phpstan/phpstan": "^1.10",
 		"squizlabs/php_codesniffer": "^3.7",
 		"phpunit/php-code-coverage": "^11.0"
+	},
+	"homepage": "https://github.com/Bad-Behaviour/badbehaviour",
+	"keywords": [
+		"bot",
+		"comment",
+		"trackback",
+		"referrer",
+		"spam",
+		"robot",
+		"antispam"
+	],
+	"authors": [{
+		"name": "Michael Hampton"
+	}],
+	"support" : {
+		"issues" : "https://github.com/Bad-Behaviour/badbehaviour/issues",
+		"discussions" : "https://github.com/Bad-Behaviour/badbehaviour/discussions",
+		"wiki" : "https://github.com/Bad-Behaviour/badbehaviour/wiki"
 	},
 	"autoload": {
 		"psr-4": {

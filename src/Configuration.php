@@ -212,6 +212,11 @@ readonly class Configuration
 				'skip_extensions' => self::default_skip_extensions(),
 				'skip_paths' => self::default_skip_paths(),
 			],
+			'body_scan_skip_fields' => [
+				'body', 'comment', 'content', 'text', 'message', 'description',
+				'code', 'source', 'snippet', 'markdown', 'html', 'wiki', 'post',
+				'article', 'page', 'entry', 'reply', 'review', 'feedback',
+			],
 			'enable_fingerprinting' => false,
 			'inspect_json_body' => false,
 			'inspect_multipart_body' => false,

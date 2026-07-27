@@ -244,7 +244,6 @@ class BlacklistDetector
 			$is_multipart = str_starts_with($content_type_lower, 'multipart/form-data');
 			$is_form = str_contains($content_type_lower, 'application/x-www-form-urlencoded');
 
-			// Debug: log content type for testing
 			if ($is_form) {
 				$entity = $package->request_entity;
 
@@ -255,14 +254,6 @@ class BlacklistDetector
 					}
 				}
 
-				// document.write in form fields
-				foreach ($entity as $key => $value) {
-					if (stripos((string)$key, 'document.write') !== false
-						|| stripos((string)$value, 'document.write') !== false) {
-						return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, 'Malicious document.write', $package);
-					}
-				}
-
 				// Offsite forms
 				if (!$this->config->offsite_forms && isset($headers['Referer'])) {
 					if ($this->is_offsite_form($headers, $package)) {
@@ -270,9 +261,22 @@ class BlacklistDetector
 					}
 				}
 
-				// Attack patterns in form values
+				// === Unified loop - check document.write AND patterns ONLY on non-safe fields ===
 				foreach ($entity as $key => $value) {
+					// Skip fields that legitimately contain code/sql/markup
+					if ($this->is_safe_content_field($key)) {
+						continue;
+					}
+
+					$key_str = (string)$key;
 					$value_str = is_string($value) ? $value : (is_array($value) ? json_encode($value) : '');
+
+					// document.write check - now only on non-safe fields
+					if (stripos($key_str, 'document.write') !== false
+						|| stripos($value_str, 'document.write') !== false) {
+						return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, 'Malicious document.write', $package);
+					}
+
 					$normalized_value = urldecode($value_str);
 
 					foreach (self::URL_PATTERNS as $pattern) {
@@ -285,6 +289,70 @@ class BlacklistDetector
 		}
 
 		return null;
+	}
+
+	/**
+	 * Check if a form field name indicates it's a content field that may legitimately
+	 * contain code, SQL, markup, or other attack-like patterns.
+	 * Uses config allowlist + heuristics.
+	 */
+	private function is_safe_content_field(string $field_name): bool
+	{
+		$field_lower = strtolower($field_name);
+
+		// 1. Explicit config allowlist
+		$skip_fields = $this->config->body_scan_skip_fields ?? [];
+		if (in_array($field_lower, $skip_fields, true)) {
+			return true;
+		}
+
+		// 2. Heuristic: common content field suffixes
+		$safe_suffixes = [
+			'_body', '_content', '_text', '_message', '_html', '_markdown', '_wiki',
+			'_description', '_details', '_summary', '_notes', '_instructions',
+			'_readme', '_changelog', '_documentation', '_docs', '_example',
+			'_template', '_script', '_query', '_sql', '_code', '_source',
+			'_snippet', '_payload', '_data', '_input', '_output',
+		];
+		foreach ($safe_suffixes as $suffix) {
+			if (str_ends_with($field_lower, $suffix)) {
+				return true;
+			}
+		}
+
+		// 3. Heuristic: common content field infixes
+		$safe_infixes = [
+			'comment', 'description', 'content', 'body', 'message', 'text',
+			'code', 'source', 'snippet', 'markdown', 'html', 'wiki', 'post',
+			'article', 'page', 'entry', 'reply', 'review', 'feedback',
+			'bio', 'about', 'summary', 'details', 'notes', 'instructions',
+			'readme', 'changelog', 'documentation', 'docs', 'example',
+			'template', 'script', 'query', 'sql', 'payload', 'markup',
+		];
+		foreach ($safe_infixes as $infix) {
+			if (str_contains($field_lower, $infix)) {
+				return true;
+			}
+		}
+
+		// 4. Heuristic: field name suggests it's a parameter/input field (NOT content)
+		$parameter_indicators = [
+			'search', 'query', 'filter', 'sort', 'order', 'limit', 'offset',
+			'page', 'per_page', 'username', 'password', 'email', 'login',
+			'register', 'signup', 'signin', 'auth', 'token', 'key', 'id',
+			'redirect', 'return', 'next', 'prev', 'action', 'cmd', 'command',
+			'exec', 'execute', 'run', 'eval', 'callback', 'url', 'uri', 'path',
+			'file', 'filename', 'upload', 'import', 'export', 'delete', 'remove',
+			'create', 'update', 'edit', 'modify', 'change', 'set', 'config',
+		];
+		foreach ($parameter_indicators as $indicator) {
+			if (str_contains($field_lower, $indicator)) {
+				// This looks like a parameter field - DON'T skip it
+				return false;
+			}
+		}
+
+		return false;
 	}
 
 	private function is_suspicious_trackback(array $headers, array $entity): bool

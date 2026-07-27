@@ -1,4 +1,4 @@
-; Bad Behaviour 3.0 Configuration
+; Bad Behaviour 3.0 Configuration Example
 ; Copy to settings.ini and customize
 
 [core]
@@ -15,16 +15,54 @@ strict = false
 
 [reverse_proxy]
 enabled = true
-header = "CF-Connecting-IP"
+header = "X-Forwarded-For"
 addresses[] = "10.0.0.0/8"
 addresses[] = "172.16.0.0/12"
 addresses[] = "192.168.0.0/16"
-; Cloudflare IPs (auto-fetch recommended)
-; addresses[] = "173.245.48.0/20"
-; addresses[] = "103.21.244.0/22"
 
 [forms]
 offsite_forms = false
+
+; === Body scan skip fields ===
+; Fields that legitimately contain code/SQL/markup (comments, articles, snippets)
+; These will NOT be scanned for SQL injection / XSS patterns
+body_scan_skip_fields[] = "body"
+body_scan_skip_fields[] = "comment"
+body_scan_skip_fields[] = "content"
+body_scan_skip_fields[] = "text"
+body_scan_skip_fields[] = "message"
+body_scan_skip_fields[] = "description"
+body_scan_skip_fields[] = "code"
+body_scan_skip_fields[] = "source"
+body_scan_skip_fields[] = "snippet"
+body_scan_skip_fields[] = "markdown"
+body_scan_skip_fields[] = "html"
+body_scan_skip_fields[] = "wiki"
+body_scan_skip_fields[] = "post"
+body_scan_skip_fields[] = "article"
+body_scan_skip_fields[] = "page"
+body_scan_skip_fields[] = "entry"
+body_scan_skip_fields[] = "reply"
+body_scan_skip_fields[] = "review"
+body_scan_skip_fields[] = "feedback"
+body_scan_skip_fields[] = "bio"
+body_scan_skip_fields[] = "about"
+body_scan_skip_fields[] = "summary"
+body_scan_skip_fields[] = "details"
+body_scan_skip_fields[] = "notes"
+body_scan_skip_fields[] = "instructions"
+body_scan_skip_fields[] = "readme"
+body_scan_skip_fields[] = "changelog"
+body_scan_skip_fields[] = "documentation"
+body_scan_skip_fields[] = "docs"
+body_scan_skip_fields[] = "example"
+body_scan_skip_fields[] = "template"
+body_scan_skip_fields[] = "script"
+body_scan_skip_fields[] = "query"
+body_scan_skip_fields[] = "sql"
+body_scan_skip_fields[] = "php"
+body_scan_skip_fields[] = "js"
+body_scan_skip_fields[] = "css"
 
 [httpbl]
 key = ""
@@ -32,6 +70,7 @@ threat = 25
 maxage = 30
 
 [dnsbl]
+enabled = false
 lists[] = "zen.spamhaus.org"
 lists[] = "bl.spamcop.net"
 

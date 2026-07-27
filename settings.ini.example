@@ -40,6 +40,8 @@ allowed[] = "GPTBot"
 allowed[] = "ClaudeBot"
 allowed[] = "Google-Extended"
 allowed[] = "PerplexityBot"
+allowed[] = "GrokBot"
+allowed[] = "MistralBot"
 block_unverified = true
 strict = false
 

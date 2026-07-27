@@ -134,7 +134,8 @@ $config = Configuration::from_array($custom, $adapter);
 $bb = new BadBehaviour($config);
 
 $result = $bb->run();
-if (!$result->is_allowed()) {
+if (!$result->is_allowed())
+{
     $bb->handle_result($result);
 }
 ```
@@ -162,8 +163,10 @@ use BadBehaviour\Adapter\WackoWikiAdapter;
 $adapter = new WackoWikiAdapter($db);
 $bb = BadBehaviour::withAdapter($adapter);
 
-if (!$bb->run()->is_allowed()) {
-    exit;
+$result = $bb->run();
+if (!$result->is_allowed())
+{
+	$bb->handle_result($result);
 }
 ```
 
@@ -223,6 +226,8 @@ enable_ai_crawler_control = true
 allowed[] = "GPTBot"
 allowed[] = "ClaudeBot"
 allowed[] = "Google-Extended"
+allowed[] = "GrokBot"
+allowed[] = "MistralBot"
 block_unverified_ai = true
 strict_ai = false
 

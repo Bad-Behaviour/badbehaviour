@@ -10,5 +10,5 @@
 .gitignore export-ignore
 composer.lock export-ignore
 phpunit.xml export-ignore
-docs export-ignore
-tests export-ignore
+/docs export-ignore
+/tests export-ignore

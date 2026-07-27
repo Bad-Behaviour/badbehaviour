@@ -630,8 +630,8 @@ GNU Lesser General Public License v3.0 or later.
 ## Support & Documentation
 
 - [Wiki](https://github.com/Bad-Behaviour/badbehaviour/wiki) - Full documentation
-- [Migration Guide](MIGRATION.md) - 2.x to 3.0 upgrade
-- [Configuration Reference](CONFIGURATION.md) - Complete settings guide with risk matrix
+- [Migration Guide](docs/MIGRATION.md) - 2.x to 3.0 upgrade
+- [Configuration Reference](docs/CONFIGURATION.md) - Complete settings guide with risk matrix
 - [Issues](https://github.com/Bad-Behaviour/badbehaviour/issues) - Bug reports
 - [Discussions](https://github.com/Bad-Behaviour/badbehaviour/discussions) - Questions
 

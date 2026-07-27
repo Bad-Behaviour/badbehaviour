@@ -157,11 +157,26 @@ class BlacklistDetector
 		'/settings\.json/i',
 		'/secrets/i',
 		'/credentials/i',
-		'/password/i',
-		'/api[_-]?key/i',
-		'/access[_-]?token/i',
-		'/secret[_-]?key/i',
-		'/private[_-]?key/i',
+
+		// === CONTEXT-AWARE: password/secret patterns (replaces broad /password/i etc.) ===
+		'/[?&]password\s*=/i',
+		'/password\s*[:=]\s*\S+/i',
+		'/["\']password["\']\s*[:=]/i',
+		'/password_hash\s*\(/i',
+		'/password_verify\s*\(/i',
+
+		'/[?&]api[_-]?key\s*=/i',
+		'/[?&]access[_-]?token\s*=/i',
+		'/[?&]secret[_-]?key\s*=/i',
+		'/[?&]private[_-]?key\s*=/i',
+		'/[?&]credentials\s*=/i',
+		'/[?&]secrets\s*=/i',
+
+		'/["\']api[_-]?key["\']\s*[:=]/i',
+		'/["\']access[_-]?token["\']\s*[:=]/i',
+		'/["\']secret[_-]?key["\']\s*[:=]/i',
+		'/["\']private[_-]?key["\']\s*[:=]/i',
+
 		'/w00tw00t/i',
 	];
 

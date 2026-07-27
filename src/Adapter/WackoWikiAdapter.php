@@ -115,7 +115,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 
 	public function get_table_schema(string $table_name): array
 	{
-		$name = $this->db->table_prefix . $table_name;
+		$name = $table_name;
 		$sqlite = $this->db->is_sqlite;
 
 		if ($sqlite)
@@ -158,9 +158,8 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		}
 		else
 		{
-			$name_escaped = $this->escape_string($name);
 			return [
-				"CREATE TABLE IF NOT EXISTS `$name_escaped` (
+				"CREATE TABLE IF NOT EXISTS `$name` (
 					`log_id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
 					`ip` VARCHAR(45) NOT NULL DEFAULT '',
 					`host` VARCHAR(2083) NOT NULL DEFAULT '',
@@ -172,6 +171,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					`http_headers` TEXT NOT NULL,
 					`user_agent` TEXT,
 					`user_agent_hash` CHAR(40) NOT NULL DEFAULT '',
+					`request_entity` TEXT DEFAULT NULL,
 					`status_code` VARCHAR(50) NOT NULL DEFAULT '',
 					`status_message` TEXT,
 					`support_key` VARCHAR(64),

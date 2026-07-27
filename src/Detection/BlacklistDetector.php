@@ -157,19 +157,33 @@ class BlacklistDetector
 		'/settings\.json/i',
 		'/secrets/i',
 		'/credentials/i',
-
-		// === REFINED: password patterns (was just '/password/i') ===
-		'/[?&]password\s*=/i',              // ?password= or &password=
-		'/password\s*[:=]\s*\S+/i',         // password: secret or password=secret
-		'/["\']password["\']\s*[:=]/i',     // "password": "x" or 'password'='x'
-		'/password_hash\s*\(/i',            // password_hash(
-		'/password_verify\s*\(/i',          // password_verify(
-
+		'/password/i',
 		'/api[_-]?key/i',
 		'/access[_-]?token/i',
 		'/secret[_-]?key/i',
 		'/private[_-]?key/i',
 		'/w00tw00t/i',
+	];
+
+	private const SAFE_URL_PARAMS = [
+		// CMS/Revision parameters
+		'revision_id', 'revision', 'rev', 'oldid', 'diff', 'undo',
+		'page_id', 'post_id', 'article_id', 'entry_id', 'item_id',
+		'comment_id', 'attachment_id', 'media_id',
+		'category_id', 'tag_id', 'term_id', 'taxonomy_id',
+		'user_id', 'author_id', 'editor_id',
+		'version', 'v', 'ver',
+		'offset', 'limit', 'page', 'p', 'start', 'count',
+		'sort', 'order', 'orderby', 'dir',
+		'search', 'q', 'query', 's', 'keyword',
+		'filter', 'view', 'mode', 'format', 'output',
+		'action', 'do', 'task', 'cmd', 'op', 'operation',
+		'id', 'uid', 'gid', 'tid', 'cid', 'pid', 'aid',
+		'year', 'month', 'day', 'date', 'time', 'timestamp',
+		'lang', 'language', 'locale', 'theme', 'skin', 'style',
+		'redirect', 'return', 'next', 'back', 'url', 'uri',
+		'token', 'nonce', 'csrf', 'xsrf', '_token', '_nonce',
+		'hash', 'sig', 'signature', 'hmac',
 	];
 
 	private const UA_REGEX = [
@@ -234,11 +248,13 @@ class BlacklistDetector
 			}
 		}
 
-		// URL patterns (normalized)
+		// URL patterns (normalized) - skip if only safe params
 		$normalized_uri = urldecode($uri);
-		foreach (self::URL_PATTERNS as $pattern) {
-			if (preg_match($pattern, $normalized_uri)) {
-				return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Attack pattern in URL", $package);
+		if (!$this->has_safe_params_only($uri)) {
+			foreach (self::URL_PATTERNS as $pattern) {
+				if (preg_match($pattern, $normalized_uri)) {
+					return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Attack pattern in URL", $package);
+				}
 			}
 		}
 
@@ -296,6 +312,25 @@ class BlacklistDetector
 		}
 
 		return null;
+	}
+
+	/**
+	 * Check if URL query contains ONLY known safe parameters.
+	 * If true, skip URL pattern matching entirely.
+	 */
+	private function has_safe_params_only(string $uri): bool
+	{
+		$query = parse_url($uri, PHP_URL_QUERY) ?? '';
+		if (!$query) return true;
+
+		parse_str($query, $params);
+		foreach (array_keys($params) as $param) {
+			$param_lower = strtolower($param);
+			if (!in_array($param_lower, self::SAFE_URL_PARAMS, true)) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**

@@ -157,7 +157,14 @@ class BlacklistDetector
 		'/settings\.json/i',
 		'/secrets/i',
 		'/credentials/i',
-		'/password/i',
+
+		// === REFINED: password patterns (was just '/password/i') ===
+		'/[?&]password\s*=/i',              // ?password= or &password=
+		'/password\s*[:=]\s*\S+/i',         // password: secret or password=secret
+		'/["\']password["\']\s*[:=]/i',     // "password": "x" or 'password'='x'
+		'/password_hash\s*\(/i',            // password_hash(
+		'/password_verify\s*\(/i',          // password_verify(
+
 		'/api[_-]?key/i',
 		'/access[_-]?token/i',
 		'/secret[_-]?key/i',

@@ -118,6 +118,20 @@ class Registry
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'KagiBot',
 			),
+			'applebot' => new BotDefinition(
+				id: 'applebot',
+				name: 'Applebot (Search)',
+				user_agent_patterns: ['Applebot'],
+				host_patterns: ['applebot.apple.com', 'apple.com'],
+				ip_ranges: [
+					'17.0.0.0/8',           // Apple's /8 allocation
+					'2a03:b000::/28',       // Apple IPv6
+				],
+				verify_dns: true,
+				dns_suffix: 'applebot.apple.com',
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'Applebot',
+			),
 
 			// === ASIAN SEARCH ENGINES ===
 
@@ -302,7 +316,7 @@ class Registry
 			'apple_ai' => new BotDefinition(
 				id: 'apple_ai',
 				name: 'Applebot-Extended',
-				user_agent_patterns: ['Applebot-Extended', 'Applebot'],
+				user_agent_patterns: ['Applebot-Extended'],
 				host_patterns: ['apple.com', 'applebot.apple.com'],
 				ip_ranges: [],
 				verify_dns: true,

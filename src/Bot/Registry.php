@@ -275,9 +275,24 @@ class Registry
 			'meta_ai' => new BotDefinition(
 				id: 'meta_ai',
 				name: 'Meta AI',
-				user_agent_patterns: ['Meta-ExternalAgent', 'Meta-ExternalFetcher', 'MetaAI', 'FacebookBot'],
-				host_patterns: ['facebook.com'],
-				ip_ranges: [],
+				user_agent_patterns: ['Meta-ExternalAgent', 'Meta-ExternalFetcher', 'MetaAI', 'FacebookBot', 'meta-externalagent'],
+				host_patterns: ['facebook.com', 'fbcdn.net'],
+				ip_ranges: [
+					// IPv4 (existing known ranges)
+					'31.13.64.0/18', '45.64.40.0/22', '66.220.144.0/20', '69.63.176.0/20',
+					'69.171.224.0/19', '74.119.76.0/22', '103.4.96.0/22', '129.134.0.0/16',
+					'157.240.0.0/16', '173.252.64.0/18', '179.60.192.0/22', '185.60.216.0/22',
+					// IPv6 (NEW - Meta's allocations)
+					'2a03:2880::/32',      // Primary Facebook IPv6 block
+					'2a03:2880:f800::/48', // Observed crawler subrange
+					'2a03:2880:f900::/48',
+					'2a03:2880:fa00::/48',
+					'2a03:2880:fb00::/48',
+					'2a03:2880:fc00::/48',
+					'2a03:2880:fd00::/48',
+					'2a03:2880:fe00::/48',
+					'2a03:2880:ff00::/48',
+				],
 				verify_dns: true,
 				dns_suffix: 'facebook.com',
 				category: BotCategory::AI_CRAWLER,

@@ -4,23 +4,24 @@ namespace BadBehaviour\Adapter;
 
 use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Core\Interfaces\CacheInterface;
-use BadBehaviour\Util\ConfigUtil;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
+use BadBehaviour\Configuration;
 
 class MediaWikiAdapter implements AdapterInterface, CacheInterface
 {
 	private $db;
 	private string $emergency_email;
 	private string $script_path;
-	private array $defaults;
+	private array $db_defaults;
 
 	public function __construct($db, string $db_prefix, string $emergency_email, string $script_path)
 	{
 		$this->db = $db;
 		$this->emergency_email = $emergency_email;
 		$this->script_path = dirname($script_path) . "/";
-		$this->defaults = [
+
+		$this->db_defaults = [
 			'log_table' => $db_prefix . 'bad_behaviour',
 			'display_stats' => false,
 			'logging' => true,
@@ -37,13 +38,55 @@ class MediaWikiAdapter implements AdapterInterface, CacheInterface
 	public function get_settings(): array
 	{
 		global $wgBadBehaviourSettings;
-		$settings = $wgBadBehaviourSettings ?? [];
-		return array_merge($this->defaults, $settings);
+
+		// Start with PHP config file if exists
+		$file = $this->find_config_file();
+		$base_settings = $file
+			? Configuration::from_file($file, $this)->to_array()
+			: Configuration::get_defaults_merged();
+
+		// Override with MediaWiki settings (LocalSettings.php)
+		if (isset($wgBadBehaviourSettings) && is_array($wgBadBehaviourSettings)) {
+			$base_settings = Configuration::merge_arrays($base_settings, $wgBadBehaviourSettings);
+		}
+
+		// Ensure log_table uses correct prefix
+		$base_settings['log_table'] = $this->db_defaults['log_table'];
+
+		return $base_settings;
+	}
+
+	public function get_admin_settings(): array
+	{
+		return $this->get_settings();
+	}
+
+	private function find_config_file(): ?string
+	{
+		// Check common locations
+		$paths = [
+			__DIR__ . '/../../../config/bad_behaviour.php',
+			MW_CONFIG_FILE ?? '', // MediaWiki's config directory
+		];
+
+		foreach ($paths as $path) {
+			if ($path && file_exists($path)) {
+				return $path;
+			}
+		}
+		return null;
 	}
 
 	public function get_whitelist(): array
 	{
-		return @parse_ini_file(__DIR__ . '/../../whitelist.ini', true) ?: [];
+		$file = __DIR__ . '/../../../config/bb_whitelist.conf';
+		return parse_ini_file($file, true, INI_SCANNER_TYPED) ?: [
+			'ip' => [],
+			'useragent' => [],
+			'url' => [],
+			'asn' => [],
+			'country' => [],
+		];
 	}
 
 	public function get_email(): string

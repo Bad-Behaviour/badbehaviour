@@ -4,9 +4,9 @@ namespace BadBehaviour\Adapter;
 
 use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Core\Interfaces\CacheInterface;
-use BadBehaviour\Util\ConfigUtil;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
+use BadBehaviour\Configuration;
 
 class GenericAdapter implements AdapterInterface, CacheInterface
 {
@@ -22,15 +22,31 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 
 	public function get_settings(): array
 	{
-		$file = __DIR__ . '/../../settings.ini';
-		$settings = ConfigUtil::parse_ini($file);
-		return ConfigUtil::merge_with_defaults($settings, $this->defaults);
+		$file = __DIR__ . '/../../../config/bad_behaviour.php';
+
+		if (!file_exists($file)) {
+			// Return defaults only - no config file found
+			return Configuration::get_defaults_merged();
+		}
+
+		return Configuration::from_file($file, $this)->to_array();
+	}
+
+	public function get_admin_settings(): array
+	{
+		return $this->get_settings();
 	}
 
 	public function get_whitelist(): array
 	{
-		$file = __DIR__ . '/../../whitelist.ini';
-		return ConfigUtil::parse_ini($file, expand_dots: false);
+		$file = __DIR__ . '/../../../config/bb_whitelist.conf';
+		return parse_ini_file($file, true, INI_SCANNER_TYPED) ?: [
+			'ip' => [],
+			'useragent' => [],
+			'url' => [],
+			'asn' => [],
+			'country' => [],
+		];
 	}
 
 	public function get_email(): string

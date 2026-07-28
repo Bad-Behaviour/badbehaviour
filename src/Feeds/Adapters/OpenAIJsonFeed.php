@@ -3,6 +3,8 @@
 
 namespace BadBehaviour\Feeds\Adapters;
 
+use BadBehaviour\Core\Interfaces\CacheInterface;
+
 class OpenAIJsonFeed extends AbstractJsonFeed
 {
     private string $bot_id;

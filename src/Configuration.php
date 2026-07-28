@@ -193,7 +193,7 @@ readonly class Configuration
             inspect_multipart_body: (bool)($merged['inspect_multipart_body'] ?? false),
             enable_behavioral_analysis: (bool)($merged['enable_behavioral_analysis'] ?? true),
             enable_ai_crawler_control: (bool)($merged['enable_ai_crawler_control'] ?? true),
-        	enable_dynamic_ip_ranges: (bool)($merged['enable_dynamic_ip_ranges'] ?? true),
+        	enable_dynamic_ip_ranges: (bool)($merged['enable_dynamic_ip_ranges'] ?? false),
         	enable_client_hints_validation: (bool)($merged['enable_client_hints_validation'] ?? true),
         	enable_agentic_detection: (bool)($merged['enable_agentic_detection'] ?? true),
 
@@ -238,7 +238,7 @@ readonly class Configuration
             'inspect_multipart_body' => false,
             'enable_behavioral_analysis' => true,
             'enable_ai_crawler_control' => true,
-        	'enable_dynamic_ip_ranges' => true,
+        	'enable_dynamic_ip_ranges' => false,  // EXPERIMENTAL - OFF by default
         	'enable_client_hints_validation' => true,
         	'enable_agentic_detection' => true,
         ];
@@ -307,6 +307,8 @@ readonly class Configuration
     		'enable_dynamic_ip_ranges' => $this->enable_dynamic_ip_ranges,
     		'enable_client_hints_validation' => $this->enable_client_hints_validation,
     		'enable_agentic_detection' => $this->enable_agentic_detection,
+
+    		'log_table' => $this->log_table ?? '',
     	];
     }
 
@@ -350,15 +352,38 @@ readonly class Configuration
      */
     private static function array_merge_recursive(array $a1, array $a2): array
     {
-        $merged = $a1;
-        foreach ($a2 as $key => $value) {
-            if (is_array($value) && isset($merged[$key]) && is_array($merged[$key])) {
-                $merged[$key] = self::array_merge_recursive($merged[$key], $value);
-            } else {
-                $merged[$key] = $value;
-            }
-        }
-        return $merged;
+    	$merged = $a1;
+    	foreach ($a2 as $key => $value) {
+    		if (is_array($value) && isset($merged[$key]) && is_array($merged[$key])) {
+    			// Detect if both are lists (numeric keys 0..n)
+    			$is_list_1 = self::is_list($merged[$key]);
+    			$is_list_2 = self::is_list($value);
+
+    			if ($is_list_1 && $is_list_2) {
+    				// Both are lists → REPLACE entirely (user config wins)
+    				$merged[$key] = $value;
+    			} elseif (!$is_list_1 && !$is_list_2) {
+    				// Both are associative → MERGE recursively
+    				$merged[$key] = self::array_merge_recursive($merged[$key], $value);
+    			} else {
+    				// Mixed types → REPLACE (user config wins)
+    				$merged[$key] = $value;
+    			}
+    		} else {
+    			$merged[$key] = $value;
+    		}
+    	}
+    	return $merged;
+    }
+
+    /**
+     * Check if array is a list (numeric keys 0, 1, 2... n-1)
+     */
+    private static function is_list(array $array): bool
+    {
+    	if ($array === []) return true;
+    	$keys = array_keys($array);
+    	return $keys === range(0, count($keys) - 1);
     }
 
     /**

@@ -3,7 +3,15 @@
 
 namespace BadBehaviour\Feeds;
 
-use BadBehaviour\CacheInterface;
+use BadBehaviour\Core\Interfaces\CacheInterface;
+use BadBehaviour\Feeds\Adapters\GoogleJsonFeed;
+use BadBehaviour\Feeds\Adapters\BingJsonFeed;
+use BadBehaviour\Feeds\Adapters\OpenAIJsonFeed;
+use BadBehaviour\Feeds\Adapters\AnthropicJsonFeed;
+use BadBehaviour\Feeds\Adapters\AppleJsonFeed;
+use BadBehaviour\Feeds\Adapters\PlainTextFeed;
+use BadBehaviour\Feeds\Adapters\GenericJsonFeed;
+use BadBehaviour\Feeds\CachedFeedDecorator;
 
 class FeedRegistry
 {
@@ -18,11 +26,11 @@ class FeedRegistry
     	$this->feeds['google'] = new CachedFeedDecorator(new GoogleJsonFeed($cache), $cache);
 
     	// Google User-Triggered (Google-Extended, etc.)
+    	$this->feeds['google'] = new CachedFeedDecorator(new GoogleJsonFeed($cache), $cache);
     	$this->feeds['google-user'] = new CachedFeedDecorator(
-    		new \BadBehaviour\Feeds\Adapters\GoogleJsonFeed($cache),
+    		new GoogleJsonFeed($cache, 'https://developers.google.com/static/crawling/ipranges/user-triggered-agents.json'),
     		$cache
-    		);
-    	$this->feeds['google-user']->feed->url = 'https://developers.google.com/static/crawling/ipranges/user-triggered-agents.json';
+    	);
 
     	// Bing
     	$this->feeds['bing'] = new CachedFeedDecorator(new BingJsonFeed($cache), $cache);
@@ -82,28 +90,24 @@ class FeedRegistry
      */
     public function fetch_all(): array
     {
-        $merged = [];
+    	$merged = [];
+    	$start = microtime(true);
+    	$max_total = 10.0;
 
-        foreach ($this->feeds as $name => $feed) {
-            try {
-                $data = $feed->fetch();
-                foreach ($data as $bot_id => $cidrs) {
-                    if (!isset($merged[$bot_id])) {
-                        $merged[$bot_id] = [];
-                    }
-                    $merged[$bot_id] = array_merge($merged[$bot_id], $cidrs);
-                }
-            } catch (\Throwable $e) {
-                error_log("[BadBehaviour] Feed {$name} failed: " . $e->getMessage());
-            }
-        }
+    	foreach ($this->feeds as $name => $feed) {
+    		if (microtime(true) - $start > $max_total) break;
 
-        // Deduplicate
-        foreach ($merged as $bot_id => $cidrs) {
-            $merged[$bot_id] = array_unique($cidrs);
-        }
+    		try {
+    			$data = $feed->fetch();
+    			foreach ($data as $bot_id => $cidrs) {
+    				$merged[$bot_id] = array_merge($merged[$bot_id] ?? [], $cidrs);
+    			}
+    		} catch (\Throwable $e) {
+    			error_log("[BadBehaviour] Feed $name failed: " . $e->getMessage());
+    		}
+    	}
 
-        return $merged;
+    	return array_map('array_unique', $merged);
     }
 
     public function get_feed_status(): array

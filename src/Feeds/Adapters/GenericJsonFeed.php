@@ -3,6 +3,8 @@
 
 namespace BadBehaviour\Feeds\Adapters;
 
+use BadBehaviour\Core\Interfaces\CacheInterface;
+
 class GenericJsonFeed extends AbstractJsonFeed
 {
     public function __construct(

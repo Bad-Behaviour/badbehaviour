@@ -18,6 +18,7 @@ class BotDetector
 	private AdapterInterface $adapter;
 	private array $dns_cache = [];
 	private ?array $dynamic_ranges = null;
+	private bool $dynamic_ranges_fetched = false;
 
 	public function __construct(Configuration $config, AdapterInterface $adapter)
 	{
@@ -31,20 +32,29 @@ class BotDetector
 			return $this->dynamic_ranges;
 		}
 
-		// Only fetch if enabled in config
-		if (!$this->config->enable_dynamic_ip_ranges ?? true) {
+		// EXPERIMENTAL: Disabled by default
+		if (!$this->config->enable_dynamic_ip_ranges) {
+			$this->dynamic_ranges = [];
 			return [];
 		}
 
-		try {
-			$feed_registry = new FeedRegistry($this->adapter);
-			$this->dynamic_ranges = $feed_registry->fetch_all();
-		} catch (\Throwable $e) {
-			error_log("[BadBehaviour] Dynamic IP ranges fetch failed: " . $e->getMessage());
-			$this->dynamic_ranges = [];
+		// Check persistent cache first (non-blocking)
+		$cache_key = 'bb:ip_ranges:merged';
+		$cached = $this->adapter->get($cache_key);
+
+		if ($cached && isset($cached['data'], $cached['fetched'])) {
+			$this->dynamic_ranges = $cached['data'];
+			return $this->dynamic_ranges;
 		}
 
-		return $this->dynamic_ranges;
+		// NO CACHE: Don't fetch on request path - return empty, log once
+		if (!$this->dynamic_ranges_fetched) {
+			$this->dynamic_ranges_fetched = true;
+			error_log("[BadBehaviour] Dynamic IP ranges: no cache, feature enabled but fetch deferred. Run 'php bin/update-ip-ranges.php' via cron.");
+		}
+
+		$this->dynamic_ranges = [];
+		return [];
 	}
 
 	public function detect(RequestPackage $package): ?Result

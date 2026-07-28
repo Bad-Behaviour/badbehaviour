@@ -3,14 +3,16 @@
 
 namespace BadBehaviour\Feeds\Adapters;
 
+use BadBehaviour\Core\Interfaces\CacheInterface;
+
 class GoogleJsonFeed extends AbstractJsonFeed
 {
-    public function __construct(CacheInterface $cache)
-    {
-        $this->url = 'https://developers.google.com/static/crawling/ipranges/common-crawlers.json';
-        $this->expected_keys = ['prefixes'];
-        parent::__construct($cache);
-    }
+	public function __construct(CacheInterface $cache, string $url = '')
+	{
+		$this->url = $url ?: 'https://developers.google.com/static/crawling/ipranges/common-crawlers.json';
+		$this->expected_keys = ['prefixes'];
+		parent::__construct($cache);
+	}
 
     public function fetch(): array
     {

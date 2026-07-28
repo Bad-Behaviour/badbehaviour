@@ -3,6 +3,8 @@
 
 namespace BadBehaviour\Feeds\Adapters;
 
+use BadBehaviour\Core\Interfaces\CacheInterface;
+
 class BingJsonFeed extends AbstractJsonFeed
 {
     public function __construct(CacheInterface $cache)

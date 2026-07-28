@@ -4,12 +4,12 @@
 namespace BadBehaviour\Feeds\Adapters;
 
 use BadBehaviour\Feeds\IpFeedInterface;
-use BadBehaviour\CacheInterface;
+use BadBehaviour\Core\Interfaces\CacheInterface;
 
 abstract class AbstractJsonFeed implements IpFeedInterface
 {
     protected string $url;
-    protected int $timeout = 10;
+    protected int $timeout = 3;
     protected array $expected_keys = [];  // Required top-level keys
 
     public function __construct(
@@ -64,24 +64,120 @@ abstract class AbstractJsonFeed implements IpFeedInterface
 
     private function fetch_fresh(): ?array
     {
-        $ch = curl_init($this->url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => $this->timeout,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_USERAGENT => 'BadBehaviour/3.0 (+https://github.com/Bad-Behaviour/badbehaviour)',
-        ]);
+    	// Try cURL with CA bundle detection first
+    	$result = $this->fetch_with_curl();
+    	if ($result !== null) return $result;
 
-        $response = curl_exec($ch);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+    	// Fallback: file_get_contents with stream context
+    	return $this->fetch_with_stream_context();
+    }
 
-        if ($http_code !== 200 || !$response) {
-            return null;
-        }
+    private function fetch_with_curl(): ?array
+    {
+    	$ch = curl_init($this->url);
+    	$ca_bundle = $this->find_ca_bundle();
 
-        $data = json_decode($response, true);
-        return is_array($data) ? $data : null;
+    	$options = [
+    		CURLOPT_RETURNTRANSFER => true,
+    		CURLOPT_TIMEOUT => $this->timeout,
+    		CURLOPT_USERAGENT => 'BadBehaviour/3.0 (+https://github.com/Bad-Behaviour/badbehaviour)',
+    	];
+
+    	if ($ca_bundle) {
+    		$options[CURLOPT_CAINFO] = $ca_bundle;
+    		$options[CURLOPT_CAPATH] = dirname($ca_bundle);
+    		$options[CURLOPT_SSL_VERIFYPEER] = true;
+    	} else {
+    		// No CA bundle found - skip this method, try stream context
+    		return null;
+    	}
+
+    	curl_setopt_array($ch, $options);
+    	$response = curl_exec($ch);
+    	$http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    	curl_close($ch);
+
+    	if ($http_code !== 200 || !$response) {
+    		return null;
+    	}
+
+    	$data = json_decode($response, true);
+    	return (json_last_error() === JSON_ERROR_NONE && is_array($data)) ? $data : null;
+    }
+
+    private function fetch_with_stream_context(): ?array
+    {
+    	$ca_bundle = $this->find_ca_bundle();
+
+    	$context_options = [
+    		'http' => [
+    			'timeout' => $this->timeout,
+    			'user_agent' => 'BadBehaviour/3.0',
+    		],
+    	];
+
+    	if ($ca_bundle) {
+    		$context_options['ssl'] = [
+    			'cafile' => $ca_bundle,
+    			'verify_peer' => true,
+    			'verify_peer_name' => true,
+    		];
+    	} else {
+    		// Last resort: disable verification with warning
+    		error_log("[BadBehaviour WARNING] No CA bundle found, fetching {$this->url} without SSL verification");
+    		$context_options['ssl'] = [
+    			'verify_peer' => false,
+    			'verify_peer_name' => false,
+    		];
+    	}
+
+    	$context = stream_context_create($context_options);
+    	$response = @file_get_contents($this->url, false, $context);
+
+    	if (!$response) return null;
+
+    	$data = json_decode($response, true);
+    	return (json_last_error() === JSON_ERROR_NONE && is_array($data)) ? $data : null;
+    }
+
+    private function find_ca_bundle(): ?string
+    {
+    	static $cached = null;
+
+    	if ($cached !== null) return $cached;
+
+    	$paths = [
+    		'/etc/ssl/certs/ca-certificates.crt',      // Debian/Ubuntu
+    		'/etc/pki/tls/certs/ca-bundle.crt',        // RHEL/CentOS/Fedora
+    		'/etc/ssl/ca-bundle.pem',                  // OpenSUSE
+    		'/usr/local/etc/openssl/cert.pem',         // macOS/Homebrew default
+    		'/usr/local/etc/openssl@1.1/cert.pem',     // Homebrew openssl@1.1
+    		'/usr/local/etc/openssl@3/cert.pem',       // Homebrew openssl@3
+    		'/opt/homebrew/etc/openssl@3/cert.pem',    // Apple Silicon Homebrew
+    		__DIR__ . '/../../../cacert.pem',          // Local fallback
+    	];
+
+    	foreach ($paths as $path) {
+    		if (file_exists($path) && is_readable($path)) {
+    			$cached = $path;
+    			return $cached;
+    		}
+    	}
+
+    	// Try PHP ini settings
+    	$ini_cafile = ini_get('openssl.cafile');
+    	if ($ini_cafile && file_exists($ini_cafile)) {
+    		$cached = $ini_cafile;
+    		return $cached;
+    	}
+
+    	$ini_capath = ini_get('openssl.capath');
+    	if ($ini_capath && is_dir($ini_capath)) {
+    		$cached = $ini_capath;
+    		return $cached;
+    	}
+
+    	return null;
     }
 
     protected function validate(array $data): bool

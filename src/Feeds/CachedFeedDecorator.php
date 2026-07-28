@@ -3,7 +3,7 @@
 
 namespace BadBehaviour\Feeds;
 
-use BadBehaviour\CacheInterface;
+use BadBehaviour\Core\Interfaces\CacheInterface;
 
 class CachedFeedDecorator implements IpFeedInterface
 {

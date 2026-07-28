@@ -37,7 +37,14 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 			$file = __DIR__ . '/../../../config/bad_behaviour.php';
 		}
 
-		return Configuration::from_file($file, $this)->to_array();
+		$settings = Configuration::from_file($file, $this)->to_array();
+
+		// INJECT: log_table (not in config file - adapter-specific)
+		// WackoWiki uses table prefix from $this->db->table_prefix
+		$prefix = $this->db->table_prefix ?? '';
+		$settings['log_table'] = $prefix . 'bad_behaviour';
+
+		return $settings;
 	}
 
 	// Admin panel uses the SAME format — no conversion needed
@@ -132,6 +139,8 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 			'enable_client_hints_validation' => $nested['enable_client_hints_validation'] ?? true,
 			'enable_agentic_detection'   => $nested['enable_agentic_detection'] ?? true,
 			'enable_dynamic_ip_ranges'   => $nested['enable_dynamic_ip_ranges'] ?? true,
+
+			'log_table' => $this->db->table_prefix . 'bad_behaviour',
 		];
 	}
 

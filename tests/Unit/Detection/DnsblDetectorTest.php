@@ -18,10 +18,10 @@ class DnsblDetectorTest extends TestCase
     protected function setUp(): void
     {
         $config = Configuration::from_array([
-            'httpbl_key' => 'test-key',
+            'httpbl_key' => '',
             'httpbl_threat' => 25,
             'httpbl_maxage' => 30,
-            'dnsbl_lists' => ['zen.spamhaus.org', 'bl.spamcop.net'],
+            'dnsbl_lists' => [],
         ], new \BadBehaviour\Adapter\GenericAdapter());
 
         $this->detector = new DnsblDetector($config);

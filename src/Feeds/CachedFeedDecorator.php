@@ -14,6 +14,11 @@ class CachedFeedDecorator implements IpFeedInterface
         private int $stale_ttl = 604800     // 7 days stale fallback
     ) {}
 
+    public function getWrappedFeed(): IpFeedInterface
+    {
+    	return $this->feed;
+    }
+
     public function fetch(): array
     {
         $cache_key = 'feed:' . $this->feed->get_source_name();

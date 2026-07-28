@@ -2,6 +2,8 @@
 
 namespace BadBehaviour\Detection;
 
+use BadBehaviour\Bot\BotCategory;
+use BadBehaviour\Bot\BotAction;
 use BadBehaviour\Bot\Registry;
 use BadBehaviour\Bot\BotDefinition;
 use BadBehaviour\Configuration;
@@ -91,17 +93,6 @@ class BotDetector
 
 			// REMOVED: The $matches filter that skipped unverified SEO/AI crawlers
 			// All matched bots now go through determine_action()
-
-			// Additional check: UA parser says bot but not verified - suspicious
-			if ($ua_parsed_bot && !$verified && $def->category === BotCategory::SEARCH_ENGINE) {
-				return Result::block(ResultCode::BLOCKED_BOT, "Suspicious: UA says bot but not verified: {$def->name}", $package, [
-					'bot_id' => $bot_id,
-					'bot_name' => $def->name,
-					'bot_category' => $def->category->value,
-					'bot_verified' => $verified,
-					'ua_parsed_bot' => true,
-				]);
-			}
 
 			// Determine action
 			$action = $this->determine_action($def, $verified);

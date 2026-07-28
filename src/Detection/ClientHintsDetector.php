@@ -34,7 +34,6 @@ class ClientHintsDetector
 		$sec_ch_ua_full = $headers['Sec-Ch-Ua-Full-Version-List'] ?? '';
 		$sec_ch_ua_platform = $headers['Sec-Ch-Ua-Platform'] ?? '';
 		$sec_ch_ua_mobile = $headers['Sec-Ch-Ua-Mobile'] ?? '';
-		$sec_ch_ua_model = $headers['Sec-Ch-Ua-Model'] ?? '';
 
 		// 1. Missing ALL Client Hints = suspicious for modern Chrome/Edge
 		if (!$sec_ch_ua && !$sec_ch_ua_full && !$sec_ch_ua_platform) {

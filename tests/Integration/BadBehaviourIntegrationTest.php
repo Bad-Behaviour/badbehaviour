@@ -16,7 +16,15 @@ class BadBehaviourIntegrationTest extends TestCase
 
     protected function setUp(): void
     {
+    	// Create dummy whitelist file
+    	$whitelistFile = __DIR__ . '/../../config/bb_whitelist.conf';
+    	if (!file_exists($whitelistFile)) {
+    		@mkdir(dirname($whitelistFile), 0755, true);
+    		file_put_contents($whitelistFile, '');
+    	}
+
     	$this->adapter = new GenericAdapter();
+
     	$config = Configuration::from_array([
     		'strict' => false,
     		'offsite_forms' => false,
@@ -124,32 +132,32 @@ class BadBehaviourIntegrationTest extends TestCase
 
     public function test_xss_in_url_blocked(): void
     {
-        $result = $this->bb->run_test_package(RequestPackage::create_for_test(
-            'Mozilla/5.0',
-            '192.0.2.1',
-            'GET',
-            '/?q=<script>alert(1)</script>'
-        ));
-        $this->assertFalse($result->is_allowed());
-        $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+    	$result = $this->bb->run_test_package(RequestPackage::create_for_test(
+    		'Mozilla/5.0',
+    		'192.0.2.1',
+    		'GET',
+    		'/?q=<script>alert(1)</script>'
+    		));
+    	$this->assertFalse($result->is_allowed());
+    	$this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
     public function test_form_body_sqli_blocked(): void
     {
-        $result = $this->bb->run_test_package(RequestPackage::create_for_test(
-            'Mozilla/5.0',
-            '192.0.2.1',
-            'POST',
-            '/comment',
-            [
-                'Content-Type' => 'application/x-www-form-urlencoded',
-                'Accept' => 'text/html',
-                'Referer' => 'https://example.com/page',
-            ],
-            ['body' => 'test union select 1 from users']
-        ));
-        $this->assertFalse($result->is_allowed());
-        $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+    	$result = $this->bb->run_test_package(RequestPackage::create_for_test(
+    		'Mozilla/5.0',
+    		'192.0.2.1',
+    		'POST',
+    		'/comment',
+    		[
+    			'Content-Type' => 'application/x-www-form-urlencoded',
+    			'Accept' => 'text/html',
+    			'Referer' => 'https://example.com/page',
+    		],
+    		['body' => 'test union select 1 from users']
+    		));
+    	$this->assertFalse($result->is_allowed());
+    	$this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
     public function test_json_body_sqli_allowed(): void

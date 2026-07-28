@@ -19,6 +19,11 @@ class DnsblDetector
 
 	public function detect(RequestPackage $package): ?Result
 	{
+		// Check if DNSBL is actually enabled
+		if (empty($this->config->dnsbl_lists) && empty($this->config->httpbl_key)) {
+			return null;
+		}
+
 		if (IpUtil::is_ipv6($package->ip)) {
 			return null; // DNSBL typically IPv4 only
 		}

@@ -1,4 +1,5 @@
 <?php
+// src/Detection/AgenticBehaviorDetector.php
 
 namespace BadBehaviour\Detection;
 
@@ -90,10 +91,15 @@ class AgenticBehaviorDetector
 
 			$burst = 0;
 			$burst_time = 0;
-			for ($i = $pause_idx; $i < min($pause_idx + 10, count($requests)); $i++) {
+			$end = min($pause_idx + 10, count($requests));
+
+			for ($i = $pause_idx; $i < $end; $i++) {
 				if ($this->is_asset_request_uri($requests[$i]['uri'])) {
 					$burst++;
-					$burst_time += $requests[$i]['time'] - ($i > $pause_idx ? $requests[$i-1]['time'] : $requests[$i]['time']);
+					// FIX: Only calculate burst_time if we have a previous request
+					if ($i > $pause_idx) {
+						$burst_time += $requests[$i]['time'] - $requests[$i-1]['time'];
+					}
 				}
 			}
 
@@ -116,8 +122,12 @@ class AgenticBehaviorDetector
 		foreach ($recent as $req) {
 			$path = parse_url($req['uri'], PHP_URL_PATH) ?? '';
 			$top_level = $this->get_top_level_path($path);
-			if ($top_level) $paths[] = $top_level;
+			if ($top_level !== null) {
+				$paths[] = $top_level;
+			}
 		}
+
+		if (empty($paths)) return false;
 
 		$unique = count(array_unique($paths));
 		$total = count($paths);

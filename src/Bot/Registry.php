@@ -399,17 +399,6 @@ class Registry
 				robots_txt_token: 'PhindBot',
 				default_action: BotAction::CHALLENGE,
 			),
-			'brave' => new BotDefinition(
-				id: 'bravebot',
-				name: 'Brave Search & AI Crawler',
-				user_agent_patterns: ['Bravebot', 'Brave Search'],
-				host_patterns: ['brave.com', 'search.brave.com'],
-				ip_ranges: [],  // Dynamic fetching recommended
-				verify_dns: false,  // Brave doesn't support reverse DNS verification
-				category: BotCategory::SEARCH_ENGINE,
-				robots_txt_token: 'Bravebot',
-				default_action: BotAction::ALLOW,
-			),
 		];
 	}
 

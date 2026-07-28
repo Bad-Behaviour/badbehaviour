@@ -129,6 +129,9 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 			'inspect_multipart_body'     => $nested['inspect_multipart_body'] ?? false,
 			'enable_behavioral_analysis' => $nested['enable_behavioral_analysis'] ?? true,
 			'enable_ai_crawler_control'  => $nested['enable_ai_crawler_control'] ?? true,
+			'enable_client_hints_validation' => $nested['enable_client_hints_validation'] ?? true,
+			'enable_agentic_detection'   => $nested['enable_agentic_detection'] ?? true,
+			'enable_dynamic_ip_ranges'   => $nested['enable_dynamic_ip_ranges'] ?? true,
 		];
 	}
 

@@ -75,6 +75,9 @@ readonly class Configuration
         public bool $inspect_multipart_body = false,
         public bool $enable_behavioral_analysis = true,
         public bool $enable_ai_crawler_control = true,
+    	public bool $enable_dynamic_ip_ranges = true,
+    	public bool $enable_client_hints_validation = true,
+    	public bool $enable_agentic_detection = true,
 
         // Dependencies (injected)
         public ?AdapterInterface $adapter = null,
@@ -190,6 +193,9 @@ readonly class Configuration
             inspect_multipart_body: (bool)($merged['inspect_multipart_body'] ?? false),
             enable_behavioral_analysis: (bool)($merged['enable_behavioral_analysis'] ?? true),
             enable_ai_crawler_control: (bool)($merged['enable_ai_crawler_control'] ?? true),
+        	enable_dynamic_ip_ranges: (bool)($merged['enable_dynamic_ip_ranges'] ?? true),
+        	enable_client_hints_validation: (bool)($merged['enable_client_hints_validation'] ?? true),
+        	enable_agentic_detection: (bool)($merged['enable_agentic_detection'] ?? true),
 
             adapter: $adapter,
         );
@@ -232,6 +238,9 @@ readonly class Configuration
             'inspect_multipart_body' => false,
             'enable_behavioral_analysis' => true,
             'enable_ai_crawler_control' => true,
+        	'enable_dynamic_ip_ranges' => true,
+        	'enable_client_hints_validation' => true,
+        	'enable_agentic_detection' => true,
         ];
     }
 
@@ -295,6 +304,9 @@ readonly class Configuration
     		'inspect_multipart_body' => $this->inspect_multipart_body,
     		'enable_behavioral_analysis' => $this->enable_behavioral_analysis,
     		'enable_ai_crawler_control' => $this->enable_ai_crawler_control,
+    		'enable_dynamic_ip_ranges' => $this->enable_dynamic_ip_ranges,
+    		'enable_client_hints_validation' => $this->enable_client_hints_validation,
+    		'enable_agentic_detection' => $this->enable_agentic_detection,
     	];
     }
 

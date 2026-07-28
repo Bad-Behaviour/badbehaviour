@@ -4,10 +4,9 @@ namespace BadBehaviour\Detection;
 
 use BadBehaviour\Bot\Registry;
 use BadBehaviour\Bot\BotDefinition;
-use BadBehaviour\Bot\BotCategory;
-use BadBehaviour\Bot\BotAction;
 use BadBehaviour\Configuration;
 use BadBehaviour\Core\Interfaces\AdapterInterface;
+use BadBehaviour\Feeds\FeedRegistry;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
@@ -18,11 +17,34 @@ class BotDetector
 	private Configuration $config;
 	private AdapterInterface $adapter;
 	private array $dns_cache = [];
+	private ?array $dynamic_ranges = null;
 
 	public function __construct(Configuration $config, AdapterInterface $adapter)
 	{
 		$this->config = $config;
 		$this->adapter = $adapter;
+	}
+
+	private function get_dynamic_ranges(): array
+	{
+		if ($this->dynamic_ranges !== null) {
+			return $this->dynamic_ranges;
+		}
+
+		// Only fetch if enabled in config
+		if (!$this->config->enable_dynamic_ip_ranges ?? true) {
+			return [];
+		}
+
+		try {
+			$feed_registry = new FeedRegistry($this->adapter);
+			$this->dynamic_ranges = $feed_registry->fetch_all();
+		} catch (\Throwable $e) {
+			error_log("[BadBehaviour] Dynamic IP ranges fetch failed: " . $e->getMessage());
+			$this->dynamic_ranges = [];
+		}
+
+		return $this->dynamic_ranges;
 	}
 
 	public function detect(RequestPackage $package): ?Result
@@ -31,8 +53,8 @@ class BotDetector
 		$ua = $package->user_agent;
 		$ua_lower = strtolower($ua);
 
-		// Quick check: if UA parser already identified as bot, boost confidence
-		$ua_parsed_bot = $package->ua_is_bot ?? false;
+		// Get dynamic ranges (cached)
+		$dynamic_ranges = $this->get_dynamic_ranges();
 
 		foreach (Registry::all() as $bot_id => $def) {
 			// UA match
@@ -45,8 +67,9 @@ class BotDetector
 			}
 			if (!$ua_match) continue;
 
-			// IP match
-			$ip_match = !empty($def->ip_ranges) && IpUtil::match_any($ip, $def->ip_ranges);
+			// IP match: STATIC + DYNAMIC
+			$all_ranges = array_merge($def->ip_ranges, $dynamic_ranges[$bot_id] ?? []);
+			$ip_match = !empty($all_ranges) && IpUtil::match_any($ip, $all_ranges);
 
 			// DNS verification
 			$dns_verified = false;

@@ -17,6 +17,8 @@ use BadBehaviour\Detection\BehavioralDetector;
 use BadBehaviour\Detection\FingerprintDetector;
 use BadBehaviour\Detection\RateLimitDetector;
 use BadBehaviour\Detection\DnsblDetector;
+use BadBehaviour\Detection\ClientHintsDetector;
+use BadBehaviour\Detection\AgenticBehaviorDetector;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Util\HeaderUtil;
 use BadBehaviour\Util\IpUtil;
@@ -35,6 +37,8 @@ class BadBehaviour
 	private FingerprintDetector $fingerprint_detector;
 	private RateLimitDetector $rate_limit_detector;
 	private DnsblDetector $dnsbl_detector;
+	private ClientHintsDetector $client_hints_detector;
+	private AgenticBehaviorDetector $agentic_detector;
 
 	public function __construct(Configuration $config)
 	{
@@ -50,6 +54,8 @@ class BadBehaviour
 		$this->fingerprint_detector = new FingerprintDetector($this->config, $this->adapter);
 		$this->rate_limit_detector = new RateLimitDetector($this->config, $this->adapter);
 		$this->dnsbl_detector = new DnsblDetector($this->config);
+		$this->client_hints_detector = new ClientHintsDetector($this->config);
+		$this->agentic_detector = new AgenticBehaviorDetector($this->config, $this->adapter);
 	}
 
 	public function run(array $server = null): Result
@@ -115,25 +121,25 @@ class BadBehaviour
 		if ($this->should_skip_static($package->request_uri)) {
 			return Result::allow($package);
 		}
-		
+
 		$ja3 = HeaderUtil::get_ja3_fingerprint();
 		$h2 = HeaderUtil::get_h2_settings();
 		$package = $package->with_enrichment(null, null, $ja3, $h2);
-		
+
 		$result = $this->detect($package);
-		
+
 		// Same logging logic
 		if ($this->config->logging) {
 			$should_log = !$result->is_allowed() || $this->config->verbose;
-			
+
 			if ($should_log) {
 				$this->adapter->log_request($package, $result);
 			}
 		}
-		
+
 		return $result;
 	}
-	
+
 	public function handle_result(Result $result): never
 	{
 		if ($result->is_allowed()) {
@@ -150,57 +156,51 @@ class BadBehaviour
 	private function detect(RequestPackage $package): Result
 	{
 		// 1. Whitelist
-		if ($this->is_whitelisted($package)) {
-			return Result::allow($package);
-		}
+		if ($this->is_whitelisted($package)) return Result::allow($package);
 
 		// 2. Custom Rules
-		if ($result = $this->check_custom_rules($package)) {
-			return $result;
+		if ($result = $this->check_custom_rules($package)) return $result;
+
+		// 3. Known Bots (verified ALLOW)
+		if ($result = $this->bot_detector->detect($package)) return $result;
+
+		// 4. Client Hints Validation (catches spoofed UAs)
+		if ($this->config->enable_client_hints_validation) {
+			if ($result = $this->client_hints_detector->detect($package)) return $result;
 		}
 
-		// 3. Known Bots (verified search engines/AI BYPASS ALL)
-		if ($result = $this->bot_detector->detect($package)) {
-			return $result;
-		}
+		// 5. Blacklist (attacks, malicious UA)
+		if ($result = $this->blacklist_detector->detect($package)) return $result;
 
-		// 4. Blacklist (malicious UA, URL attacks, form body)
-		if ($result = $this->blacklist_detector->detect($package)) {
-			return $result;
-		}
-
-		// 5. Behavioral (rate anomalies, rotating UA, think time, headers)
+		// 6. Behavioral (rate, rotating UA, think time)
 		if ($this->config->enable_behavioral_analysis) {
-			if ($result = $this->behavioral_detector->detect($package)) {
-				return $result;
-			}
+			if ($result = $this->behavioral_detector->detect($package)) return $result;
 		}
 
-		// 6. Rate limiting
+		// 7. Agentic Detection (AI agent patterns)
+		if ($this->config->enable_agentic_detection) {
+			if ($result = $this->agentic_detector->detect($package)) return $result;
+		}
+
+		// 8. Rate limiting
 		if ($this->config->rate_limit_enabled) {
-			if ($result = $this->rate_limit_detector->detect($package)) {
-				return $result;
-			}
+			if ($result = $this->rate_limit_detector->detect($package)) return $result;
 		}
 
-		// 7. DNSBL / http:BL (opt-in, runs last)
+		// 9. DNSBL
 		if ($this->config->dnsbl_enabled) {
-			if ($result = $this->dnsbl_detector->detect($package)) {
-				return $result;
-			}
+			if ($result = $this->dnsbl_detector->detect($package)) return $result;
 		}
 
-		// 8. Fingerprinting (opt-in)
+		// 10. Fingerprinting
 		if ($this->config->enable_fingerprinting) {
-			if ($result = $this->fingerprint_detector->detect($package)) {
-				return $result;
-			}
+			if ($result = $this->fingerprint_detector->detect($package)) return $result;
 		}
 
 		return Result::allow($package);
 	}
 
-	// === NEW: Static Resource Skip Logic ===
+	// === Static Resource Skip Logic ===
 	private function should_skip_static(string $uri): bool
 	{
 		$path = parse_url($uri, PHP_URL_PATH) ?? $uri;

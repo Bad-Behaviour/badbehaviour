@@ -56,11 +56,6 @@ class MediaWikiAdapter implements AdapterInterface, CacheInterface
 		return $base_settings;
 	}
 
-	public function get_admin_settings(): array
-	{
-		return $this->get_settings();
-	}
-
 	private function find_config_file(): ?string
 	{
 		// Check common locations

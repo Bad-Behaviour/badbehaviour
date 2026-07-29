@@ -32,11 +32,6 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 		return Configuration::from_file($file, $this)->to_array();
 	}
 
-	public function get_admin_settings(): array
-	{
-		return $this->get_settings();
-	}
-
 	public function get_whitelist(): array
 	{
 		$file = __DIR__ . '/../../../config/bb_whitelist.conf';

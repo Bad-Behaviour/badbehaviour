@@ -786,7 +786,7 @@ de = "DE"
 
 ## Migration from INI Format (2.x → 3.0)
 
-The 2.x INI format is replaced by `bb_config.php`. See [`MIGRATION.md`](MIGRATION.md) for the full conversion guide.
+The 2.x INI format is replaced by `bb_config.php`. See [`UPGRADE.md`](UPGRADE.md) for the full conversion guide.
 
 **Quick conversion example:**
 

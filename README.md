@@ -291,6 +291,65 @@ return [
 
 See [`CONFIGURATION.md`](docs/CONFIGURATION.md) for the complete reference.
 
+### Configuration Profiles
+
+Three reference profiles cover ~95% of use cases. Pick one as your starting point, then customize.
+
+| | **Default** | **Medium** | **Strict** |
+|---|---|---|---|
+| Compatibility | All browsers & tools | Modern browsers + most tools | Chromium 89+ / Firefox 100+ / Safari 15+ |
+| False positive risk | 🟢 Minimal | 🟡 Low (monitor 1–2 weeks per feature) | 🔴 High (full FP audit first) |
+| Setup effort | None — drop-in | ~30 min monitoring, then flip switches | Multi-week rollout |
+| Best for | 2.x migration, shared hosting, public CMS | Production sites with monitored traffic | Internal APIs, paid content, abuse targets |
+
+#### Quick decision
+
+```
+Migrating from 2.x or shared hosting?
+  → DEFAULT
+
+Production site with modern browsers + monitoring?
+  → MEDIUM (after 1-2 weeks soak per new feature)
+
+Internal API / B2B / paid content / high-abuse target?
+  → STRICT (with full FP audit first)
+
+Public CMS with mixed audience (old browsers, AJAX, uploads)?
+  → DEFAULT (strict would break too much)
+```
+
+#### What breaks at each level
+
+| Client | Default | Medium | Strict |
+|--------|:-------:|:------:|:------:|
+| Chrome 89+ | ✅ | ✅ | ✅ |
+| Chrome < 89 | ✅ | ⚠️ | 🔴 |
+| Firefox (any) | ✅ | ✅ | ⚠️ if `strict` |
+| Safari 15+ | ✅ | ✅ | ✅ |
+| Safari < 15 | ✅ | ✅ | 🔴 |
+| Edge 89+ | ✅ | ✅ | ✅ |
+| IE 11 | ✅ | ✅ | 🔴 |
+| Electron apps | ✅ | ⚠️ needs whitelist | 🔴 |
+| curl / wget / Python | ✅ | ✅ | ✅ |
+| AJAX / fetch / XHR | ✅ | ✅ | ⚠️ if `inspect_json_body` |
+| File uploads | ✅ | ✅ | 🔴 if `inspect_multipart_body` |
+| Webhooks (off-site POST) | ✅ | ✅ | ⚠️ if `offsite_forms` |
+| AI agents (Brave Leo, etc.) | ❌ allowed | ✅ detected | ✅ detected |
+
+✅ works • ⚠️ may need config • 🔴 will break • ❌ not detected
+
+See [`CONFIGURATION.md`](docs/CONFIGURATION.md#configuration-profiles) for full profile configs and per-setting rationale.
+
+#### Hard points to remember
+
+- **Firefox does NOT send Sec-CH-UA headers** — Client Hints validation ignores Firefox/Safari by design. Only Chromium-based browsers are validated.
+- **Electron apps** (Slack, VS Code, Discord) send Chrome UA but no Client Hints — they'll be blocked at Medium+. Add to whitelist if needed.
+- **Agentic detection requires session cookies** — anonymous traffic is skipped entirely.
+- **`strict = true`** requires `Accept-Encoding` header — breaks some privacy-focused browsers.
+- **`inspect_json_body` / `inspect_multipart_body`** — almost never safe to enable on public sites; breaks legitimate code snippets and uploads.
+
+---
+
 ### Core Settings
 
 | Setting | Type | Default | Risk | When to Enable |

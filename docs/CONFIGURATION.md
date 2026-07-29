@@ -171,6 +171,270 @@ return [
 
 ---
 
+## Configuration Profiles
+
+Three reference profiles cover ~95% of deployments. Pick one as your starting point, then customize per [`Complete Settings Reference`](#complete-settings-reference).
+
+### Decision flowchart
+
+```
+START
+  │
+  ├─ Migrating from 2.x or shared hosting?
+  │   └─→ DEFAULT profile
+  │
+  ├─ Production site with modern browser traffic?
+  │   ├─ Have monitoring infrastructure?
+  │   │   └─→ MEDIUM profile (after 1-2 weeks soak per feature)
+  │   └─ No monitoring capacity?
+  │       └─→ DEFAULT + show_detailed_block_page = true
+  │
+  ├─ Internal API / B2B / paid content / high abuse target?
+  │   └─→ STRICT profile (with full FP audit first)
+  │
+  └─ Public CMS with mixed audience (old browsers, AJAX, uploads)?
+      └─→ DEFAULT (strict would break too much)
+```
+
+### Profile: **Default** (drop-in 2.x replacement)
+
+**Use when:**
+- Migrating from 2.x and want zero behavior change
+- You have no monitoring infrastructure yet
+- Site has long-tail browser users (old Firefox, IE, niche tools)
+- AJAX / JSON APIs / file uploads are core functionality
+
+**What it does:**
+- Blocks only clear attacks (SQLi, XSS in URLs, malicious UAs)
+- Allows all known bots, all HTTP tools, all modern browsers
+- DNS-verified search engines and AI crawlers bypass everything
+
+**Configuration:**
+
+```php
+<?php
+return [
+    // ===== CORE — all safe defaults =====
+    'logging'                    => true,
+    'verbose'                    => false,
+    'strict'                     => false,
+    'offsite_forms'              => false,
+
+    // Block page
+    'show_contact_info'          => false,
+    'show_detailed_block_page'   => false,
+
+    // Reverse proxy (only if behind Cloudflare/CDN — see Medium profile)
+    'reverse_proxy' => [
+        'enabled'   => false,
+        'header'    => 'X-Forwarded-For',
+        'addresses' => [],
+    ],
+
+    // AI crawlers — permissive allowlist
+    'ai_crawlers' => [
+        'allowed'          => ['GPTBot', 'ClaudeBot', 'Google-Extended',
+                              'PerplexityBot', 'GrokBot', 'MistralBot',
+                              'YouBot', 'Meta-ExternalAgent'],
+        'block_unverified' => true,
+        'strict'           => false,
+    ],
+
+    // Rate limits — standard
+    'rate_limits' => [
+        'enabled'    => true,
+        'global'     => ['requests' => 1000, 'window' => 3600],
+        'per_minute' => ['requests' => 60,   'window' => 60],
+        'post'       => ['requests' => 30,   'window' => 3600],
+        'login'      => ['requests' => 10,   'window' => 900],
+    ],
+
+    // ===== 3.0 FEATURES — all off =====
+    'enable_fingerprinting'          => false,
+    'inspect_json_body'              => false,
+    'inspect_multipart_body'         => false,
+    'enable_behavioral_analysis'     => true,   // safe (rotating UA, rate)
+    'enable_ai_crawler_control'      => true,
+    'enable_client_hints_validation' => false,  // would break old Firefox/IE
+    'enable_agentic_detection'       => false,  // would break power users
+    'enable_dynamic_ip_ranges'       => false,  // experimental
+];
+```
+
+**Hard points:**
+- ✅ All AJAX / JSON / fetch / XHR requests work
+- ✅ All file uploads work
+- ✅ curl / wget / Python-requests work
+- ✅ Firefox 1–88 works (no Sec-CH-UA required)
+- ✅ IE 11 works (no modern headers required)
+- ❌ Does NOT catch spoofed UAs from real Chromium browsers
+- ❌ Does NOT catch AI agents mimicking humans
+
+---
+
+### Profile: **Medium** (production-grade, monitored)
+
+**Use when:**
+- You've run Default for 1–2 weeks and reviewed logs
+- Your traffic is mostly modern browsers (Chrome 89+, Firefox 100+, Safari 15+)
+- You want to catch spoofed UAs and emerging AI agent traffic
+- You can monitor for false positives (recommend a 1-week soak period per feature)
+
+**What it adds over Default:**
+- Client Hints validation — catches most UA spoofing from Chromium browsers
+- Agentic detection — catches AI scrapers mimicking human behavior
+- Dynamic IP ranges — fresh ranges from Google/Bing/OpenAI/etc.
+- Detailed block page — easier user support
+
+**Configuration:** Start from Default, then flip these:
+
+```php
+<?php
+return [
+    // ... (all Default settings above) ...
+
+    // Block page — informative for support
+    'show_contact_info'        => true,
+    'show_detailed_block_page' => true,
+
+    // ===== TURN THESE ON ONE AT A TIME =====
+    // Week 1: Client Hints (lowest FP risk of the new detectors)
+    'enable_client_hints_validation' => true,
+
+    // Week 2: Dynamic IP ranges (requires cron first!)
+    'enable_dynamic_ip_ranges'       => true,
+
+    // Week 3: Agentic detection (after you understand your power users)
+    'enable_agentic_detection'       => true,
+
+    // Fingerprinting — only after 2+ weeks of clean logs
+    'enable_fingerprinting'          => false,  // still off — needs curated bad_ja3[]
+];
+```
+
+**Hard points — what to watch for:**
+
+- ⚠️ **Firefox does NOT send Sec-CH-UA** — only Chromium-based browsers do. Client Hints validation ignores Firefox/Safari by design.
+- ⚠️ **Electron apps** (Slack, VS Code, Discord) spoof Chrome UA but don't send Client Hints — they'll get blocked. Add to whitelist if needed:
+
+  ```ini
+  ; config/bb_whitelist.conf
+  [useragent]
+  electron_apps = "^Mozilla/.*Electron/.*Chrome/[\\d.]+$"
+  ```
+
+- ⚠️ **Old Chromium (< 89)** — ~3% of traffic in 2024. Won't send Client Hints. Either accept the FP rate or whitelist old Chrome.
+- ⚠️ **Agentic detection requires session cookies** — anonymous traffic is skipped. If you don't use sessions, this detector does nothing.
+- ⚠️ **Agentic FP triggers** — single-page apps with rapid navigation, power users with many tabs, automated testing. Monitor for `type: 'agentic_nonlinear'` in logs.
+- ⚠️ **Dynamic IP ranges** — requires `bin/update-ip-ranges.php` on cron. Without it, falls back to static ranges (same as Default). See [experimental notes](#enabler_dynamic_ip_ranges).
+
+**Recommended rollout order for Medium:**
+
+1. Day 1: flip `show_detailed_block_page = true` (no FP risk, just observability)
+2. Week 1: enable `enable_client_hints_validation` (lowest FP risk — Firefox/Safari/old Chrome are not validated)
+3. Week 2: deploy `bin/update-ip-ranges.php` cron, then enable `enable_dynamic_ip_ranges`
+4. Week 3: enable `enable_agentic_detection` after you've audited your power users
+5. Week 4+: consider `enable_fingerprinting` only if you've curated `fingerprints.bad_ja3[]`
+
+---
+
+### Profile: **Strict** (high-security / API-only)
+
+**Use when:**
+- You control all clients (internal API, B2B, paid content)
+- Zero tolerance for spoofed traffic
+- Your users all use modern browsers
+- You have ops capacity to handle support tickets
+
+**What it adds over Medium:**
+- Strict mode — extra header validation (Accept-Encoding required)
+- Fingerprinting — blocks known-bad JA3/H2 from config
+- Body inspection — checks JSON bodies for attack patterns
+- Stricter rate limits
+- Tight AI allowlist (or zero AI)
+
+**Configuration:** Start from Medium, then add:
+
+```php
+<?php
+return [
+    // ... (all Medium settings above) ...
+
+    // ===== STRICT MODE =====
+    'strict' => true,  // requires Accept-Encoding header — breaks old browsers
+
+    // Inspect JSON request bodies
+    // ⚠️ WILL break legitimate code snippets in JSON payloads
+    'inspect_json_body' => true,
+
+    // Tighter rate limits
+    'rate_limits' => [
+        'enabled'    => true,
+        'global'     => ['requests' => 500,  'window' => 3600],
+        'per_minute' => ['requests' => 30,   'window' => 60],
+        'post'       => ['requests' => 10,   'window' => 3600],
+        'login'      => ['requests' => 5,    'window' => 900],
+    ],
+
+    // Fingerprinting — curate known-bad fingerprints
+    'enable_fingerprinting' => true,
+    'fingerprints' => [
+        'bad_ja3' => [
+            // known-bad TLS fingerprints
+            '771,4865-4867-4866-...,0-23-...,29-23-24,0',
+        ],
+        'bad_h2' => [
+            // known-bad H2 settings hashes
+        ],
+        'bot_header_orders' => [
+            // known-bot header order hashes
+        ],
+    ],
+
+    // Tighter AI policy (uncomment to block all AI)
+    'ai_crawlers' => [
+        'allowed'          => [],  // no AI allowed
+        'block_unverified' => true,
+        'strict'           => true,  // block even verified
+    ],
+];
+```
+
+**Hard points:**
+
+- 🔴 **`strict = true`** — blocks any browser that doesn't send `Accept-Encoding`. Most modern browsers do, but some privacy-focused ones don't.
+- 🔴 **`inspect_json_body = true`** — JSON payloads containing `union select`, `<script>`, etc. are blocked. **Will break** wiki editors, code-sharing sites, any feature that sends code in JSON.
+- 🔴 **`inspect_multipart_body = true`** — same risk for file uploads. Almost never safe.
+- 🔴 **Tight rate limits** — generous crawlers and power users will hit limits. Monitor 429 responses.
+- 🔴 **JA3 fingerprinting** — only effective if you've curated `bad_ja3[]` from observed attacks. Empty config = no effect.
+- 🔴 **Zero AI policy** — legitimate academic research, archival, and content syndication use cases will be blocked. Document this publicly.
+
+---
+
+### Compatibility matrix
+
+What breaks at each level:
+
+| Client type | Default | Medium | Strict |
+|-------------|:-------:|:------:|:------:|
+| Chrome 89+ (desktop) | ✅ | ✅ | ✅ |
+| Chrome < 89 | ✅ | ⚠️ blocked by Client Hints | 🔴 blocked |
+| Firefox (any version) | ✅ | ✅ | ⚠️ blocked if `strict` |
+| Safari 15+ | ✅ | ✅ | ✅ |
+| Safari < 15 | ✅ | ✅ | 🔴 blocked |
+| Edge 89+ | ✅ | ✅ | ✅ |
+| Internet Explorer 11 | ✅ | ✅ | 🔴 blocked |
+| Electron apps (Slack, VS Code, Discord) | ✅ | ⚠️ need whitelist | 🔴 blocked |
+| curl / wget / Python-requests | ✅ | ✅ | ✅ |
+| AJAX / fetch / XHR | ✅ | ✅ | ⚠️ if `inspect_json_body` |
+| File uploads | ✅ | ✅ | 🔴 if `inspect_multipart_body` |
+| Webhooks (off-site POST) | ✅ | ✅ | ⚠️ if `offsite_forms` |
+| AI agents (Brave Leo, etc.) | ❌ allowed | ✅ detected | ✅ detected |
+
+✅ works • ⚠️ may need config adjustment • 🔴 will break • ❌ not detected
+
+---
+
 ## Complete Settings Reference
 
 ### Core

@@ -373,7 +373,9 @@ cp config/bb_config.example.php config/bb_config.php
 # Edit config/bb_config.php and translate from your old settings.ini
 ```
 
-A side-by-side converter for common keys is in [CONFIGURATION.md](CONFIGURATION.md#migration-from-ini-format-2x--30).
+**Start with the [Default configuration profile](CONFIGURATION.md#configuration-profiles)** — it matches 2.x behavior exactly. After 1–2 weeks of monitoring, graduate to [Medium](CONFIGURATION.md#profile-medium-production-grade-monitored) by enabling the new detectors one at a time.
+
+A side-by-side converter for common keys is in [CONFIGURATION.md](CONFIGURATION.md#migration-from-ini-format-2x--30). The full three-profile matrix with compatibility trade-offs is in [Configuration Profiles](CONFIGURATION.md#configuration-profiles).
 
 ### 3. Run Database Migration
 

@@ -25,16 +25,31 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 	}
 
 	// =========================================================================
-	// SETTINGS — Single source: config/bad_behaviour.php
+	// SETTINGS — Single source: config/bb_config.php
 	// =========================================================================
 
 	public function get_settings(): array
 	{
-		$file = defined('CONFIG_DIR') ? CONFIG_DIR . '/bad_behaviour.php' : 'config/bad_behaviour.php';
+		// In WackoWiki context: CONFIG_DIR/bb_config.php
+		// In badbehaviour repo (tests): __DIR__/../../../config/bb_config.php
+		// Fallback: config/bb_config.php (relative to CWD)
 
-		if (!file_exists($file)) {
-			// Fallback for non-WackoWiki contexts
-			$file = __DIR__ . '/../../../config/bad_behaviour.php';
+		$possible_paths = [
+			defined('CONFIG_DIR') ? CONFIG_DIR . '/bb_config.php' : null,
+			'config/bb_config.php',                           // Relative to CWD
+			__DIR__ . '/../../../config/bb_config.php',       // From badbehaviour repo
+		];
+
+		$file = null;
+		foreach ($possible_paths as $path) {
+			if ($path && file_exists($path)) {
+				$file = $path;
+				break;
+			}
+		}
+
+		if (!$file) {
+			throw new \RuntimeException('BadBehaviour config file not found. Checked: ' . implode(', ', array_filter($possible_paths)));
 		}
 
 		$settings = Configuration::from_file($file, $this)->to_array();
@@ -59,6 +74,9 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 			'verbose'          => $nested['verbose'] ?? false,
 			'logging'          => $nested['logging'] ?? true,
 			'offsite_forms'    => $nested['offsite_forms'] ?? false,
+
+			'show_contact_info'         => $nested['show_contact_info'] ?? false,
+			'show_detailed_block_page'   => $nested['show_detailed_block_page'] ?? false,
 
 			// ===== REVERSE PROXY (flat) =====
 			'reverse_proxy'            => $nested['reverse_proxy']['enabled'] ?? false,

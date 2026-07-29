@@ -15,6 +15,11 @@ readonly class Configuration
         public bool $verbose = false,
         public bool $strict = false,
         public bool $offsite_forms = false,
+    	public string $log_table = '',
+
+        // Block page settings
+    	public bool $show_contact_info = false,
+    	public bool $show_detailed_block_page = false,
 
         // Reverse Proxy
         public bool $reverse_proxy = false,
@@ -111,94 +116,93 @@ readonly class Configuration
      */
     public static function from_array(array $config, ?AdapterInterface $adapter = null): self
     {
-        // Deep merge with defaults
-        $defaults = self::get_defaults();
-        $merged = self::array_merge_recursive($defaults, $config);
+    	$defaults = self::get_defaults();
+    	$merged = self::array_merge_recursive($defaults, $config);
 
-        // Extract nested sections
-        $reverse_proxy = $merged['reverse_proxy'] ?? [];
-        $httpbl = $merged['httpbl'] ?? [];
-        $dnsbl = $merged['dnsbl'] ?? [];
-        $ai_crawlers = $merged['ai_crawlers'] ?? [];
-        $rate_limits = $merged['rate_limits'] ?? [];
-        $challenge = $merged['challenge'] ?? [];
-        $performance = $merged['performance'] ?? [];
-        $geoip = $merged['geoip'] ?? [];
-        $fingerprints = $merged['fingerprints'] ?? [];
-        $bot_categories = $merged['bot_categories'] ?? [];
+    	// Extract nested sections
+    	$reverse_proxy = $merged['reverse_proxy'] ?? [];
+    	$httpbl = $merged['httpbl'] ?? [];
+    	$dnsbl = $merged['dnsbl'] ?? [];
+    	$ai_crawlers = $merged['ai_crawlers'] ?? [];
+    	$rate_limits = $merged['rate_limits'] ?? [];
+    	$challenge = $merged['challenge'] ?? [];
+    	$performance = $merged['performance'] ?? [];
+    	$geoip = $merged['geoip'] ?? [];
+    	$fingerprints = $merged['fingerprints'] ?? [];
+    	$bot_categories = $merged['bot_categories'] ?? [];
 
-        return new self(
-            // Core
-            logging: $merged['logging'] ?? true,
-            verbose: $merged['verbose'] ?? false,
-            strict: $merged['strict'] ?? false,
-            offsite_forms: $merged['offsite_forms'] ?? false,
+    	// FIX: Proper clamping for httpbl
+    	$httpbl_threat = (int)($httpbl['threat'] ?? 25);
+    	$httpbl_threat = max(0, min(255, $httpbl_threat));
 
-            // Reverse Proxy
-            reverse_proxy: (bool)($reverse_proxy['enabled'] ?? false),
-            reverse_proxy_header: $reverse_proxy['header'] ?? 'X-Forwarded-For',
-            reverse_proxy_addresses: (array)($reverse_proxy['addresses'] ?? []),
+    	$httpbl_maxage = (int)($httpbl['maxage'] ?? 30);
+    	$httpbl_maxage = max(0, $httpbl_maxage);
 
-            // http:BL
-            httpbl_key: $httpbl['key'] ?? '',
-            httpbl_threat: (int)($httpbl['threat'] ?? 25),
-            httpbl_maxage: (int)($httpbl['maxage'] ?? 30),
+    	$show_contact_info = (bool)($merged['show_contact_info'] ?? false);
+    	$show_detailed_block_page = (bool)($merged['show_detailed_block_page'] ?? false);
 
-            // DNSBL
-            dnsbl_enabled: (bool)($dnsbl['enabled'] ?? false),
-            dnsbl_lists: (array)($dnsbl['lists'] ?? ['zen.spamhaus.org', 'bl.spamcop.net']),
+    	return new self(
+    		logging: $merged['logging'] ?? true,
+    		verbose: $merged['verbose'] ?? false,
+    		strict: $merged['strict'] ?? false,
+    		offsite_forms: $merged['offsite_forms'] ?? false,
 
-            // AI Crawlers
-            allowed_ai_crawlers: (array)($ai_crawlers['allowed'] ?? ['GPTBot', 'ClaudeBot', 'Google-Extended']),
-            block_unverified_ai: (bool)($ai_crawlers['block_unverified'] ?? true),
-            strict_ai: (bool)($ai_crawlers['strict'] ?? false),
-            strict_search_engines: (bool)($merged['strict_search_engines'] ?? false),
+    		show_contact_info: $show_contact_info,
+    		show_detailed_block_page: $show_detailed_block_page,
 
-            // Bot Categories
-            blocked_bot_categories: (array)($bot_categories['blocked'] ?? ['malicious']),
+    		reverse_proxy: (bool)($reverse_proxy['enabled'] ?? false),
+    		reverse_proxy_header: $reverse_proxy['header'] ?? 'X-Forwarded-For',
+    		reverse_proxy_addresses: (array)($reverse_proxy['addresses'] ?? []),
 
-            // Rate Limiting
-            rate_limit_enabled: (bool)($rate_limits['enabled'] ?? true),
-            rate_limits: self::normalize_rate_limits($rate_limits),
+    		httpbl_key: $httpbl['key'] ?? '',
+    		httpbl_threat: $httpbl_threat,
+    		httpbl_maxage: $httpbl_maxage,
 
-            // Custom Rules
-            custom_rules: (array)($merged['custom_rules'] ?? []),
+    		dnsbl_enabled: (bool)($dnsbl['enabled'] ?? false),
+    		dnsbl_lists: (array)($dnsbl['lists'] ?? ['zen.spamhaus.org', 'bl.spamcop.net']),
 
-            // Fingerprints
-            bad_ja3_fingerprints: (array)($fingerprints['bad_ja3'] ?? []),
-            bad_h2_fingerprints: (array)($fingerprints['bad_h2'] ?? []),
-            bot_header_orders: (array)($fingerprints['bot_header_orders'] ?? []),
-            expected_ja3: (array)($fingerprints['expected_ja3'] ?? []),
+    		allowed_ai_crawlers: (array)($ai_crawlers['allowed'] ?? ['GPTBot', 'ClaudeBot', 'Google-Extended']),
+    		block_unverified_ai: (bool)($ai_crawlers['block_unverified'] ?? true),
+    		strict_ai: (bool)($ai_crawlers['strict'] ?? false),
+    		strict_search_engines: (bool)($merged['strict_search_engines'] ?? false),
 
-            // GeoIP
-            geoip_enabled: (bool)($geoip['enabled'] ?? false),
-            geoip_database_path: $geoip['database_path'] ?? '',
-            blocked_countries: (array)($geoip['blocked_countries'] ?? []),
-            blocked_asns: (array)($geoip['blocked_asns'] ?? []),
+    		blocked_bot_categories: (array)($bot_categories['blocked'] ?? ['malicious']),
 
-            // Challenge
-            challenge_enabled: (bool)($challenge['enabled'] ?? false),
-            challenge_provider: $challenge['provider'] ?? 'builtin',
-            challenge_site_key: $challenge['site_key'] ?? '',
-            challenge_secret_key: $challenge['secret_key'] ?? '',
-            recaptcha_min_score: (float)($challenge['recaptcha_min_score'] ?? 0.5),
+    		rate_limit_enabled: (bool)($rate_limits['enabled'] ?? true),
+    		rate_limits: self::normalize_rate_limits($rate_limits),
 
-            // Performance
-            skip_static_extensions: (array)($performance['skip_extensions'] ?? self::default_skip_extensions()),
-            skip_static_paths: (array)($performance['skip_paths'] ?? self::default_skip_paths()),
+    		custom_rules: (array)($merged['custom_rules'] ?? []),
 
-            // 3.0 Features
-            enable_fingerprinting: (bool)($merged['enable_fingerprinting'] ?? false),
-            inspect_json_body: (bool)($merged['inspect_json_body'] ?? false),
-            inspect_multipart_body: (bool)($merged['inspect_multipart_body'] ?? false),
-            enable_behavioral_analysis: (bool)($merged['enable_behavioral_analysis'] ?? true),
-            enable_ai_crawler_control: (bool)($merged['enable_ai_crawler_control'] ?? true),
-        	enable_dynamic_ip_ranges: (bool)($merged['enable_dynamic_ip_ranges'] ?? false),
-        	enable_client_hints_validation: (bool)($merged['enable_client_hints_validation'] ?? true),
-        	enable_agentic_detection: (bool)($merged['enable_agentic_detection'] ?? true),
+    		bad_ja3_fingerprints: (array)($fingerprints['bad_ja3'] ?? []),
+    		bad_h2_fingerprints: (array)($fingerprints['bad_h2'] ?? []),
+    		bot_header_orders: (array)($fingerprints['bot_header_orders'] ?? []),
+    		expected_ja3: (array)($fingerprints['expected_ja3'] ?? []),
 
-            adapter: $adapter,
-        );
+    		geoip_enabled: (bool)($geoip['enabled'] ?? false),
+    		geoip_database_path: $geoip['database_path'] ?? '',
+    		blocked_countries: (array)($geoip['blocked_countries'] ?? []),
+    		blocked_asns: (array)($geoip['blocked_asns'] ?? []),
+
+    		challenge_enabled: (bool)($challenge['enabled'] ?? false),
+    		challenge_provider: $challenge['provider'] ?? 'builtin',
+    		challenge_site_key: $challenge['site_key'] ?? '',
+    		challenge_secret_key: $challenge['secret_key'] ?? '',
+    		recaptcha_min_score: (float)($challenge['recaptcha_min_score'] ?? 0.5),
+
+    		skip_static_extensions: (array)($performance['skip_extensions'] ?? self::default_skip_extensions()),
+    		skip_static_paths: (array)($performance['skip_paths'] ?? self::default_skip_paths()),
+
+    		enable_fingerprinting: (bool)($merged['enable_fingerprinting'] ?? false),
+    		inspect_json_body: (bool)($merged['inspect_json_body'] ?? false),
+    		inspect_multipart_body: (bool)($merged['inspect_multipart_body'] ?? false),
+    		enable_behavioral_analysis: (bool)($merged['enable_behavioral_analysis'] ?? true),
+    		enable_ai_crawler_control: (bool)($merged['enable_ai_crawler_control'] ?? true),
+    		enable_client_hints_validation: (bool)($merged['enable_client_hints_validation'] ?? true),
+    		enable_agentic_detection: (bool)($merged['enable_agentic_detection'] ?? true),
+    		enable_dynamic_ip_ranges: (bool)($merged['enable_dynamic_ip_ranges'] ?? false),
+
+    		adapter: $adapter,
+    		);
     }
 
     private static function get_defaults(): array
@@ -208,6 +212,8 @@ readonly class Configuration
             'verbose' => false,
             'strict' => false,
             'offsite_forms' => false,
+        	'show_contact_info' => false,
+        	'show_detailed_block_page' => false,
             'reverse_proxy' => ['enabled' => false, 'header' => 'X-Forwarded-For', 'addresses' => []],
             'httpbl' => ['key' => '', 'threat' => 25, 'maxage' => 30],
             'dnsbl' => ['enabled' => false, 'lists' => ['zen.spamhaus.org', 'bl.spamcop.net']],
@@ -251,6 +257,9 @@ readonly class Configuration
     		'verbose' => $this->verbose,
     		'strict' => $this->strict,
     		'offsite_forms' => $this->offsite_forms,
+    		'show_contact_info' => $this->show_contact_info,
+    		'show_detailed_block_page' => $this->show_detailed_block_page,
+
     		'reverse_proxy' => [
     			'enabled' => $this->reverse_proxy,
     			'header' => $this->reverse_proxy_header,

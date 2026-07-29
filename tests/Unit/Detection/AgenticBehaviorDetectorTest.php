@@ -41,6 +41,7 @@ class AgenticBehaviorDetectorTest extends TestCase
     public function test_no_session_id_returns_null(): void
     {
         $package = $this->createPackage(session_id: null);
+
         $this->assertNull($this->detector->detect($package));
     }
 
@@ -59,29 +60,29 @@ class AgenticBehaviorDetectorTest extends TestCase
 
     public function test_think_then_fetch_detected(): void
     {
-    	$time = time();
+        $time = time();
 
-    	$requests = [
-    		['time' => $time - 20, 'uri' => '/page1', 'method' => 'GET', 'assets' => false],
-    		['time' => $time - 5, 'uri' => '/style.css', 'method' => 'GET', 'assets' => true],
-    		['time' => $time - 4, 'uri' => '/script.js', 'method' => 'GET', 'assets' => true],
-    		['time' => $time - 3, 'uri' => '/font.woff2', 'method' => 'GET', 'assets' => true],
-    		['time' => $time - 2, 'uri' => '/image.png', 'method' => 'GET', 'assets' => true],
-    		['time' => $time - 1, 'uri' => '/api/data.json', 'method' => 'GET', 'assets' => true],  // ADD .json
-    	];
+        $requests = [
+            ['time' => $time - 20, 'uri' => '/page1', 'method' => 'GET', 'assets' => false],
+            ['time' => $time - 5, 'uri' => '/style.css', 'method' => 'GET', 'assets' => true],
+            ['time' => $time - 4, 'uri' => '/script.js', 'method' => 'GET', 'assets' => true],
+            ['time' => $time - 3, 'uri' => '/font.woff2', 'method' => 'GET', 'assets' => true],
+            ['time' => $time - 2, 'uri' => '/image.png', 'method' => 'GET', 'assets' => true],
+            ['time' => $time - 1, 'uri' => '/api/data.json', 'method' => 'GET', 'assets' => true],
+        ];
 
-    	$this->adapter->method('get_behavior_profile')
-    	->with('test-session')
-    	->willReturn(['request_log' => $requests]);
-    	$this->adapter->method('save_behavior_profile')
-    	->willReturn(true);
+        $this->adapter->method('get_behavior_profile')
+            ->with('test-session')
+            ->willReturn(['request_log' => $requests]);
+        $this->adapter->method('save_behavior_profile')
+            ->willReturn(true);
 
-    	$package = $this->createPackage();
-    	$result = $this->detector->detect($package);
+        $package = $this->createPackage();
+        $result = $this->detector->detect($package);
 
-    	$this->assertNotNull($result);
-    	$this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-    	$this->assertStringContainsString('think-then-fetch', $result->message);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
+        $this->assertStringContainsString('think-then-fetch', $result->message);
     }
 
     public function test_non_linear_navigation_detected(): void
@@ -100,7 +101,10 @@ class AgenticBehaviorDetectorTest extends TestCase
         }
 
         $this->adapter->method('get_behavior_profile')
+            ->with('test-session')
             ->willReturn(['request_log' => $requests]);
+        $this->adapter->method('save_behavior_profile')
+            ->willReturn(true);
 
         $package = $this->createPackage();
         $result = $this->detector->detect($package);
@@ -129,7 +133,10 @@ class AgenticBehaviorDetectorTest extends TestCase
         $requests[] = ['time' => $time - 16, 'uri' => '/style.css', 'method' => 'GET', 'assets' => true];
 
         $this->adapter->method('get_behavior_profile')
+            ->with('test-session')
             ->willReturn(['request_log' => $requests]);
+        $this->adapter->method('save_behavior_profile')
+            ->willReturn(true);
 
         $package = $this->createPackage();
         $result = $this->detector->detect($package);
@@ -154,7 +161,10 @@ class AgenticBehaviorDetectorTest extends TestCase
         $requests[] = ['time' => $time - 3, 'uri' => '/style2.css', 'method' => 'GET', 'assets' => true];
 
         $this->adapter->method('get_behavior_profile')
+            ->with('test-session')
             ->willReturn(['request_log' => $requests]);
+        $this->adapter->method('save_behavior_profile')
+            ->willReturn(true);
 
         $package = $this->createPackage();
         $result = $this->detector->detect($package);

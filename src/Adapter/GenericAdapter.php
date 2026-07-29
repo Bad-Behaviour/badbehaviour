@@ -22,7 +22,7 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 
 	public function get_settings(): array
 	{
-		$file = __DIR__ . '/../../../config/bad_behaviour.php';
+		$file = __DIR__ . '/../../../config/bb_config.php';
 
 		if (!file_exists($file)) {
 			// Return defaults only - no config file found

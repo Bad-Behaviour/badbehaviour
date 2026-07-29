@@ -15,10 +15,10 @@ class BlacklistDetectorTest extends TestCase
 
     protected function setUp(): void
     {
-    	$this->config = Configuration::from_array([
-    		'offsite_forms' => false,
-    	]);
-    	$this->detector = new BlacklistDetector($this->config);
+        $this->config = Configuration::from_array([
+            'offsite_forms' => false,
+        ]);
+        $this->detector = new BlacklistDetector($this->config);
     }
 
     public function test_empty_user_agent_blocked(): void
@@ -42,21 +42,21 @@ class BlacklistDetectorTest extends TestCase
         // curl is now http_tool, not blocked by prefix checks
         $package = RequestPackage::create_for_test('curl/8.18.0', '192.0.2.1');
         $result = $this->detector->detect($package);
-        $this->assertNull($result); // Allowed
+        $this->assertNull($result);
     }
 
     public function test_wget_ua_allowed(): void
     {
         $package = RequestPackage::create_for_test('Wget/1.21.4', '192.0.2.1');
         $result = $this->detector->detect($package);
-        $this->assertNull($result); // Allowed
+        $this->assertNull($result);
     }
 
     public function test_python_requests_ua_allowed(): void
     {
         $package = RequestPackage::create_for_test('python-requests/2.31.0', '192.0.2.1');
         $result = $this->detector->detect($package);
-        $this->assertNull($result); // Allowed
+        $this->assertNull($result);
     }
 
     public function test_malicious_ua_substring_blocked(): void
@@ -85,24 +85,15 @@ class BlacklistDetectorTest extends TestCase
 
     public function test_url_xss_blocked(): void
     {
-    	// Use 'search' instead of 'q' (which is in SAFE_URL_PARAMS)
-    	$package = RequestPackage::create_for_test(
-    		'Mozilla/5.0',
-    		'192.0.2.1',
-    		'GET',
-    		'/?search='
-    		);
-
-    	// DEBUG: Check what has_safe_params_only returns
-    	// $reflection = new ReflectionClass($this->detector);
-    	// $method = $reflection->getMethod('has_safe_params_only');
-    	// $method->setAccessible(true);
-    	// var_dump($method->invoke($this->detector, $package->request_uri));
-
-    	$result = $this->detector->detect($package);
-
-    	$this->assertNotNull($result, 'Expected blocked result for XSS in URL');
-    	$this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '192.0.2.1',
+            'GET',
+            '/?foo=<script>alert(1)</script>'
+        );
+        $result = $this->detector->detect($package);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
     public function test_url_path_traversal_blocked(): void
@@ -117,23 +108,23 @@ class BlacklistDetectorTest extends TestCase
     {
     	// Form data with SQLi - SHOULD BE BLOCKED
     	// Use create_for_test with explicit Content-Type
-    	$package = RequestPackage::create_for_test(
-    		'Mozilla/5.0',
-    		'192.0.2.1',
-    		'POST',
-    		'/comment',
-    		[
-    			'Host' => 'example.com',
-    			'Content-Type' => 'application/x-www-form-urlencoded',
-    			'Accept' => 'text/html',
-    			'Referer' => 'https://example.com/page',
-    		],
-    		['body' => 'test union select 1 from users']
-    		);
+        $package = RequestPackage::create_for_test(
+            'Mozilla/5.0',
+            '192.0.2.1',
+            'POST',
+            '/comment',
+            [
+                'Host' => 'example.com',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Accept' => 'text/html',
+                'Referer' => 'https://example.com/page',
+            ],
+            ['body' => 'test union select 1 from users']
+        );
 
-    	$result = $this->detector->detect($package);
-    	$this->assertNotNull($result);
-    	$this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+        $result = $this->detector->detect($package);
+        $this->assertNotNull($result);
+        $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
     public function test_post_json_body_attack_allowed(): void
@@ -153,7 +144,7 @@ class BlacklistDetectorTest extends TestCase
         );
 
         $result = $this->detector->detect($package);
-        $this->assertNull($result); // Allowed - JSON not inspected
+        $this->assertNull($result);
     }
 
     public function test_post_multipart_body_attack_allowed(): void
@@ -173,7 +164,7 @@ class BlacklistDetectorTest extends TestCase
         );
 
         $result = $this->detector->detect($package);
-        $this->assertNull($result); // Allowed - multipart not inspected
+        $this->assertNull($result);
     }
 
     public function test_trackback_suspicious_blocked(): void
@@ -285,6 +276,6 @@ class BlacklistDetectorTest extends TestCase
         );
 
         $result = $this->detector->detect($package);
-        $this->assertNull($result); // Allowed when offsite_forms=true
+        $this->assertNull($result);
     }
 }

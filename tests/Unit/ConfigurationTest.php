@@ -1,6 +1,8 @@
 <?php
 // tests/Unit/ConfigurationTest.php - COMPLETE FIXED
 
+declare(strict_types=1);
+
 namespace BadBehaviour\Tests\Unit;
 
 use BadBehaviour\Configuration;
@@ -42,60 +44,69 @@ class ConfigurationTest extends TestCase
 
     public function test_from_array_overrides(): void
     {
-    	$adapter = new GenericAdapter();
-    	$config = Configuration::from_array([
-    		'logging' => false,
-    		'strict' => true,
-    		'reverse_proxy' => [
-    			'enabled' => true,
-    			'header' => 'CF-Connecting-IP',
-    			'addresses' => ['10.0.0.0/8'],
-    		],
-    		'httpbl' => [  // NESTED
-    			'key' => 'test-key',
-    			'threat' => 50,
-    			'maxage' => 60,
-    		],
-    		'ai_crawlers' => [
-    			'allowed' => ['GPTBot', 'ClaudeBot'],
-    			'block_unverified' => false,
-    			'strict' => true,
-    		],
-    		'bot_categories' => [
-    			'blocked' => ['malicious', 'seo_crawler'],
-    		],
-    		'rate_limit_enabled' => false,
-    		'geoip_enabled' => true,
-    		'geoip_database_path' => '/path/to/geoip.mmdb',
-    		'blocked_countries' => ['KP', 'IR'],
-    		'challenge_enabled' => true,
-    		'challenge_provider' => 'hcaptcha',
-    		'challenge_site_key' => 'site-key',
-    		'challenge_secret_key' => 'secret-key',
-    		'recaptcha_min_score' => 0.7,
-    	], $adapter);
+        $adapter = new GenericAdapter();
+        $config = Configuration::from_array([
+            'logging' => false,
+            'strict' => true,
+            'reverse_proxy' => [
+                'enabled' => true,
+                'header' => 'CF-Connecting-IP',
+                'addresses' => ['10.0.0.0/8'],
+            ],
+            'httpbl' => [
+                'key' => 'test-key',
+                'threat' => 50,
+                'maxage' => 60,
+            ],
+            'ai_crawlers' => [
+                'allowed' => ['GPTBot', 'ClaudeBot'],
+                'block_unverified' => false,
+                'strict' => true,
+            ],
+            'bot_categories' => [
+                'blocked' => ['malicious', 'seo_crawler'],
+            ],
+        	'rate_limits' => [
+        		'enabled' => false,
+        		'global' => ['requests' => 1000, 'window' => 3600],
+        		'per_minute' => ['requests' => 60, 'window' => 60],
+        		'post' => ['requests' => 30, 'window' => 3600],
+        		'login' => ['requests' => 10, 'window' => 900],
+        	],
+        	'geoip' => [
+        		'enabled' => true,
+        		'database_path' => '/path/to/geoip.mmdb',
+        		'blocked_countries' => ['KP', 'IR'],
+        		'blocked_asns' => [],
+        	],
+            'challenge_enabled' => true,
+            'challenge_provider' => 'hcaptcha',
+            'challenge_site_key' => 'site-key',
+            'challenge_secret_key' => 'secret-key',
+            'recaptcha_min_score' => 0.7,
+        ], $adapter);
 
-    	$this->assertFalse($config->logging);
-    	$this->assertTrue($config->strict);
-    	$this->assertTrue($config->reverse_proxy);
-    	$this->assertEquals('CF-Connecting-IP', $config->reverse_proxy_header);
-    	$this->assertEquals(['10.0.0.0/8'], $config->reverse_proxy_addresses);
-    	$this->assertEquals('test-key', $config->httpbl_key);
-    	$this->assertEquals(50, $config->httpbl_threat);
-    	$this->assertEquals(60, $config->httpbl_maxage);
-    	$this->assertEquals(['GPTBot', 'ClaudeBot'], $config->allowed_ai_crawlers);
-    	$this->assertFalse($config->block_unverified_ai);
-    	$this->assertTrue($config->strict_ai);
-    	$this->assertEquals(['malicious', 'seo_crawler'], $config->blocked_bot_categories);
-    	$this->assertFalse($config->rate_limit_enabled);
-    	$this->assertTrue($config->geoip_enabled);
-    	$this->assertEquals('/path/to/geoip.mmdb', $config->geoip_database_path);
-    	$this->assertEquals(['KP', 'IR'], $config->blocked_countries);
-    	$this->assertTrue($config->challenge_enabled);
-    	$this->assertEquals('hcaptcha', $config->challenge_provider);
-    	$this->assertEquals('site-key', $config->challenge_site_key);
-    	$this->assertEquals('secret-key', $config->challenge_secret_key);
-    	$this->assertEquals(0.7, $config->recaptcha_min_score);
+        $this->assertFalse($config->logging);
+        $this->assertTrue($config->strict);
+        $this->assertTrue($config->reverse_proxy);
+        $this->assertEquals('CF-Connecting-IP', $config->reverse_proxy_header);
+        $this->assertEquals(['10.0.0.0/8'], $config->reverse_proxy_addresses);
+        $this->assertEquals('test-key', $config->httpbl_key);
+        $this->assertEquals(50, $config->httpbl_threat);
+        $this->assertEquals(60, $config->httpbl_maxage);
+        $this->assertEquals(['GPTBot', 'ClaudeBot'], $config->allowed_ai_crawlers);
+        $this->assertFalse($config->block_unverified_ai);
+        $this->assertTrue($config->strict_ai);
+        $this->assertEquals(['malicious', 'seo_crawler'], $config->blocked_bot_categories);
+        $this->assertFalse($config->rate_limit_enabled);
+        $this->assertTrue($config->geoip_enabled);
+        $this->assertEquals('/path/to/geoip.mmdb', $config->geoip_database_path);
+        $this->assertEquals(['KP', 'IR'], $config->blocked_countries);
+        $this->assertTrue($config->challenge_enabled);
+        $this->assertEquals('hcaptcha', $config->challenge_provider);
+        $this->assertEquals('site-key', $config->challenge_site_key);
+        $this->assertEquals('secret-key', $config->challenge_secret_key);
+        $this->assertEquals(0.7, $config->recaptcha_min_score);
     }
 
     public function test_type_coercion(): void

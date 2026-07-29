@@ -65,7 +65,7 @@ class MediaWikiAdapter implements AdapterInterface, CacheInterface
 	{
 		// Check common locations
 		$paths = [
-			__DIR__ . '/../../../config/bad_behaviour.php',
+			__DIR__ . '/../../../config/bb_config.php',
 			MW_CONFIG_FILE ?? '', // MediaWiki's config directory
 		];
 

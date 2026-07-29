@@ -313,25 +313,59 @@ class BadBehaviour
 		http_response_code($result->http_status());
 		header('Content-Type: text/html; charset=utf-8');
 
-		$email = htmlspecialchars($this->adapter->get_email());
-		$uri = htmlspecialchars($result->package?->request_uri ?? '/');
 		$support = htmlspecialchars($result->support_key ?? 'unknown');
 		$message = htmlspecialchars($result->message);
+		$uri = htmlspecialchars($result->package?->request_uri ?? '/');
+
+		// Use !empty() consistently for both flags
+		$show_email = !empty($this->config->show_contact_info);
+		$detailed = !empty($this->config->show_detailed_block_page);
+
+		$email = $show_email ? htmlspecialchars((string) $this->adapter->get_email()) : null;
+
+		if ($detailed) {
+			$contact_para = ($show_email && $email)
+			? "<p>If you are unable to fix the problem yourself, please contact <a href=\"mailto:$email\">$email</a> and provide the technical support key shown above.</p>"
+			: '';
+
+			$content = <<<HTML
+    <h1>Access Denied</h1>
+    <p>We're sorry, but we could not fulfill your request for <code>$uri</code> on this server.</p>
+    <p><strong>Reason:</strong> $message</p>
+    <p>Your technical support key is: <strong>$support</strong></p>
+    $contact_para
+HTML;
+		} else {
+			$content = <<<HTML
+    <h1>Access Denied</h1>
+    <p>You don't have permission to access this resource.</p>
+    <div class="ref">Reference #$support</div>
+HTML;
+		}
 
 		echo <<<HTML
 <!DOCTYPE html>
 <html lang="en">
-<head><title>HTTP Error {$result->http_status()}</title></head>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access Denied</title>
+    <style>
+        body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
+        .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%; }
+        h1 { color: #dc3545; margin-bottom: 1rem; }
+        .ref { font-family: monospace; background: #f8f9fa; padding: 0.5rem; border-radius: 4px; display: inline-block; margin-top: 1rem; }
+        code { background: #f8f9fa; padding: 0.2rem 0.4rem; border-radius: 3px; }
+    </style>
+</head>
 <body>
-<h1>Error {$result->http_status()}</h1>
-<p>We're sorry, but we could not fulfill your request for <code>$uri</code> on this server.</p>
-<p>$message</p>
-<p>Your technical support key is: <strong>$support</strong></p>
-<p>If you are unable to fix the problem yourself, please contact <a href="mailto:$email">$email</a> and provide the technical support key shown above.</p>
+    <div class="card">
+        $content
+    </div>
 </body>
 </html>
 HTML;
-		exit;
+        exit;
 	}
 
 	private function create_challenge(): \BadBehaviour\Challenge\ChallengeInterface
@@ -348,9 +382,15 @@ HTML;
 	public static function withAdapter(
 		\BadBehaviour\Core\Interfaces\AdapterInterface $adapter,
 		array $configOverrides = []
-	): self
-	{
-		$config = Configuration::from_array($configOverrides, $adapter);
-		return new self($config);
+		): self
+		{
+			// Load settings from adapter (which reads bb_config.php for WackoWiki)
+			$adapter_settings = $adapter->get_settings();
+
+			// Merge: adapter settings < explicit overrides
+			$merged = array_merge($adapter_settings, $configOverrides);
+
+			$config = Configuration::from_array($merged, $adapter);
+			return new self($config);
 	}
 }

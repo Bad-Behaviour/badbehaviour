@@ -169,6 +169,32 @@ $results['curl'] = bench('cURL (http_tool)', function() use ($bb) {
 }, 1000);
 
 // ========================================================================
+// Test 9: Bot with real DNS lookup (cold cache)
+// ========================================================================
+$results['cold_dns'] = bench('Cold DNS cache', function() use ($bb, $adapter) {
+	$adapter->delete('bb:dns_verify:198.51.100.42@googlebot.com'); // Clear cache
+	$bb->run_test_package(RequestPackage::create_for_test(
+		'Mozilla/5.0 (compatible; Googlebot/2.1)',
+		'198.51.100.42',
+		'GET',
+		'/admin'
+		));
+}, 10);  // Only 10 iterations — DNS is slow
+
+// ========================================================================
+// Test 10: Bot with cached DNS (warm cache)
+// ========================================================================
+$adapter->set('bb:dns_verify:198.51.100.42@googlebot.com', false, 3600);  // Pre-populate
+$results['warm_dns'] = bench('Warm DNS cache', function() use ($bb) {
+	$bb->run_test_package(RequestPackage::create_for_test(
+		'Mozilla/5.0 (compatible; Googlebot/2.1)',
+		'198.51.100.42',
+		'GET',
+		'/admin'
+		));
+}, 1000);
+
+// ========================================================================
 // Summary
 // ========================================================================
 echo "\n" . str_repeat('=', 60) . "\n";

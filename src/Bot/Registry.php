@@ -132,6 +132,20 @@ class Registry
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'Applebot',
 			),
+			'qwant' => new BotDefinition(
+				id: 'qwant',
+				name: 'QwantBot',
+				user_agent_patterns: ['Qwantbot', 'QwantBot', 'Qwantbot/1.0', 'Mozilla/5.0 (compatible; Qwantbot'],
+				host_patterns: ['qwant.com'],
+				ip_ranges: [
+					'91.242.162.0/24',      // Primary Qwant range (Strasbourg, France)
+					'194.187.168.0/22',     // Broader Qwant allocation
+				],
+				verify_dns: true,
+				dns_suffix: 'qwant.com',
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'QwantBot',
+			),
 
 			// === ASIAN SEARCH ENGINES ===
 
@@ -168,10 +182,21 @@ class Registry
 				user_agent_patterns: ['Sogou Spider', 'Sogou web spider', 'SogouNewsSpider', 'SogouPicSpider'],
 				host_patterns: ['sogou.com'],
 				ip_ranges: [
-					'123.125.71.0/24', '180.76.0.0/16', '220.181.0.0/16',
-					'106.120.0.0/14', '123.126.0.0/15',
+					// Verified Sogou ranges (removed Baidu contamination)
+					'106.120.0.0/14',      // Legitimate Sogou block (106.120-123.x.x)
+					'123.126.0.0/15',      // Most frequently observed (123.126-127.x.x)
+					'220.181.0.0/16',      // Major range — DNS verification required (Baidu overlap)
+					'218.30.96.0/19',      // Frequently observed
+					'61.135.0.0/16',       // Major Chinanet block
+					'106.37.0.0/16',       // Common crawling range
+					'106.38.0.0/15',       // Adjacent block
+					'123.112.0.0/12',      // Large block including 123.126.x.x
+					'220.180.0.0/16',      // Heavy scraping
+					'49.7.0.0/16',         // Recent logs
+					'223.109.252.0/22',    // Verified active Feb 2026
 				],
-				verify_dns: false,
+				verify_dns: true,
+				dns_suffix: 'sogou.com',
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'Sogou Spider',
 			),

@@ -16,7 +16,6 @@ class BadBehaviourIntegrationTest extends TestCase
 
     protected function setUp(): void
     {
-    	// Create dummy whitelist file
     	$whitelistFile = __DIR__ . '/../../config/bb_whitelist.conf';
     	if (!file_exists($whitelistFile)) {
     		@mkdir(dirname($whitelistFile), 0755, true);
@@ -34,13 +33,15 @@ class BadBehaviourIntegrationTest extends TestCase
     		'inspect_multipart_body' => false,
     		'enable_behavioral_analysis' => true,
     		'enable_ai_crawler_control' => true,
-    		'dnsbl_enabled' => false,  // DISABLE DNSBL for tests
+    		'enable_client_hints_validation' => false,  // ADDED: disable for tests
+    		'enable_agentic_detection' => false,        // ADDED: disable for tests
+    		'dnsbl_enabled' => false,
     		'rate_limit_enabled' => true,
     		'rate_limits' => [
-    			'global'     => ['requests' => 1000, 'window' => 3600],
-    			'per_minute' => ['requests' => 60,   'window' => 60],
-    			'post'       => ['requests' => 30,   'window' => 3600],
-    			'login'      => ['requests' => 10,   'window' => 900],
+    			'global' => ['requests' => 1000, 'window' => 3600],
+    			'per_minute' => ['requests' => 60, 'window' => 60],
+    			'post' => ['requests' => 30, 'window' => 3600],
+    			'login' => ['requests' => 10, 'window' => 900],
     		],
     	], $this->adapter);
 
@@ -154,7 +155,7 @@ class BadBehaviourIntegrationTest extends TestCase
     			'Accept' => 'text/html',
     			'Referer' => 'https://example.com/page',
     		],
-    		['body' => 'test union select 1 from users']
+    		['subject' => 'test union select 1 from users']  // CHANGED from 'body'
     		));
     	$this->assertFalse($result->is_allowed());
     	$this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);

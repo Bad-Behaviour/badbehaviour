@@ -18,16 +18,17 @@ class BotDetectorTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->adapter = new GenericAdapter();
-        $config = Configuration::from_array([
-            'allowed_ai_crawlers' => ['GPTBot'],
-            'block_unverified_ai' => true,
-            'strict_ai' => false,
-            'strict_search_engines' => false,
-            'blocked_bot_categories' => ['malicious'],
-        ], $this->adapter);
+    	$this->adapter = new GenericAdapter();
+    	$config = Configuration::from_array([
+    		'ai_crawlers' => [
+    			'allowed' => ['GPTBot'],
+    			'block_unverified' => true,
+    			'strict' => false,
+    		],
+    		'bot_categories' => ['blocked' => ['malicious']],
+    	], $this->adapter);
 
-        $this->detector = new BotDetector($config, $this->adapter);
+    	$this->detector = new BotDetector($config, $this->adapter);
     }
 
     private function createPackage(string $ua, string $ip = '203.0.113.1'): RequestPackage
@@ -77,40 +78,44 @@ class BotDetectorTest extends TestCase
 
     public function test_ai_crawler_challenge_when_verified_not_allowed(): void
     {
-        $package = $this->createPackage(
-            'ClaudeBot/1.0',
-            '192.0.2.1'
-        );
+    	$config = \BadBehaviour\Configuration::from_array([
+    		'ai_crawlers' => [
+    			'allowed' => ['GPTBot'],
+    			'block_unverified' => false,  // CHANGED: don't block unverified, challenge them
+    			'strict' => false,
+    		],
+    		'bot_categories' => ['blocked' => ['malicious']],
+    	], new \BadBehaviour\Adapter\GenericAdapter());
 
-        $result = $this->detector->detect($package);
+    	$detector = new \BadBehaviour\Detection\BotDetector($config, new \BadBehaviour\Adapter\GenericAdapter());
 
-        $this->assertNotNull($result);
-        $this->assertTrue($result->requires_challenge());
-        $this->assertEquals(ResultCode::CHALLENGE_REQUIRED, $result->code);
+    	$package = $this->createPackage('ClaudeBot/1.0', '192.0.2.1');
+    	$result = $detector->detect($package);
+
+    	$this->assertNotNull($result);
+    	$this->assertTrue($result->requires_challenge());
+    	$this->assertEquals(ResultCode::CHALLENGE_REQUIRED, $result->code);
     }
 
     public function test_ai_crawler_block_when_strict(): void
     {
-        $config = \BadBehaviour\Configuration::from_array([
-            'allowed_ai_crawlers' => ['GPTBot'],
-            'block_unverified_ai' => true,
-            'strict_ai' => true,
-            'strict_search_engines' => false,
-            'blocked_bot_categories' => ['malicious'],
-        ], new \BadBehaviour\Adapter\GenericAdapter());
+    	$config = \BadBehaviour\Configuration::from_array([
+    		'ai_crawlers' => [
+    			'allowed' => ['GPTBot'],
+    			'block_unverified' => true,
+    			'strict' => true,
+    		],
+    		'bot_categories' => ['blocked' => ['malicious']],
+    	], new \BadBehaviour\Adapter\GenericAdapter());
 
-        $detector = new \BadBehaviour\Detection\BotDetector($config, new \BadBehaviour\Adapter\GenericAdapter());
+    	$detector = new \BadBehaviour\Detection\BotDetector($config, new \BadBehaviour\Adapter\GenericAdapter());
 
-        $package = $this->createPackage(
-            'ClaudeBot/1.0',
-            '192.0.2.1'
-        );
+    	$package = $this->createPackage('ClaudeBot/1.0', '192.0.2.1');
+    	$result = $detector->detect($package);
 
-        $result = $detector->detect($package);
-
-        $this->assertNotNull($result);
-        $this->assertTrue($result->is_blocked());
-        $this->assertEquals(ResultCode::BLOCKED_AI_CRAWLER, $result->code);
+    	$this->assertNotNull($result);
+    	$this->assertTrue($result->is_blocked());
+    	$this->assertEquals(ResultCode::BLOCKED_AI_CRAWLER, $result->code);
     }
 
     public function test_seo_crawler_block_when_unverified(): void
@@ -152,12 +157,13 @@ class BotDetectorTest extends TestCase
         ], 3600);
 
         $config = Configuration::from_array([
-            'enable_dynamic_ip_ranges' => true,
-            'allowed_ai_crawlers' => ['GPTBot'],
-            'block_unverified_ai' => true,
-            'strict_ai' => false,
-            'strict_search_engines' => false,
-            'blocked_bot_categories' => ['malicious'],
+        	'enable_dynamic_ip_ranges' => true,
+        	'ai_crawlers' => [
+        		'allowed' => ['GPTBot'],
+        		'block_unverified' => true,
+        		'strict' => false,
+        	],
+        	'bot_categories' => ['blocked' => ['malicious']],
         ], $cacheAdapter);
 
         $detector = new BotDetector($config, $cacheAdapter);
@@ -176,14 +182,15 @@ class BotDetectorTest extends TestCase
 
     public function test_dynamic_ranges_disabled_uses_static(): void
     {
-        $config = Configuration::from_array([
-            'enable_dynamic_ip_ranges' => false,
-            'allowed_ai_crawlers' => ['GPTBot'],
-            'block_unverified_ai' => true,
-            'strict_ai' => false,
-            'strict_search_engines' => false,
-            'blocked_bot_categories' => ['malicious'],
-        ], new \BadBehaviour\Adapter\GenericAdapter());
+    	$config = Configuration::from_array([
+    		'enable_dynamic_ip_ranges' => false,
+    		'ai_crawlers' => [
+    			'allowed' => ['GPTBot'],
+    			'block_unverified' => true,
+    			'strict' => false,
+    		],
+    		'bot_categories' => ['blocked' => ['malicious']],
+    	], new \BadBehaviour\Adapter\GenericAdapter());
 
         $detector = new BotDetector($config, new \BadBehaviour\Adapter\GenericAdapter());
 

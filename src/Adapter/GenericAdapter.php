@@ -35,13 +35,22 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 	public function get_whitelist(): array
 	{
 		$file = __DIR__ . '/../../../config/bb_whitelist.conf';
-		return parse_ini_file($file, true, INI_SCANNER_TYPED) ?: [
-			'ip' => [],
-			'useragent' => [],
-			'url' => [],
-			'asn' => [],
-			'country' => [],
-		];
+
+		// Use @ to suppress warning if file doesn't exist
+		$parsed = @parse_ini_file($file, true, INI_SCANNER_TYPED);
+
+		// parse_ini_file returns false on failure (missing file, parse error)
+		if ($parsed === false) {
+			return [
+				'ip' => [],
+				'useragent' => [],
+				'url' => [],
+				'asn' => [],
+				'country' => [],
+			];
+		}
+
+		return $parsed;
 	}
 
 	public function get_email(): string

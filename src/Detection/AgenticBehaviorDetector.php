@@ -116,10 +116,13 @@ class AgenticBehaviorDetector
 	{
 		// Agentic browsers often jump between unrelated sections
 		// Measure path diversity in short time window
-		$recent = array_slice($requests, -10);
-		$paths = [];
+		// Only count non-asset requests (actual page navigations)
+		$page_requests = array_filter($requests, fn($r) => !$this->is_asset_request_uri($r['uri']));
 
-		foreach ($recent as $req) {
+		if (count($page_requests) < 5) return false;
+
+		$paths = [];
+		foreach ($page_requests as $req) {
 			$path = parse_url($req['uri'], PHP_URL_PATH) ?? '';
 			$top_level = $this->get_top_level_path($path);
 			if ($top_level !== null) {
@@ -132,15 +135,17 @@ class AgenticBehaviorDetector
 		$unique = count(array_unique($paths));
 		$total = count($paths);
 
-		// 8+ requests, 5+ different top-level sections = non-linear
-		return $total >= 8 && $unique >= 5;
+		// Need 5+ unique sections from 5+ page navigations
+		return $total >= 5 && $unique >= 5;
 	}
 
 	private function detect_precision_targeting(array $requests): bool
 	{
-		// Agentic: fetches only specific assets, skips decorative ones
-		// Normal browser: loads CSS, JS, fonts, images, tracking pixels
+		// Agentic signature: High API/JSON ratio (precision targeting of data endpoints)
+		// Small amounts of CSS/fonts/images are OK — the key signal is API dominance
+
 		$recent = array_slice($requests, -20);
+		if (count($recent) < 10) return false;
 
 		$asset_types = ['css' => 0, 'js' => 0, 'font' => 0, 'image' => 0, 'tracking' => 0, 'api' => 0];
 
@@ -154,16 +159,14 @@ class AgenticBehaviorDetector
 			elseif (preg_match('/\.(json|xml|graphql)(\?|$)/', $uri)) $asset_types['api']++;
 		}
 
-		// Agentic signature: High API/JSON, near-zero CSS/fonts/tracking
 		$total = array_sum($asset_types);
 		if ($total < 10) return false;
 
-		$css_ratio = $asset_types['css'] / $total;
-		$font_ratio = $asset_types['font'] / $total;
-		$tracking_ratio = $asset_types['tracking'] / $total;
 		$api_ratio = $asset_types['api'] / $total;
 
-		return $css_ratio < 0.05 && $font_ratio < 0.02 && $tracking_ratio < 0.01 && $api_ratio > 0.3;
+		// Precision targeting: 80%+ of requests hit API endpoints
+		// Real browsers load CSS, JS, fonts, images, tracking — bots don't
+		return $api_ratio >= 0.8;
 	}
 
 	private function is_asset_request(RequestPackage $package): bool
@@ -178,7 +181,22 @@ class AgenticBehaviorDetector
 
 	private function get_top_level_path(string $path): ?string
 	{
-		$parts = array_filter(explode('/', $path));
-		return $parts ? '/' . $parts[0] : null;
+		if ($path === '' || $path === '/') {
+			return null;
+		}
+
+		$parts = explode('/', trim($path, '/'));
+		if (empty($parts) || $parts[0] === '') {
+			return null;
+		}
+
+		$first = $parts[0];
+
+		// Strip file extension if present (e.g., "style.css" → "style")
+		if (strpos($first, '.') !== false) {
+			$first = preg_replace('/\.[^.]+$/', '', $first);
+		}
+
+		return '/' . $first;
 	}
 }

@@ -99,30 +99,30 @@ class ClientHintsDetectorTest extends TestCase
 
     public function test_platform_mismatch_blocked(): void
     {
-        $package = $this->createPackage('Chrome/120', headers: [
-            'Sec-Ch-Ua' => '"Google Chrome";v="120"',
-            'Sec-Ch-Ua-Platform' => '"Windows"', // UA says Linux
-        ]);
+    	$package = $this->createPackage('Chrome/120', headers: [
+    		'Sec-Ch-Ua' => '"Not A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',  // ADDED Chromium
+    		'Sec-Ch-Ua-Platform' => '"Windows"', // UA says Linux
+    	]);
 
         $result = $this->detector->detect($package);
 
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_FINGERPRINT, $result->code);
-        $this->assertStringContainsString('platform mismatch', $result->metadata['detail'] ?? '');
+        $this->assertStringContainsStringIgnoringCase('platform mismatch', $result->metadata['detail'] ?? '');
     }
 
     public function test_mobile_mismatch_blocked(): void
     {
-        $package = $this->createPackage('Chrome/120', headers: [
-            'Sec-Ch-Ua' => '"Google Chrome";v="120"',
-            'Sec-Ch-Ua-Mobile' => '?1', // UA says desktop
-        ]);
+    	$package = $this->createPackage('Chrome/120', headers: [
+    		'Sec-Ch-Ua' => '"Not A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',  // ADDED Chromium
+    		'Sec-Ch-Ua-Mobile' => '?1', // UA says desktop
+    	]);
 
         $result = $this->detector->detect($package);
 
         $this->assertNotNull($result);
         $this->assertEquals(ResultCode::BLOCKED_FINGERPRINT, $result->code);
-        $this->assertStringContainsString('mobile mismatch', $result->metadata['detail'] ?? '');
+        $this->assertStringContainsStringIgnoringCase('mobile mismatch', $result->metadata['detail'] ?? '');
     }
 
     public function test_old_chrome_version_skipped(): void

@@ -17,14 +17,12 @@ class DnsblDetectorTest extends TestCase
 
     protected function setUp(): void
     {
-        $config = Configuration::from_array([
-            'httpbl_key' => '',
-            'httpbl_threat' => 25,
-            'httpbl_maxage' => 30,
-            'dnsbl_lists' => [],
-        ], new \BadBehaviour\Adapter\GenericAdapter());
+    	$config = Configuration::from_array([
+    		'httpbl' => ['key' => '', 'threat' => 25, 'maxage' => 30],
+    		'dnsbl' => ['enabled' => false, 'lists' => []],
+    	], new \BadBehaviour\Adapter\GenericAdapter());
 
-        $this->detector = new DnsblDetector($config);
+    	$this->detector = new DnsblDetector($config);
     }
 
     private function create_package(string $ip): RequestPackage
@@ -52,15 +50,18 @@ class DnsblDetectorTest extends TestCase
 
     public function test_disabled_returns_null(): void
     {
-        $config = Configuration::from_array([
-            'httpbl_key' => '',
-            'dnsbl_lists' => [],
-        ], new \BadBehaviour\Adapter\GenericAdapter());
+    	$config = Configuration::from_array([
+    		'httpbl' => ['key' => ''],
+    		'dnsbl' => [
+    			'enabled' => false,
+    			'lists' => [],
+    		],
+    	], new \BadBehaviour\Adapter\GenericAdapter());
 
-        $detector = new DnsblDetector($config);
-        $package = $this->create_package('192.0.2.1');
+    	$detector = new DnsblDetector($config);
+    	$package = $this->create_package('192.0.2.1');
 
-        $this->assertNull($detector->detect($package));
+    	$this->assertNull($detector->detect($package));
     }
 
     // Note: DNS-based tests would require mocking gethostbynamel

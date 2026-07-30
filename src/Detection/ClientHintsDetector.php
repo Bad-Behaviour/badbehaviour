@@ -75,8 +75,10 @@ class ClientHintsDetector
 			$claimed_platform = trim($sec_ch_ua_platform, '"');
 			$ua_platform_normalized = $this->normalize_platform($ua_platform);
 			if (strtolower($claimed_platform) !== strtolower($ua_platform_normalized)) {
+				$detail = "Platform mismatch: claimed='$claimed_platform', ua='$ua_platform_normalized'";
 				return Result::block(ResultCode::BLOCKED_FINGERPRINT, 'Client Hints platform mismatch', $package, [
 					'type' => 'ch_ua_platform_mismatch',
+					'detail' => $detail,
 					'claimed' => $claimed_platform,
 					'ua_claims' => $ua_platform_normalized,
 				]);
@@ -88,8 +90,10 @@ class ClientHintsDetector
 			$ch_mobile = strtolower(trim($sec_ch_ua_mobile, '"'));
 			$ua_mobile = $package->ua_is_mobile ? '?1' : '?0';
 			if ($ch_mobile !== $ua_mobile) {
+				$detail = "Mobile mismatch: ch='$ch_mobile', ua='$ua_mobile'";
 				return Result::block(ResultCode::BLOCKED_FINGERPRINT, 'Client Hints mobile mismatch', $package, [
 					'type' => 'ch_ua_mobile_mismatch',
+					'detail' => $detail,
 					'ch_mobile' => $ch_mobile,
 					'ua_mobile' => $ua_mobile,
 				]);

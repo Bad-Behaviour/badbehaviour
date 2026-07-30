@@ -138,6 +138,20 @@ readonly class Configuration
     	$httpbl_maxage = (int)($httpbl['maxage'] ?? 30);
     	$httpbl_maxage = max(0, $httpbl_maxage);
 
+    	// NEW: Clamp rate limit values
+    	if (isset($rate_limits['global']['requests'])) {
+    		$rate_limits['global']['requests'] = max(1, (int)$rate_limits['global']['requests']);
+    	}
+    	if (isset($rate_limits['global']['window'])) {
+    		$rate_limits['global']['window'] = max(1, (int)$rate_limits['global']['window']);
+    	}
+    	if (isset($rate_limits['per_minute']['requests'])) {
+    		$rate_limits['per_minute']['requests'] = max(1, (int)$rate_limits['per_minute']['requests']);
+    	}
+    	if (isset($rate_limits['per_minute']['window'])) {
+    		$rate_limits['per_minute']['window'] = max(1, (int)$rate_limits['per_minute']['window']);
+    	}
+
     	$show_contact_info = (bool)($merged['show_contact_info'] ?? false);
     	$show_detailed_block_page = (bool)($merged['show_detailed_block_page'] ?? false);
 
@@ -152,21 +166,21 @@ readonly class Configuration
 
     		reverse_proxy: (bool)($reverse_proxy['enabled'] ?? false),
     		reverse_proxy_header: $reverse_proxy['header'] ?? 'X-Forwarded-For',
-    		reverse_proxy_addresses: (array)($reverse_proxy['addresses'] ?? []),
+    		reverse_proxy_addresses: self::ensure_array($reverse_proxy['addresses'] ?? []),
 
     		httpbl_key: $httpbl['key'] ?? '',
     		httpbl_threat: $httpbl_threat,
     		httpbl_maxage: $httpbl_maxage,
 
     		dnsbl_enabled: (bool)($dnsbl['enabled'] ?? false),
-    		dnsbl_lists: (array)($dnsbl['lists'] ?? ['zen.spamhaus.org', 'bl.spamcop.net']),
+    		dnsbl_lists: self::ensure_array($dnsbl['lists'] ?? ['zen.spamhaus.org', 'bl.spamcop.net']),
 
-    		allowed_ai_crawlers: (array)($ai_crawlers['allowed'] ?? ['GPTBot', 'ClaudeBot', 'Google-Extended']),
+    		allowed_ai_crawlers: self::ensure_array($ai_crawlers['allowed'] ?? ['GPTBot', 'ClaudeBot', 'Google-Extended']),
     		block_unverified_ai: (bool)($ai_crawlers['block_unverified'] ?? true),
     		strict_ai: (bool)($ai_crawlers['strict'] ?? false),
     		strict_search_engines: (bool)($merged['strict_search_engines'] ?? false),
 
-    		blocked_bot_categories: (array)($bot_categories['blocked'] ?? ['malicious']),
+    		blocked_bot_categories: self::ensure_array($bot_categories['blocked'] ?? ['malicious']),
 
     		rate_limit_enabled: (bool)($rate_limits['enabled'] ?? true),
     		rate_limits: self::normalize_rate_limits($rate_limits),
@@ -180,8 +194,8 @@ readonly class Configuration
 
     		geoip_enabled: (bool)($geoip['enabled'] ?? false),
     		geoip_database_path: $geoip['database_path'] ?? '',
-    		blocked_countries: (array)($geoip['blocked_countries'] ?? []),
-    		blocked_asns: (array)($geoip['blocked_asns'] ?? []),
+    		blocked_countries: self::ensure_array($geoip['blocked_countries'] ?? []),
+    		blocked_asns: self::ensure_array($geoip['blocked_asns'] ?? []),
 
     		challenge_enabled: (bool)($challenge['enabled'] ?? false),
     		challenge_provider: $challenge['provider'] ?? 'builtin',
@@ -393,6 +407,17 @@ readonly class Configuration
     	if ($array === []) return true;
     	$keys = array_keys($array);
     	return $keys === range(0, count($keys) - 1);
+    }
+
+    private static function ensure_array($value, array $default = []): array
+    {
+    	if (is_array($value)) {
+    		return $value;
+    	}
+    	if (is_string($value) && $value !== '') {
+    		return [$value];
+    	}
+    	return $default;
     }
 
     /**

@@ -314,7 +314,7 @@ class Registry
 			'meta_ai' => new BotDefinition(
 				id: 'meta_ai',
 				name: 'Meta AI',
-				user_agent_patterns: ['Meta-ExternalAgent', 'Meta-ExternalFetcher', 'MetaAI', 'FacebookBot', 'meta-externalagent'],
+				user_agent_patterns: ['Meta-ExternalAgent', 'Meta-ExternalFetcher', 'MetaAI', 'FacebookBot', 'meta-externalagent', 'meta-webindexer'],
 				host_patterns: ['facebook.com', 'fbcdn.net'],
 				ip_ranges: [
 					// IPv4 (existing known ranges)

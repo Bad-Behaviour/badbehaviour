@@ -106,25 +106,23 @@ class BlacklistDetectorTest extends TestCase
 
     public function test_post_form_body_attack_detected(): void
     {
-    	// Form data with SQLi - SHOULD BE BLOCKED
-    	// Use create_for_test with explicit Content-Type
-        $package = RequestPackage::create_for_test(
-            'Mozilla/5.0',
-            '192.0.2.1',
-            'POST',
-            '/comment',
-            [
-                'Host' => 'example.com',
-                'Content-Type' => 'application/x-www-form-urlencoded',
-                'Accept' => 'text/html',
-                'Referer' => 'https://example.com/page',
-            ],
-            ['body' => 'test union select 1 from users']
-        );
+    	$package = RequestPackage::create_for_test(
+    		'Mozilla/5.0',
+    		'192.0.2.1',
+    		'POST',
+    		'/comment',
+    		[
+    			'Host' => 'example.com',
+    			'Content-Type' => 'application/x-www-form-urlencoded',
+    			'Accept' => 'text/html',
+    			'Referer' => 'https://example.com/page',
+    		],
+    		['subject' => 'test union select 1 from users']  // was 'body'
+    	);
 
-        $result = $this->detector->detect($package);
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+    	$result = $this->detector->detect($package);
+    	$this->assertNotNull($result);
+    	$this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
     public function test_post_json_body_attack_allowed(): void
@@ -217,21 +215,21 @@ class BlacklistDetectorTest extends TestCase
 
     public function test_document_write_in_form_blocked(): void
     {
-        $package = RequestPackage::create_for_test(
-            'Mozilla/5.0',
-            '192.0.2.1',
-            'POST',
-            '/comment',
-            [
-                'Host' => 'example.com',
-                'Content-Type' => 'application/x-www-form-urlencoded',
-            ],
-            ['comment' => 'document.write("evil")']
-        );
+    	$package = RequestPackage::create_for_test(
+    		'Mozilla/5.0',
+    		'192.0.2.1',
+    		'POST',
+    		'/comment',
+    		[
+    			'Host' => 'example.com',
+    			'Content-Type' => 'application/x-www-form-urlencoded',
+    		],
+    		['title' => 'document.write("evil")']  // was 'comment'
+    		);
 
-        $result = $this->detector->detect($package);
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
+    	$result = $this->detector->detect($package);
+    	$this->assertNotNull($result);
+    	$this->assertEquals(ResultCode::BLOCKED_ATTACK_PATTERN, $result->code);
     }
 
     public function test_offsite_form_blocked(): void

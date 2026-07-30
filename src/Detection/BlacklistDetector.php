@@ -244,14 +244,12 @@ class BlacklistDetector
             }
         }
 
-        // URL patterns - check safe params
+        // URL patterns - ALWAYS check, regardless of param names
         $normalized_uri = urldecode($uri);
-        if (!$this->has_safe_params_only($uri)) {
-            foreach (self::URL_PATTERNS as $pattern) {
-                if (preg_match($pattern, $normalized_uri)) {
-                    return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Attack pattern in URL", $package);
-                }
-            }
+        foreach (self::URL_PATTERNS as $pattern) {
+        	if (preg_match($pattern, $normalized_uri)) {
+        		return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Attack pattern in URL", $package);
+        	}
         }
 
         // Request body - ONLY for form data
@@ -305,21 +303,6 @@ class BlacklistDetector
         }
 
         return null;
-    }
-
-    private function has_safe_params_only(string $uri): bool
-    {
-        $query = parse_url($uri, PHP_URL_QUERY) ?? '';
-        if (!$query) return true;
-
-        parse_str($query, $params);
-        foreach (array_keys($params) as $param) {
-            $param_lower = strtolower($param);
-            if (!in_array($param_lower, self::SAFE_URL_PARAMS, true)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private function is_safe_content_field(string $field_name): bool

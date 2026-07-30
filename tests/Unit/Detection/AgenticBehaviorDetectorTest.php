@@ -119,18 +119,19 @@ class AgenticBehaviorDetectorTest extends TestCase
         $requests = [];
         $time = time();
 
-        // 15 API calls
-        for ($i = 0; $i < 15; $i++) {
-            $requests[] = [
-                'time' => $time - $i,
-                'uri' => '/api/v1/data' . $i . '.json',
-                'method' => 'GET',
-                'assets' => false,
-            ];
+        // 20 API calls + 1 CSS = 21 total
+        // css_ratio = 1/21 ≈ 0.048 < 0.05 ✓
+        for ($i = 0; $i < 20; $i++) {
+        	$requests[] = [
+        		'time' => $time - $i,
+        		'uri' => '/api/v1/data' . $i . '.json',
+        		'method' => 'GET',
+        		'assets' => false,
+        	];
         }
 
         // 1 CSS, 0 fonts, 0 tracking
-        $requests[] = ['time' => $time - 16, 'uri' => '/style.css', 'method' => 'GET', 'assets' => true];
+        $requests[] = ['time' => $time - 20, 'uri' => '/style.css', 'method' => 'GET', 'assets' => true];
 
         $this->adapter->method('get_behavior_profile')
             ->with('test-session')

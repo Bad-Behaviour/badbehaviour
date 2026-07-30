@@ -18,3 +18,10 @@ if (!defined('BB2_VERSION')) {
 // Ensure PHP settings for testing
 ini_set('display_errors', '1');
 error_reporting(E_ALL);
+
+// Create whitelist file for tests if it doesn't exist
+$whitelist_file = __DIR__ . '/../config/bb_whitelist.conf';
+if (!file_exists($whitelist_file)) {
+	@mkdir(dirname($whitelist_file), 0755, true);
+	file_put_contents($whitelist_file, "; Auto-generated for tests\n");
+}

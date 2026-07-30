@@ -1,24 +1,45 @@
 # Bad Behaviour
 
-Bad Behaviour prevents spammers from ever delivering their junk, and in many cases, from ever reading your site in the first place.
+**A PHP gatekeeper that blocks link spam, malicious bots, AI scrapers, and automated attacks before they reach your application.**
 
-## Description
+Trusted by thousands of sites—from personal blogs to enterprise platforms—to drastically reduce malicious traffic and server load.
 
-Welcome to a whole new way of keeping your blog, forum, guestbook, wiki, or content management system free of link spam, malicious bots, AI scrapers, and automated attacks. Bad Behaviour is a PHP-based solution for blocking unwanted web traffic and the robots which deliver it.
+### Why Bad Behaviour?
+| Feature | Benefit |
+| :--- | :--- |
+| **Pre-emptive Blocking** | Stops bad actors *before* they deliver payloads or read your content. |
+| **Performance** | Lowers server load; keeps access logs clean. |
+| **DoS Mitigation** | Helps prevent denial-of-service conditions caused by bot swarms. |
+| **Zero-Config Defaults** | Works out-of-the-box on most PHP platforms in minutes. |
 
-Thousands of sites large and small trust Bad Behaviour to help reduce incoming link spam, malicious bot traffic, AI scrapers, and automated attacks.
+### How It’s Different
+Unlike WAFs or content filters that inspect *payloads*, Bad Behaviour analyzes the **delivery mechanism**:
+*   **TLS & HTTP/2 Fingerprinting** (JA3, Settings, Header Order)
+*   **Client Hints Cross-Validation** (`Sec-CH-UA` vs `User-Agent`)
+*   **Behavioral & Agentic Analysis** (Rate anomalies, AI-agent patterns)
+*   **Attacker Software Identification** (50+ verified bots, dynamic IP feeds)
 
-Bad Behaviour complements other security solutions by acting as a gatekeeper, preventing bad actors from ever delivering their payloads, and in many cases, from ever reading your site in the first place. This keeps your site's load down, makes your site logs cleaner, and can help prevent denial of service conditions caused by malicious bots.
+This allows it to block **zero-day exploits and novel scrapers** that signature-based tools miss.
 
-Bad Behaviour transcends other solutions by working in a completely different, unique way. Instead of merely looking at the content of potential attacks, Bad Behaviour analyzes the delivery method, TLS fingerprint, HTTP/2 settings, header ordering, behavioral patterns, and the software the attacker is using. In this way, Bad Behaviour can stop attacks even when nobody has ever seen the particular exploit before.
+### Ecosystem & Compatibility
+*   **Framework Agnostic:** Works with virtually any PHP-based software (WordPress, Drupal, MediaWiki, custom CMS, forums).
+*   **Defense in Depth:** Designed to run **alongside** a WAF, rate limiter, or spam service—increasing their efficiency by filtering noise upstream.
+*   **Platform Integrations:** Ready-to-use adapters for [Generic PHP](#option-1-modern-composer-usage-recommended), [MediaWiki](#for-mediawiki-eg-localsettingsphp), [WackoWiki](#for-wackowiki), and legacy drop-in files.
 
-Bad Behaviour is designed to work alongside existing security solutions to increase their effectiveness and efficiency. Whenever possible, you should run it in combination with a WAF, rate limiter, or traditional spam prevention service.
+### Quick Start
+```bash
+# 1. Install
+composer require badbehaviour/badbehaviour
 
-Bad Behaviour works on, or can be adapted to, virtually any PHP-based Web software package. Bad Behaviour is available for many platforms.
+# 2. Run (Generic PHP example)
+php -r "require 'vendor/autoload.php'; \BadBehaviour\Bootstrap::run();"
+```
+> **No configuration required** for safe, legacy-compatible defaults. **[Installation Guide →](#installation--usage)** | **[Configuration Reference →](#configuration)**
 
-Installing and configuring Bad Behaviour on most platforms is simple and takes only a few minutes. In most cases, **no configuration at all is needed** — the safe defaults work out of the box. Simply turn it on and stop worrying about spam, scrapers, and automated attacks!
+---
 
-The core of Bad Behaviour is free software released under the GNU Lesser General Public License, version 3, or at your option, any later version.
+### License
+**LGPL-3.0-or-later** – Free to use, modify, and distribute. *[Full License →](#license)*
 
 ---
 

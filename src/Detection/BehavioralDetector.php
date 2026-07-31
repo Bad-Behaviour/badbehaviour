@@ -83,7 +83,8 @@ class BehavioralDetector
 
 		// === 1. SESSION-BASED BEHAVIORAL ANALYSIS ===
 		if ($session_id) {
-			$behavior = $this->adapter->get_behavior_profile($session_id) ?? [
+			$behavior_key = "behavior:{$session_id}";
+			$behavior = $this->adapter->get_behavior_profile($behavior_key) ?? [
 				'count' => 0,
 				'first_seen' => time(),
 				'user_agents' => [],
@@ -146,12 +147,12 @@ class BehavioralDetector
 				]);
 			}
 
-			$this->adapter->save_behavior_profile($session_id, $behavior, 3600);
+			$this->adapter->save_behavior_profile($behavior_key, $behavior, 3600);
 		}
 
 		// === 2. FORM TIMING CHECK (Legacy: think time between form load and submit) ===
 		if ($method === 'POST' && $package->is_traditional_form_post() && $session_id) {
-			$behavior = $this->adapter->get_behavior_profile($session_id) ?? [];
+			$behavior = $this->adapter->get_behavior_profile("behavior:{$session_id}") ?? [];
 			$form_load_time = $behavior['form_load_time'] ?? 0;
 
 			if ($form_load_time > 0) {
@@ -178,9 +179,9 @@ class BehavioralDetector
 				|| str_contains($path, 'register');
 
 			if ($has_form) {
-				$behavior = $this->adapter->get_behavior_profile($session_id) ?? [];
+				$behavior = $this->adapter->get_behavior_profile("behavior:{$session_id}") ?? [];
 				$behavior['form_load_time'] = time();
-				$this->adapter->save_behavior_profile($session_id, $behavior, 3600);
+				$this->adapter->save_behavior_profile("behavior:{$session_id}", $behavior, 3600);
 			}
 		}
 

@@ -84,6 +84,18 @@ readonly class Configuration
     	public bool $enable_client_hints_validation = true,
     	public bool $enable_agentic_detection = true,
 
+    	public bool $enable_head_request_detection = true,
+    	public bool $head_require_referer = true,
+    	public int $head_flood_threshold = 20,
+    	public int $head_probe_threshold = 50,
+    	public array $head_referer_exempt_paths = [],
+
+    	public bool $enable_asset_scraping_detection = true,
+    	public array $asset_extensions = [],
+    	public int $asset_no_referer_threshold = 10,
+    	public int $asset_only_session_threshold = 20,
+    	public int $asset_pattern_threshold = 100,
+
         // Dependencies (injected)
         public ?AdapterInterface $adapter = null,
         public ?LoggerInterface $logger = null,
@@ -215,6 +227,18 @@ readonly class Configuration
     		enable_agentic_detection: (bool)($merged['enable_agentic_detection'] ?? true),
     		enable_dynamic_ip_ranges: (bool)($merged['enable_dynamic_ip_ranges'] ?? false),
 
+    		enable_head_request_detection: (bool)($merged['enable_head_request_detection'] ?? true),
+    		head_require_referer: (bool)($merged['head_require_referer'] ?? true),
+    		head_flood_threshold: max(1, (int)($merged['head_flood_threshold'] ?? 20)),
+    		head_probe_threshold: max(1, (int)($merged['head_probe_threshold'] ?? 50)),
+    		head_referer_exempt_paths: self::ensure_array($merged['head_referer_exempt_paths'] ?? ['/api/', '/wp-json/']),
+
+    		enable_asset_scraping_detection: (bool)($merged['enable_asset_scraping_detection'] ?? true),
+    		asset_extensions: self::ensure_array($merged['asset_extensions'] ?? ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'pdf']),
+    		asset_no_referer_threshold: max(1, (int)($merged['asset_no_referer_threshold'] ?? 10)),
+    		asset_only_session_threshold: max(1, (int)($merged['asset_only_session_threshold'] ?? 20)),
+    		asset_pattern_threshold: max(1, (int)($merged['asset_pattern_threshold'] ?? 100)),
+
     		adapter: $adapter,
     		);
     }
@@ -261,6 +285,21 @@ readonly class Configuration
         	'enable_dynamic_ip_ranges' => false,  // EXPERIMENTAL - OFF by default
         	'enable_client_hints_validation' => true,
         	'enable_agentic_detection' => true,
+        	'enable_head_request_detection' => true,
+        	'head_require_referer' => true,
+        	'head_flood_threshold' => 20,
+        	'head_probe_threshold' => 50,
+        	'head_referer_exempt_paths' => ['/api/', '/wp-json/', '/health', '/status'],
+
+        	'enable_asset_scraping_detection' => true,
+        	'asset_extensions' => [
+        		'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+        		'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        		'mp3', 'mp4', 'wav', 'ogg', 'webm',
+        	],
+        	'asset_no_referer_threshold' => 10,
+        	'asset_only_session_threshold' => 20,
+        	'asset_pattern_threshold' => 100,
         ];
     }
 
@@ -330,6 +369,18 @@ readonly class Configuration
     		'enable_dynamic_ip_ranges' => $this->enable_dynamic_ip_ranges,
     		'enable_client_hints_validation' => $this->enable_client_hints_validation,
     		'enable_agentic_detection' => $this->enable_agentic_detection,
+
+    		'enable_head_request_detection' => $this->enable_head_request_detection,
+    		'head_require_referer' => $this->head_require_referer,
+    		'head_flood_threshold' => $this->head_flood_threshold,
+    		'head_probe_threshold' => $this->head_probe_threshold,
+    		'head_referer_exempt_paths' => $this->head_referer_exempt_paths,
+
+    		'enable_asset_scraping_detection' => $this->enable_asset_scraping_detection,
+    		'asset_extensions' => $this->asset_extensions,
+    		'asset_no_referer_threshold' => $this->asset_no_referer_threshold,
+    		'asset_only_session_threshold' => $this->asset_only_session_threshold,
+    		'asset_pattern_threshold' => $this->asset_pattern_threshold,
 
     		'log_table' => $this->log_table ?? '',
     	];

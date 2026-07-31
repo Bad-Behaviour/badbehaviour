@@ -68,16 +68,24 @@ class BotDetector
 		// Get dynamic ranges (cached)
 		$dynamic_ranges = $this->get_dynamic_ranges();
 
-		foreach (Registry::all() as $bot_id => $def) {
-			// UA match
-			$ua_match = false;
-			foreach ($def->user_agent_patterns as $pattern) {
-				if (stripos($ua_lower, strtolower($pattern)) !== false) {
-					$ua_match = true;
-					break;
+		// FAST: O(1) index lookup first
+		$candidate_ids = Registry::find_by_ua($ua);
+
+		// If the index missed, fall back to substring scan (slower but complete)
+		if (empty($candidate_ids)) {
+			foreach (Registry::all() as $bot_id => $def) {
+				foreach ($def->user_agent_patterns as $pattern) {
+					if (stripos($ua_lower, strtolower($pattern)) !== false) {
+						$candidate_ids[] = $bot_id;
+						break;
+					}
 				}
 			}
-			if (!$ua_match) continue;
+		}
+
+		foreach ($candidate_ids as $bot_id) {
+			$def = Registry::all()[$bot_id] ?? null;
+			if ($def === null) continue;
 
 			// IP match: STATIC + DYNAMIC
 			$all_ranges = array_merge($def->ip_ranges, $dynamic_ranges[$bot_id] ?? []);
@@ -175,28 +183,50 @@ class BotDetector
 
 	private function verify_dns(string $ip, string $suffix): bool
 	{
-		$key = "$ip@$suffix";
+		$key = "{$ip}@{$suffix}";
+
+		// Cache hit (in-memory) — instant
 		if (isset($this->dns_cache[$key])) {
 			return $this->dns_cache[$key];
 		}
 
-		$host = @gethostbyaddr($ip);
-		if (!$host) {
-			$this->dns_cache[$key] = false;
-			return false;
+		// Cache hit (persistent) — instant (file/Redis/Memcached)
+		$cached = $this->adapter->get("bb:dns_verify:{$key}");
+		if ($cached !== null) {
+			$this->dns_cache[$key] = (bool)$cached;
+			return (bool)$cached;
 		}
 
-		$rev_host = strrev($host);
-		$rev_suffix = strrev($suffix);
-		if (strpos($rev_host, $rev_suffix) !== 0) {
-			$this->dns_cache[$key] = false;
-			return false;
-		}
+		// Cache miss — fire-and-forget background lookup
+		// First request: assume not verified (fail-open)
+		// Subsequent requests: cache populated, instant verification
+		$this->schedule_background_dns_lookup($ip, $suffix, $key);
 
-		$addrs = @gethostbynamel($host);
-		$verified = in_array($ip, $addrs ?? [], true);
+		return false;
+	}
 
-		$this->dns_cache[$key] = $verified;
-		return $verified;
+	private function schedule_background_dns_lookup(string $ip, string $suffix, string $key): void
+	{
+		// Use fastcgi_finish_request() if available (PHP-FPM) — flushes response, continues work
+		// Otherwise register_shutdown_function — runs after response sent
+		register_shutdown_function(function() use ($ip, $suffix, $key) {
+			$host = @gethostbyaddr($ip);
+			if (!$host) {
+				$this->adapter->set("bb:dns_verify:{$key}", false, 3600);
+				return;
+			}
+
+			$rev_host = strrev($host);
+			$rev_suffix = strrev($suffix);
+
+			if (strpos($rev_host, $rev_suffix) !== 0) {
+				$this->adapter->set("bb:dns_verify:{$key}", false, 3600);
+				return;
+			}
+
+			$addrs = @gethostbynamel($host);
+			$verified = $addrs !== false && in_array($ip, $addrs, true);
+			$this->adapter->set("bb:dns_verify:{$key}", $verified, 86400 * 7); // 7 days
+		});
 	}
 }

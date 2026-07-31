@@ -7,19 +7,57 @@ use BadBehaviour\Bot\BotAction;
 
 class Registry
 {
+	/** @var array<string, BotDefinition>|null Cached full registry */
+	private static ?array $cache = null;
+
+	/** @var array<string, string[]> UA fragment → bot IDs (O(1) lookup) */
+	private static ?array $ua_index = null;
+
 	/**
 	 * @return array<string, BotDefinition>
 	 */
 	public static function all(): array
 	{
-		return array_merge(
+		if (self::$cache !== null) {
+			return self::$cache;
+		}
+		self::$cache = array_merge(
 			self::search_engines(),
 			self::ai_crawlers(),
 			self::social_crawlers(),
 			self::seo_crawlers(),
 			self::archive_crawlers(),
 			self::monitoring(),
-		);
+			);
+		return self::$cache;
+	}
+
+	/**
+	 * O(1) lookup: find bot IDs whose user_agent_patterns include the
+	 * given UA fragment (case-insensitive). Returns an empty array if
+	 * no match.
+	 *
+	 * @return string[]
+	 */
+	public static function find_by_ua(string $ua): array
+	{
+		if (self::$ua_index === null) {
+			self::build_ua_index();
+		}
+		return self::$ua_index[strtolower($ua)] ?? [];
+	}
+
+	/**
+	 * Build the UA-fragment → bot-ID index. Called once per process.
+	 */
+	private static function build_ua_index(): void
+	{
+		self::$ua_index = [];
+		foreach (self::all() as $bot_id => $def) {
+			foreach ($def->user_agent_patterns as $pattern) {
+				self::$ua_index[strtolower($pattern)][] = $bot_id;
+			}
+		}
 	}
 
 	public static function search_engines(): array

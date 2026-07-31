@@ -11,20 +11,25 @@ use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Core\Interfaces\CacheInterface;
 use BadBehaviour\Core\Interfaces\GeoIpInterface;
 use BadBehaviour\Core\Interfaces\LoggerInterface;
-use BadBehaviour\Detection\BotDetector;
-use BadBehaviour\Detection\BlacklistDetector;
-use BadBehaviour\Detection\BehavioralDetector;
-use BadBehaviour\Detection\FingerprintDetector;
-use BadBehaviour\Detection\RateLimitDetector;
-use BadBehaviour\Detection\DnsblDetector;
-use BadBehaviour\Detection\ClientHintsDetector;
 use BadBehaviour\Detection\AgenticBehaviorDetector;
+use BadBehaviour\Detection\AssetScrapingDetector;
+use BadBehaviour\Detection\BehavioralDetector;
+use BadBehaviour\Detection\BlacklistDetector;
+use BadBehaviour\Detection\BotDetector;
+use BadBehaviour\Detection\ClientHintsDetector;
+use BadBehaviour\Detection\DnsblDetector;
+use BadBehaviour\Detection\FingerprintDetector;
+use BadBehaviour\Detection\HeadRequestDetector;
+use BadBehaviour\Detection\RateLimitDetector;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Util\HeaderUtil;
 use BadBehaviour\Util\IpUtil;
 
 class BadBehaviour
 {
+	/** @var bool Whether install() has already run this process */
+	private bool $install_done = false;
+
 	private Configuration $config;
 	private AdapterInterface $adapter;
 	private ?LoggerInterface $logger;
@@ -39,6 +44,8 @@ class BadBehaviour
 	private DnsblDetector $dnsbl_detector;
 	private ClientHintsDetector $client_hints_detector;
 	private AgenticBehaviorDetector $agentic_detector;
+	private HeadRequestDetector $head_detector;
+	private AssetScrapingDetector $asset_detector;
 
 	public function __construct(Configuration $config)
 	{
@@ -56,6 +63,8 @@ class BadBehaviour
 		$this->dnsbl_detector = new DnsblDetector($this->config);
 		$this->client_hints_detector = new ClientHintsDetector($this->config);
 		$this->agentic_detector = new AgenticBehaviorDetector($this->config, $this->adapter);
+		$this->head_detector = new HeadRequestDetector($this->config, $this->adapter);
+		$this->asset_detector = new AssetScrapingDetector($this->config, $this->adapter);
 	}
 
 	public function run(array $server = null): Result
@@ -64,50 +73,66 @@ class BadBehaviour
 			return Result::allow();
 		}
 
-		$this->install();
-
-		// Build request package
-		if ($server !== null) {
-			$package = RequestPackage::from_server_globals([
-				'reverse_proxy' => $this->config->reverse_proxy,
-				'reverse_proxy_header' => $this->config->reverse_proxy_header,
-				'reverse_proxy_addresses' => $this->config->reverse_proxy_addresses,
-			], $server);
-		} else {
-			$package = RequestPackage::from_globals([
-				'reverse_proxy' => $this->config->reverse_proxy,
-				'reverse_proxy_header' => $this->config->reverse_proxy_header,
-				'reverse_proxy_addresses' => $this->config->reverse_proxy_addresses,
-			]);
+		// FAST PATH 1: Static resource skip — cheapest possible check.
+		// Runs BEFORE install() and BEFORE building the RequestPackage,
+		// because 95%+ of traffic is CSS/JS/images/fonts and we don't
+		// want to spend even one cycle of CPU on them.
+		$uri = $server['REQUEST_URI'] ?? $_SERVER['REQUEST_URI'] ?? '/';
+		if ($this->should_skip_static($uri)) {
+			return Result::allow();
 		}
 
-		// Skip static resources
-		if ($this->should_skip_static($package->request_uri)) {
+		// Lazy install: only runs once per PHP process, and only for
+		// requests that actually need detection.
+		$this->install_once();
+
+		// Build proxy settings once (used by both package builders)
+		$proxy_settings = [
+			'reverse_proxy'             => $this->config->reverse_proxy,
+			'reverse_proxy_header'      => $this->config->reverse_proxy_header,
+			'reverse_proxy_addresses'   => $this->config->reverse_proxy_addresses,
+		];
+
+		// Build the package (now we need full request context)
+		$package = $server !== null
+			? RequestPackage::from_server_globals($proxy_settings, $server)
+			: RequestPackage::from_globals($proxy_settings);
+
+		// FAST PATH 2: Empty UA → immediate block (no DNS, no detection)
+		if (empty($package->user_agent) || strlen(trim($package->user_agent)) < 5) {
+			return Result::block(
+				ResultCode::BLOCKED_MALICIOUS_UA,
+				'Empty or invalid User-Agent',
+				$package
+				);
+		}
+
+		// FAST PATH 3: Whitelisted IP → immediate allow (skip all detectors)
+		if ($this->is_whitelisted($package)) {
 			return Result::allow($package);
 		}
 
-		// Enrich with GeoIP
+		// Enrich with GeoIP (only if available — avoid cost when not configured)
 		if ($this->geoip && $geoip = $this->geoip->lookup($package->ip)) {
 			$package = $package->with_enrichment(
 				$geoip['asn'] ?? null,
 				$geoip['country'] ?? null,
-				null, null
-			);
+				null,
+				null
+				);
 		}
 
-		// Enrich with fingerprints
+		// Enrich with fingerprints (cheap — just string hashing)
 		$ja3 = HeaderUtil::get_ja3_fingerprint();
-		$h2 = HeaderUtil::get_h2_settings();
+		$h2  = HeaderUtil::get_h2_settings();
 		$package = $package->with_enrichment(null, null, $ja3, $h2);
 
 		// Run detection pipeline
 		$result = $this->detect($package);
 
-		// Always log blocked/challenged requests
-		// Only log allowed requests when verbose = true
+		// Logging: blocked/challenged always, allowed only when verbose
 		if ($this->config->logging) {
 			$should_log = !$result->is_allowed() || $this->config->verbose;
-
 			if ($should_log) {
 				$this->adapter->log_request($package, $result);
 			}
@@ -164,6 +189,11 @@ class BadBehaviour
 		// 3. Known Bots (verified ALLOW)
 		if ($result = $this->bot_detector->detect($package)) return $result;
 
+		// 3b. Head Request Detection (catches HEAD flooding)
+		if ($this->config->enable_head_request_detection) {
+			if ($result = $this->head_detector->detect($package)) return $result;
+		}
+
 		// 4. Client Hints Validation (catches spoofed UAs)
 		if ($this->config->enable_client_hints_validation) {
 			if ($result = $this->client_hints_detector->detect($package)) return $result;
@@ -171,6 +201,11 @@ class BadBehaviour
 
 		// 5. Blacklist (attacks, malicious UA)
 		if ($result = $this->blacklist_detector->detect($package)) return $result;
+
+		// 5b. Asset Scraping Detection (catches AI training scrapers)
+		if ($this->config->enable_asset_scraping_detection) {
+			if ($result = $this->asset_detector->detect($package)) return $result;
+		}
 
 		// 6. Behavioral (rate, rotating UA, think time)
 		if ($this->config->enable_behavioral_analysis) {
@@ -280,8 +315,13 @@ class BadBehaviour
 		return null;
 	}
 
-	private function install(): void
+	private function install_once(): void
 	{
+		if ($this->install_done) {
+			return;
+		}
+		$this->install_done = true;
+
 		if (defined('BB2_NO_CREATE') || !$this->config->logging) {
 			return;
 		}

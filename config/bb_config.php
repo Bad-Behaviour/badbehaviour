@@ -114,4 +114,27 @@ return [
 	'enable_client_hints_validation' => true,
 	'enable_agentic_detection' => true,
 	'enable_dynamic_ip_ranges'      => false,  // EXPERIMENTAL - DISABLED BY DEFAULT
+
+	// ===== HEAD REQUEST DETECTION =====
+	// Detects abuse of HEAD requests for site mapping / reconnaissance
+	'enable_head_request_detection' => true,
+	'head_require_referer'          => true,
+	'head_flood_threshold'          => 20,
+	'head_probe_threshold'          => 50,
+	'head_referer_exempt_paths'     => ['/api/', '/wp-json/', '/health', '/status'],
+
+	// ===== ASSET SCRAPING DETECTION =====
+	// Detects direct asset scraping (AI training crawlers, image harvesters)
+	'enable_asset_scraping_detection' => true,
+	'asset_extensions'                => [
+		// Images
+		'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+		// Documents
+		'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+		// Audio/video
+		'mp3', 'mp4', 'wav', 'ogg', 'webm',
+	],
+	'asset_no_referer_threshold'   => 10,
+	'asset_only_session_threshold' => 20,
+	'asset_pattern_threshold'      => 100,
 ];

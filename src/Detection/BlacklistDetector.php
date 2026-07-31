@@ -1,5 +1,5 @@
 <?php
-// src/Detection/BlacklistDetector.php - COMPLETE FIXED
+// src/Detection/BlacklistDetector.php - FINAL
 
 namespace BadBehaviour\Detection;
 
@@ -10,8 +10,8 @@ use BadBehaviour\Core\ResultCode;
 
 class BlacklistDetector
 {
-    private Configuration $config;
-
+	private Configuration $config;
+	
     private const MALICIOUS_PREFIXES = [
         'sqlmap', 'nmap', 'nikto', 'nessus', 'openvas', 'acunetix', 'w3af', 'skipfish',
         'havij', 'pangolin', 'safe3', 'bsqlbf', 'sqlninja', 'thesqlinjector',
@@ -53,139 +53,175 @@ class BlacklistDetector
         'dridex', 'zeus', 'gozi', 'ramnit', 'ursnif', 'dana bot',
     ];
 
-    // FIX: Remove 'id' from SAFE_URL_PARAMS
-    private const SAFE_URL_PARAMS = [
-        'revision_id', 'revision', 'rev', 'oldid', 'diff', 'undo',
-        'page_id', 'post_id', 'article_id', 'entry_id', 'item_id',
-        'comment_id', 'attachment_id', 'media_id',
-        'category_id', 'tag_id', 'term_id', 'taxonomy_id',
-        'user_id', 'author_id', 'editor_id',
-        'version', 'v', 'ver',
-        'offset', 'limit', 'page', 'p', 'start', 'count',
-        'sort', 'order', 'orderby', 'dir',
-        'search', 'q', 'query', 's', 'keyword',
-        'filter', 'view', 'mode', 'format', 'output',
-        'action', 'do', 'task', 'cmd', 'op', 'operation',
-        // 'id',  // REMOVED
-        'uid', 'gid', 'tid', 'cid', 'pid', 'aid',
-        'year', 'month', 'day', 'date', 'time', 'timestamp',
-        'lang', 'language', 'locale', 'theme', 'skin', 'style',
-        'redirect', 'return', 'next', 'back', 'url', 'uri',
-        'token', 'nonce', 'csrf', 'xsrf', '_token', '_nonce',
-        'hash', 'sig', 'signature', 'hmac',
-    ];
-
+    /**
+     * URL attack patterns.
+     *
+     * SQLi requires CONTEXT (numeric/quote/paren before union) to avoid
+     * matching legitimate content like "union select 1" in page text.
+     * XSS matches actual script tags — <script> in URLs is almost always
+     * an attack (legitimate content gets URL-encoded by browsers).
+     */
     private const URL_PATTERNS = [
-        '/union\s+all\s+select/i',
-        '/union\s+select/i',
-        '/select\s+.*\s+from\s+/i',
-        '/insert\s+into/i',
-        '/update\s+.*\s+set/i',
-        '/delete\s+from/i',
-        '/drop\s+table/i',
-        '/create\s+table/i',
-        '/alter\s+table/i',
-        '/exec\s*\(/i',
-        '/execute\s*\(/i',
-        '/sp_executesql/i',
-        '/xp_cmdshell/i',
-        '/benchmark\s*\(/i',
-        '/sleep\s*\(/i',
-        '/waitfor\s+delay/i',
-        '/pg_sleep\s*\(/i',
-        '/extractvalue\s*\(/i',
-        '/updatexml\s*\(/i',
-        '/floor\s*\(/i',
-        '/<script/i',
-        '/javascript:/i',
-        '/on\w+\s*=/i',
-        '/alert\s*\(/i',
-        '/prompt\s*\(/i',
-        '/confirm\s*\(/i',
-        '/eval\s*\(/i',
-        '/expression\s*\(/i',
-        '/vbscript:/i',
-        '/data:text\/html/i',
-        '/\.\.\//',
-        '/\.\.\\\\/',
+        // === SQL Injection (CONTEXT-REQUIRED) ===
+        '/\b\d+\s+union\s+(?:all\s+)?select\b/i',
+        '/\'\s*union\s+(?:all\s+)?select\b/i',
+        '/"\s*union\s+(?:all\s+)?select\b/i',
+        '/\)\s*union\s+(?:all\s+)?select\b/i',
+        '/\bunion\s+(?:all\s+)?select\s+\d+\s+from\b/i',
+        '/\)\s+or\s+1\s*=\s*1\b/i',
+        '/\)\s+or\s+\d+\s*=\s*\d+/i',
+        '/\'\s+or\s+\'1\'\s*=\s*\'1/i',
+        '/"\s+or\s+"1"\s*=\s*"1/i',
+        '/\bor\s+1\s*=\s*1\s*--/i',
+        '/\bor\s+1\s*=\s*1\s*#/i',
+        '/\band\s+1\s*=\s*1\s*--/i',
+        '/\bdrop\s+table\s+\w+/i',
+        '/\bdrop\s+database\s+/i',
+        '/\binsert\s+into\s+\w+\s+select/i',
+        '/\bexec\s*\(\s*[\'"]/i',
+        '/\bsp_executesql\s+/i',
+        '/\bxp_cmdshell\s+/i',
+        '/information_schema\./i',
+        '/\bsleep\s*\(\s*\d+\s*\)/i',
+        '/\bbenchmark\s*\(\s*\d+\s*,/i',
+        '/\bwaitfor\s+delay\s+[\'"]/i',
+        '/\bpg_sleep\s*\(\s*\d+\s*\)/i',
+        '/\bextractvalue\s*\(\s*1\s*,/i',
+        '/\bupdatexml\s*\(\s*1\s*,/i',
+        '/\bfloor\s*\(\s*rand\s*\(\s*0\s*\)\s*\*\s*2\s*\)\)/i',
+
+        // === XSS (actual script injection — <script> in URLs is attack) ===
+        '/<script\b[^>]*>/i',
+        '/<\/script>/i',
+        '/<iframe\b[^>]*>/i',
+        '/javascript\s*:\s*[a-z]/i',
+        '/\bon\w+\s*=\s*[\'"]?\s*[a-z]/i',
+        '/<svg\b[^>]*on\w+/i',
+        '/<img\b[^>]*on\w+/i',
+        '/<body\b[^>]*on\w+/i',
+        '/<input\b[^>]*on\w+/i',
+        '/<select\b[^>]*on\w+/i',
+        '/<button\b[^>]*on\w+/i',
+        '/<form\b[^>]*on\w+/i',
+        '/\beval\s*\(\s*[a-z\$]/i',
+        '/\bexpression\s*\(\s*[a-z]/i',
+        '/vbscript\s*:/i',
+        '/data\s*:\s*text\/html/i',
+        '/data\s*:\s*application\/javascript/i',
+
+        // === Path Traversal ===
+        '#\.\./#',
+        '#\.\.\\\\#',
         '/%2e%2e%2f/i',
         '/%2e%2e%5c/i',
-        '/..%2f/i',
-        '/..%5c/i',
+        '/\.%2e/i',
         '/%252e%252e%252f/i',
+        '/%c0%ae%c0%ae/i',
+
+        // === Command Injection ===
         '/;\s*(cat|ls|id|whoami|pwd|uname|wget|curl|nc|netcat|bash|sh|python|perl|ruby|php)\b/i',
         '/\|\s*(cat|ls|id|whoami|pwd|uname|wget|curl|nc|netcat|bash|sh|python|perl|ruby|php)\b/i',
         '/`(cat|ls|id|whoami|pwd|uname|wget|curl|nc|netcat|bash|sh|python|perl|ruby|php)`/i',
-        '/\$\((cat|ls|id|whoami|pwd|uname|wget|curl|nc|netcat|bash|sh|python|perl|ruby|php)\)/i',
-        '/\$\{jndi:/i',
-        '/\$\{lower:/i',
-        '/\$\{upper:/i',
+        '/\$\((cat|ls|id|whoami|pwd|uname|wget|curl|nc|netcat|bash|sh|python|perl|ruby|php)\b/i',
+
+        // === Log4Shell / JNDI ===
+        '/\$\{jndi\s*:\s*ldap/i',
+        '/\$\{jndi\s*:\s*rmi/i',
+        '/\$\{jndi\s*:\s*dns/i',
+        '/\$\{lower\s*:/i',
+        '/\$\{upper\s*:/i',
         '/\$\{::-/i',
-        '/\$\{env:/i',
-        '/\$\{sys:/i',
-        '/\$\{date:/i',
-        '/\$\{main:/i',
+        '/\$\{env\s*:/i',
+        '/\$\{sys\s*:/i',
+        '/\$\{date\s*:/i',
+        '/\$\{main\s*:/i',
+        '/\$\{ctx\s*:/i',
         '/class\.module\.classloader/i',
-        '/(include|require|include_once|require_once)\s*\(/i',
-        '/(file|php|zip|phar|expect|input|data|glob|ftp):\/\//i',
-        '/<\!entity/i',
-        '/<\!doctype/i',
-        '/system\s*"/i',
-        '/public\s*"/i',
+
+        // === Shellshock ===
+        '/\(\)\s*\{[^}]*;\s*\}\s*;/',
+
+        // === PHP injection ===
+        '/\b(include|require|include_once|require_once)\s*\(\s*[\'"]?\s*(https?|ftp|php|data|zip|phar|expect|input|glob):/i',
+        '/\bfile\s*:\s*\/\/\s*[\w]/i',
+        '/\bphp\s*:\s*\/\//i',
+        '/\bzip\s*:\s*\/\//i',
+        '/\bphar\s*:\s*\/\//i',
+
+        // === XXE ===
+        '/<\!entity\s+/i',
+        '/<\!doctype\s+[\w-]+\s+system\s+/i',
+
+        // === SSRF / Cloud Metadata ===
         '/169\.254\.169\.254/i',
         '/metadata\.google\.internal/i',
         '/metadata\.azure\.com/i',
-        '/169\.254\.169\.254\/latest\/meta-data/i',
+        '/100\.100\.100\.200/i',
+        '/fd00:ec2::254/i',
         '/http:\/\/127\.0\.0\.1/i',
         '/http:\/\/localhost/i',
         '/http:\/\/\[::1\]/i',
         '/http:\/\/0\.0\.0\.0/i',
-        '/wp-admin\/admin-ajax\.php.*action=/i',
-        '/xmlrpc\.php/i',
-        '/wp-login\.php/i',
-        '/administrator\/index\.php/i',
-        '/manager\/html/i',
-        '/console/i',
-        '/actuator\/health/i',
-        '/actuator\/env/i',
-        '/actuator\/info/i',
-        '/actuator\/metrics/i',
-        '/actuator\/trace/i',
-        '/actuator\/heapdump/i',
-        '/actuator\/threaddump/i',
-        '/swagger/i',
-        '/api-docs/i',
-        '/openapi/i',
-        '/graphql/i',
-        '/\.git\//i',
-        '/\.svn\//i',
-        '/\.env/i',
-        '/\.htaccess/i',
-        '/web\.config/i',
-        '/composer\.json/i',
-        '/package\.json/i',
-        '/yarn\.lock/i',
-        '/pnpm-lock\.yaml/i',
-        '/dockerfile/i',
-        '/docker-compose/i',
-        '/kubeconfig/i',
-        '/\.kube\/config/i',
-        '/id_rsa/i',
-        '/id_dsa/i',
-        '/id_ecdsa/i',
-        '/id_ed25519/i',
-        '/authorized_keys/i',
-        '/known_hosts/i',
-        '/config\.json/i',
-        '/settings\.json/i',
-        '/secrets/i',
-        '/credentials/i',
+
+        // === CMS probing ===
+        '/\/wp-admin\/admin-ajax\.php.*\baction\s*=\s*[a-z_]+\s*&/i',
+        '/\/xmlrpc\.php/i',
+        '/\/wp-login\.php/i',
+        '/\/administrator\/index\.php/i',
+        '/\/manager\/html/i',
+
+        // === Actuator / API docs ===
+        '/\/actuator\/(health|env|info|metrics|trace|heapdump|threaddump|configprops|beans|mappings)\b/i',
+        '/\/swagger[\/\-]?/i',
+        '/\/api-docs/i',
+        '/\/openapi\.json/i',
+        '/\/graphql\b/i',
+
+        // === Source control / secrets exposure ===
+        '/\/\.git\/(config|HEAD|index|packed-refs|objects)/i',
+        '/\/\.svn\/(entries|wc-db|format)/i',
+        '/\/\.env(\.|$)/i',
+        '/\/\.htaccess/i',
+        '/\/web\.config/i',
+        '/\/composer\.json/i',
+        '/\/package\.json/i',
+        '/\/yarn\.lock/i',
+        '/\/pnpm-lock\.yaml/i',
+        '/\/dockerfile/i',
+        '/\/docker-compose\.yml/i',
+        '/\/kubeconfig/i',
+        '/\/\.kube\/config/i',
+        '/\/id_rsa/i',
+        '/\/id_dsa/i',
+        '/\/id_ecdsa/i',
+        '/\/id_ed25519/i',
+        '/\/authorized_keys/i',
+        '/\/known_hosts/i',
+
+        // === Scanner signatures ===
         '/w00tw00t/i',
+        '/nikto/i',
+        '/sqlmap/i',
+        '/nmap/i',
+        '/masscan/i',
+        '/acunetix/i',
+        '/netsparker/i',
+    ];
+
+    /**
+     * Contextual patterns — only flag when value looks like an actual
+     * credential leak (long random token in URL param).
+     * Param NAMES like "password" alone never trigger — only when
+     * combined with a high-entropy VALUE.
+     */
+    private const CONTEXTUAL_URL_PATTERNS = [
+        '/[\?&\/](password|passwd|pwd)\s*=\s*[a-zA-Z0-9_\-\.\/\+]{20,}/i',
+        '/[\?&\/](api[_\-]?key|access[_\-]?token|secret[_\-]?key|private[_\-]?key)\s*=\s*[a-zA-Z0-9_\-\.\/\+]{32,}/i',
+        '/[\?&\/](credentials|secrets)\s*=\s*[a-zA-Z0-9_\-\.\/\+]{32,}/i',
     ];
 
     private const UA_REGEX = [
         '/^[a-z0-9]{20,}$/i',
-        '/mozilla\/(\d{2,})\.0/i',
         '/msie\s+(\d{2,})\.0/i',
         '/^bot\d+$/i',
         '/^crawler\d+$/i',
@@ -208,12 +244,10 @@ class BlacklistDetector
         $ua_lower = strtolower($ua);
         $headers = $package->headers_mixed;
 
-        // Empty UA
         if (empty($ua) || $ua === '-' || strlen(trim($ua)) < 5) {
             return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'Empty or invalid User-Agent', $package);
         }
 
-        // UA parser detected bot
         if ($package->ua_is_bot) {
             return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'Bot detected by UA parser', $package, [
                 'device_type' => $package->ua_device,
@@ -239,20 +273,25 @@ class BlacklistDetector
         }
 
         foreach (self::UA_REGEX as $pattern) {
-            if (preg_match($pattern, $ua)) {
+            if (@preg_match($pattern, $ua)) {
                 return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, "Malicious UA pattern", $package);
             }
         }
 
-        // URL patterns - ALWAYS check, regardless of param names
         $normalized_uri = urldecode($uri);
+
         foreach (self::URL_PATTERNS as $pattern) {
-        	if (preg_match($pattern, $normalized_uri)) {
-        		return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Attack pattern in URL", $package);
-        	}
+            if (@preg_match($pattern, $normalized_uri)) {
+                return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Attack pattern in URL", $package);
+            }
         }
 
-        // Request body - ONLY for form data
+        foreach (self::CONTEXTUAL_URL_PATTERNS as $pattern) {
+            if (@preg_match($pattern, $normalized_uri)) {
+                return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Suspicious credential in URL", $package);
+            }
+        }
+
         if (in_array($method, ['POST', 'PUT', 'PATCH'], true) && !empty($package->request_entity)) {
             $content_type = $headers['Content-Type'] ?? '';
             $content_type_lower = strtolower($content_type);
@@ -264,14 +303,12 @@ class BlacklistDetector
             if ($is_form) {
                 $entity = $package->request_entity;
 
-                // Trackback detection
                 if (isset($entity['title']) && isset($entity['url']) && isset($entity['blog_name'])) {
                     if ($this->is_suspicious_trackback($headers, $entity)) {
                         return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, 'Suspicious trackback', $package);
                     }
                 }
 
-                // Offsite forms
                 if (!$this->config->offsite_forms && isset($headers['Referer'])) {
                     if ($this->is_offsite_form($headers, $package)) {
                         return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, 'Offsite form submission', $package);
@@ -294,7 +331,7 @@ class BlacklistDetector
                     $normalized_value = urldecode($value_str);
 
                     foreach (self::URL_PATTERNS as $pattern) {
-                        if (preg_match($pattern, $normalized_value)) {
+                        if (@preg_match($pattern, $normalized_value)) {
                             return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Attack pattern in request body", $package);
                         }
                     }
@@ -344,7 +381,7 @@ class BlacklistDetector
         $parameter_indicators = [
             'search', 'query', 'filter', 'sort', 'order', 'limit', 'offset',
             'page', 'per_page', 'username', 'password', 'email', 'login',
-            'register', 'signup', 'signin', 'auth', 'token', 'key', 'id',
+            'register', 'signup', 'signin', 'auth', 'token', 'key',
             'redirect', 'return', 'next', 'prev', 'action', 'cmd', 'command',
             'exec', 'execute', 'run', 'eval', 'callback', 'url', 'uri', 'path',
             'file', 'filename', 'upload', 'import', 'export', 'delete', 'remove',

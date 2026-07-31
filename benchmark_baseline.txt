@@ -1,0 +1,31 @@
+Bad Behaviour 3.0 Performance Benchmark
+============================================================
+
+Static CSS (fast path)                     0.0125 ms/req  ( 62.52 ms total, 5000 iters)
+Browser HTML page                          0.1785 ms/req  (178.50 ms total, 1000 iters)
+AJAX POST (JSON)                           0.1731 ms/req  (173.12 ms total, 1000 iters)
+Googlebot (valid IP)                       0.2022 ms/req  (202.24 ms total, 1000 iters)
+Fake Googlebot (UA only)                   0.1782 ms/req  ( 89.10 ms total, 500 iters)
+Empty UA (fast path)                       0.0971 ms/req  ( 97.05 ms total, 1000 iters)
+SQLMap UA (blocked)                        0.0942 ms/req  ( 47.11 ms total, 500 iters)
+cURL (http_tool)                           0.1179 ms/req  (117.90 ms total, 1000 iters)
+
+============================================================
+SUMMARY (per-request latency)
+============================================================
+static_css:                      0.0125 ms
+browser_html:                    0.1785 ms
+ajax_post:                       0.1731 ms
+googlebot_valid:                 0.2022 ms
+fake_googlebot:                  0.1782 ms
+empty_ua:                        0.0971 ms
+sqlmap:                          0.0942 ms
+curl:                            0.1179 ms
+
+Expected after Phase 1 optimizations:
+  static_css:  < 0.1 ms   (was ~5-10 ms — 50-100x faster)
+  empty_ua:    < 0.1 ms   (was ~5-10 ms — immediate block)
+  browser_html: ~3 ms     (was ~8 ms — minor improvement)
+  googlebot_valid: ~2 ms  (was ~12 ms — DNS cache hit)
+  fake_googlebot: ~5 ms   (was ~450 ms — async DNS helps next time)
+

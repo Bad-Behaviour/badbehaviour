@@ -636,4 +636,155 @@ return [
      * @var bool Default: false
      */
     'enable_dynamic_ip_ranges' => false,
+
+    // ============================================================
+    // HEAD REQUEST DETECTION (Enabled by Default — Low FP Risk)
+    // ============================================================
+    //
+    // Unlike the other 3.0 detectors above, this is ON by default because
+    // it targets clearly malicious behavior (site mapping / reconnaissance
+    // via HEAD) that legitimate clients don't exhibit.
+
+    /**
+     * Detect HEAD request abuse: site mapping, link-checking at scale,
+     * rapid reconnaissance. Three signals:
+     *   - HEAD without Referer (except /api/, /wp-json/, /health, /status)
+     *   - HEAD flood per session (>20 requests)
+     *   - HEAD probing per IP (>50 requests in 5 minutes)
+     *
+     * Legitimate HEAD usage (link checkers, monitoring, REST APIs) is
+     * allowed via the exempt paths configuration below.
+     *
+     * Risk: 🟢 LOW — link checkers send Referer naturally; REST clients
+     * hitting /api/ are exempt by default.
+     *
+     * @var bool Default: true
+     */
+    'enable_head_request_detection' => true,
+
+    /**
+     * When true, HEAD requests to non-exempt paths without a Referer header
+     * are blocked. Set false only if you have legitimate clients (rare HTTP
+     * libraries) that issue HEAD to non-API paths without Referer.
+     *
+     * Risk: 🟢 LOW.
+     *
+     * @var bool Default: true
+     */
+    'head_require_referer' => true,
+
+    /**
+     * HEAD requests per session before flagging as flood.
+     * Lower = stricter. Real browsers rarely exceed this in a single session.
+     *
+     * Risk: 🟢 LOW.
+     *
+     * @var int Default: 20
+     */
+    'head_flood_threshold' => 20,
+
+    /**
+     * HEAD probes per IP per 5-minute window before flagging as
+     * reconnaissance. Lower = stricter.
+     *
+     * Risk: 🟢 LOW.
+     *
+     * @var int Default: 50
+     */
+    'head_probe_threshold' => 50,
+
+    /**
+     * Path prefixes exempt from the Referer requirement. REST clients and
+     * monitoring tools issue HEAD to these endpoints without a Referer.
+     * Defaults cover most CMS APIs (WordPress, WackoWiki) and common
+     * health-check endpoints.
+     *
+     * Add your own API prefixes here as needed.
+     *
+     * Risk: 🟢 LOW.
+     *
+     * @var string[] Default: ['/api/', '/wp-json/', '/health', '/status']
+     */
+    'head_referer_exempt_paths' => [
+        '/api/',
+        '/wp-json/',
+        '/health',
+        '/status',
+    ],
+
+    // ============================================================
+    // ASSET SCRAPING DETECTION (Enabled by Default — Low FP Risk)
+    // ============================================================
+    //
+    // Detects AI training crawlers and image harvesters that download
+    // assets in bulk without loading the HTML pages first. Legitimate
+    // browsers: load HTML → load referenced assets. Scrapers: directly
+    // request assets from a URL list.
+
+    /**
+     * Detect direct asset scraping. Three signals:
+     *   - Asset requests without Referer (>10/hr per IP)
+     *   - Asset-only session (>20 assets, zero HTML loads)
+     *   - Sequential asset pattern (>100 assets in 5 min per IP)
+     *
+     * Real browsers always load HTML before assets, so legitimate users
+     * never trigger signal 2.
+     *
+     * Risk: 🟢 LOW.
+     *
+     * @var bool Default: true
+     */
+    'enable_asset_scraping_detection' => true,
+
+    /**
+     * File extensions treated as "assets" for scraping detection.
+     * Add extensions for content types you serve and want to protect
+     * (e.g., 'csv', 'json', 'xml', 'zip'). Remove extensions used by
+     * legitimate APIs that don't send Referer (rare).
+     *
+     * Risk: 🟡 MEDIUM — adding too many extensions increases false
+     * positives on legitimate API responses.
+     *
+     * @var string[] Default: image, document, audio, video formats
+     */
+    'asset_extensions' => [
+        // Images
+        'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+        // Documents
+        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        // Audio / video
+        'mp3', 'mp4', 'wav', 'ogg', 'webm',
+    ],
+
+    /**
+     * Asset requests without Referer per IP per hour before flagging
+     * as scraping. Lower = stricter.
+     *
+     * Risk: 🟢 LOW.
+     *
+     * @var int Default: 10
+     */
+    'asset_no_referer_threshold' => 10,
+
+    /**
+     * Asset requests within a single session (with zero HTML loads)
+     * before flagging as asset-only scraping. Real browsers always
+     * load HTML first, so this rarely fires for legitimate traffic.
+     *
+     * Risk: 🟢 LOW.
+     *
+     * @var int Default: 20
+     */
+    'asset_only_session_threshold' => 20,
+
+    /**
+     * Sequential asset URLs from a single IP per 5-minute window before
+     * flagging as enumeration. Lower = stricter.
+     *
+     * Risk: 🟢 LOW.
+     *
+     * @var int Default: 100
+     */
+    'asset_pattern_threshold' => 100,
+];
 ];

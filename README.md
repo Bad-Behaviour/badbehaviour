@@ -12,11 +12,13 @@ Trusted by thousands of sites—from personal blogs to enterprise platforms—to
 | **DoS Mitigation** | Helps prevent denial-of-service conditions caused by bot swarms. |
 | **Zero-Config Defaults** | Works out-of-the-box on most PHP platforms in minutes. |
 
-### How It’s Different
+### How It's Different
 Unlike WAFs or content filters that inspect *payloads*, Bad Behaviour analyzes the **delivery mechanism**:
 *   **TLS & HTTP/2 Fingerprinting** (JA3, Settings, Header Order)
 *   **Client Hints Cross-Validation** (`Sec-CH-UA` vs `User-Agent`)
 *   **Behavioral & Agentic Analysis** (Rate anomalies, AI-agent patterns)
+*   **Request-Method Analysis** (HEAD flooding for site mapping)
+*   **Asset-Scraping Detection** (AI training crawlers that skip HTML loads)
 *   **Attacker Software Identification** (50+ verified bots, dynamic IP feeds)
 
 This allows it to block **zero-day exploits and novel scrapers** that signature-based tools miss.
@@ -64,6 +66,7 @@ Version 3.0 is a complete rewrite of Bad Behaviour, modernizing the 10+ year old
 | Spoofed UA + missing Client Hints | `ClientHintsDetector` — cross-validates `User-Agent` against `Sec-CH-UA`, `Sec-CH-UA-Platform`, `Sec-CH-UA-Mobile`, full version list |
 | Stale IP ranges | `IpFeedInterface` + `FeedRegistry` — pulls fresh ranges from Google, Bing, OpenAI, Anthropic, Apple, Perplexity, Cloudflare (cron-driven, **experimental**) |
 | AI agents mimicking humans | `AgenticBehaviorDetector` — detects think-then-fetch bursts, non-linear navigation, precision targeting (no CSS/fonts/tracking) |
+| HEAD flooding + direct asset scraping | `HeadRequestDetector` + `AssetScrapingDetector` — flags site-mapping via HEAD and AI training scrapers hitting `/img1.png, /img2.png, …` without loading the HTML page that references them |
 
 ### AI Crawler Control
 
@@ -95,7 +98,7 @@ Global, per-minute, POST, and login endpoints with adapter-backed storage.
 - Database schema updated with new columns (`bot_category`, `ja3`, `header_order_hash`, `asn`, `country`)
 - Custom adapters must implement new `CacheInterface` methods
 
-> **Important**: Unlike typical 3.0 rewrites, **Bad Behaviour 3.0 defaults to legacy 2.x behavior**. All new detection features (fingerprinting, JSON body inspection, multipart inspection, strict header checks, Client Hints validation, agentic detection) are **disabled by default**. Enable them explicitly via configuration when needed.
+> **Important**: Unlike typical 3.0 rewrites, **Bad Behaviour 3.0 defaults to legacy 2.x behavior**. Most new detection features (fingerprinting, JSON body inspection, multipart inspection, strict header checks, Client Hints validation, agentic detection) are **disabled by default**. The two exceptions — **HEAD request detection** and **asset scraping detection** — are enabled by default because they target clearly malicious patterns (site-mapping and AI training scrapers) with negligible false-positive risk. Enable the others explicitly via configuration when needed.
 
 ---
 
@@ -122,7 +125,9 @@ src/
 │   ├── RateLimitDetector.php     # Multi-tier rate limiting
 │   ├── DnsblDetector.php         # http:BL, Spamhaus, SpamCop
 │   ├── ClientHintsDetector.php   # NEW — Sec-CH-UA brand/version/platform/mobile validation
-│   └── AgenticBehaviorDetector.php # NEW — AI-agent pattern detection
+│   ├── AgenticBehaviorDetector.php # NEW — AI-agent pattern detection
+│   ├── HeadRequestDetector.php   # NEW — HEAD flooding + Referer check
+│   └── AssetScrapingDetector.php # NEW — asset-only sessions + sequential patterns
 ├── Bot/
 │   ├── BotDefinition.php
 │   ├── BotCategory.php
@@ -299,14 +304,32 @@ return [
     ],
 
     // ===== 3.0 DETECTION FEATURES (opt-in) =====
-    'enable_fingerprinting'          => false,  // JA3, H2, header order
-    'inspect_json_body'              => false,  // SQL/XSS in JSON bodies
-    'inspect_multipart_body'         => false,  // SQL/XSS in multipart uploads
-    'enable_behavioral_analysis'     => true,
-    'enable_ai_crawler_control'      => true,
-    'enable_client_hints_validation' => false,  // NEW — Sec-CH-UA cross-check
-    'enable_agentic_detection'       => false,  // NEW — AI-agent pattern detection
-    'enable_dynamic_ip_ranges'       => false,  // NEW (EXPERIMENTAL) — feeds on cron
+    'enable_fingerprinting'           => false,  // JA3, H2, header order
+    'inspect_json_body'               => false,  // SQL/XSS in JSON bodies
+    'inspect_multipart_body'          => false,  // SQL/XSS in multipart uploads
+    'enable_behavioral_analysis'      => true,
+    'enable_ai_crawler_control'       => true,
+    'enable_client_hints_validation'  => false,  // NEW — Sec-CH-UA cross-check
+    'enable_agentic_detection'        => false,  // NEW — AI-agent pattern detection
+    'enable_dynamic_ip_ranges'        => false,  // NEW (EXPERIMENTAL) — feeds on cron
+
+    // ===== HEAD REQUEST DETECTION (enabled by default — low FP risk) =====
+    'enable_head_request_detection'   => true,
+    'head_require_referer'            => true,
+    'head_flood_threshold'            => 20,
+    'head_probe_threshold'            => 50,
+    'head_referer_exempt_paths'       => ['/api/', '/wp-json/', '/health', '/status'],
+
+    // ===== ASSET SCRAPING DETECTION (enabled by default — low FP risk) =====
+    'enable_asset_scraping_detection' => true,
+    'asset_extensions'                => [
+        'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        'mp3', 'mp4', 'wav', 'ogg', 'webm',
+    ],
+    'asset_no_referer_threshold'      => 10,
+    'asset_only_session_threshold'    => 20,
+    'asset_pattern_threshold'         => 100,
 ];
 ```
 
@@ -356,6 +379,8 @@ Public CMS with mixed audience (old browsers, AJAX, uploads)?
 | File uploads | ✅ | ✅ | 🔴 if `inspect_multipart_body` |
 | Webhooks (off-site POST) | ✅ | ✅ | ⚠️ if `offsite_forms` |
 | AI agents (Brave Leo, etc.) | ❌ allowed | ✅ detected | ✅ detected |
+| AI training scrapers (asset-only sessions) | ❌ allowed | ✅ detected | ✅ detected |
+| Legacy curl/wget link checkers | ✅ | ✅ | ⚠️ if `strict` |
 
 ✅ works • ⚠️ may need config • 🔴 will break • ❌ not detected
 
@@ -387,6 +412,26 @@ See [`CONFIGURATION.md`](docs/CONFIGURATION.md#configuration-profiles) for full 
 | `enable_client_hints_validation` | bool | `false` | 🟡 **MEDIUM** — FP on older browsers | After monitoring; requires Chromium 89+ |
 | `enable_agentic_detection` | bool | `false` | 🟡 **MEDIUM** — FP on power users | After monitoring; needs session cookies |
 | `enable_dynamic_ip_ranges` | bool | `false` | 🟡 **EXPERIMENTAL** | Requires cron; see [Feeds](#dynamic-ip-range-feeds) |
+
+#### Head Request Detection (`head_*`)
+
+| Setting | Type | Default | Risk | When to Enable |
+|---------|------|---------|------|----------------|
+| `enable_head_request_detection` | bool | `true` | 🟢 **LOW** | Keep enabled — blocks a real attack vector |
+| `head_require_referer` | bool | `true` | 🟢 **LOW** | Keep enabled — link checkers send Referer naturally |
+| `head_flood_threshold` | int | `20` | 🟢 **LOW** | HEAD requests per session before block |
+| `head_probe_threshold` | int | `50` | 🟢 **LOW** | HEAD probes per IP per 5 min |
+| `head_referer_exempt_paths[]` | string[] | `['/api/', '/wp-json/', '/health', '/status']` | 🟢 **LOW** | Paths where HEAD without Referer is legitimate (REST clients, monitoring) |
+
+#### Asset Scraping Detection (`asset_*`)
+
+| Setting | Type | Default | Risk | When to Enable |
+|---------|------|---------|------|----------------|
+| `enable_asset_scraping_detection` | bool | `true` | 🟢 **LOW** | Keep enabled — targets AI training scrapers |
+| `asset_extensions[]` | string[] | images, documents, audio, video | 🟡 **MEDIUM** | Add/remove based on what content you serve |
+| `asset_no_referer_threshold` | int | `10` | 🟢 **LOW** | Asset requests without Referer per IP per hour |
+| `asset_only_session_threshold` | int | `20` | 🟢 **LOW** | Asset requests with no HTML loads per session |
+| `asset_pattern_threshold` | int | `100` | 🟢 **LOW** | Sequential asset URLs per IP per 5 min |
 
 ### Reverse Proxy
 
@@ -572,8 +617,10 @@ de = "DE"
 1. **Whitelist** — IP, UA, URL, ASN, Country
 2. **Custom Rules** — IP, UA regex, ASN, Country, Header (incl. `action: 'log'`)
 3. **BotDetector** — 50+ known bots (verified Search/AI **bypass all checks**)
+3b. **HeadRequestDetector** — HEAD flooding + Referer check (enabled by default)
 4. **ClientHintsDetector** — Sec-CH-UA cross-check (opt-in)
 5. **BlacklistDetector** — Malicious UA, URL attack patterns, **form body only**
+5b. **AssetScrapingDetector** — Asset-only sessions, no-Referer floods, sequential URL patterns (enabled by default)
 6. **BehavioralDetector** — Rate anomalies, rotating UA/IP, **think time**, headers
 7. **AgenticBehaviorDetector** — AI-agent pattern detection (opt-in)
 8. **RateLimitDetector** — Multi-tier (global, per-minute, POST, login)
@@ -725,6 +772,58 @@ Enable:
 3. **Precision targeting** — high API/JSON ratio (>30%) with near-zero CSS/font/tracking requests (<5% / <2% / <1%) → **block**
 
 **Risk:** 🟡 MEDIUM — power users with aggressive tab-opening habits or single-page-app users may trigger false positives. Requires a session cookie (`PHPSESSID`, `JSESSIONID`, etc.) — fully anonymous traffic is skipped.
+
+---
+
+## HEAD Request Detection (3.0+)
+
+HEAD requests are cheap (no body transfer) and ideal for site mapping. Bots send thousands of HEAD requests to enumerate URLs without downloading content. Legitimate HEAD usage (link checkers, monitoring, REST APIs) is usually low-volume and from known sources.
+
+Enable (enabled by default — `enable_head_request_detection = true`):
+
+```php
+'enable_head_request_detection' => true,
+'head_require_referer'          => true,
+'head_flood_threshold'          => 20,   // per session
+'head_probe_threshold'          => 50,   // per IP per 5 min
+'head_referer_exempt_paths'     => ['/api/', '/wp-json/', '/health', '/status'],
+```
+
+**Three signal detectors:**
+
+1. **HEAD without Referer** — site mapping typically omits Referer; real browsers send it. Exempt paths (REST APIs, health checks) don't trigger this check.
+2. **HEAD flood per session** — >20 HEAD requests in a single session = enumeration.
+3. **HEAD probing per IP** — >50 HEAD requests from one IP in 5 minutes = rapid-fire reconnaissance.
+
+**Risk:** 🟢 LOW — link checkers and monitoring tools naturally send Referer. REST clients hitting `/api/` are exempt by default. Disable `head_require_referer` only if you have legitimate clients (rare HTTP libraries) that send HEAD to non-API paths without Referer.
+
+---
+
+## Asset Scraping Detection (3.0+)
+
+AI training scrapers and image harvesters download assets in bulk, often without loading the HTML pages first. Legitimate browser behavior: load HTML page → load referenced assets. Scrapers: directly request assets from a URL list.
+
+Enable (enabled by default — `enable_asset_scraping_detection = true`):
+
+```php
+'enable_asset_scraping_detection' => true,
+'asset_extensions'                => [
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+    'mp3', 'mp4', 'wav', 'ogg', 'webm',
+],
+'asset_no_referer_threshold'      => 10,   // per IP per hour
+'asset_only_session_threshold'    => 20,   // per session (no HTML loads)
+'asset_pattern_threshold'         => 100,  // sequential per IP per 5 min
+```
+
+**Three signal detectors:**
+
+1. **Asset without Referer** — bots fetching `/img1.png, /img2.png, …` directly (not following page navigation) don't send Referer. Legitimate browsers do.
+2. **Asset-only session** — >20 asset requests in a session where `html_requests === 0` = pure asset harvesting. Real browsers always load the HTML first.
+3. **Sequential asset pattern** — >100 assets from a single IP in 5 minutes = scraping. Real browser asset requests are spread over time and mixed with HTML navigation.
+
+**Risk:** 🟢 LOW — real browsers load HTML before assets, so legitimate users never trigger signal 2. For signal 1, monitor for `type: 'asset_no_referer_flood'` in logs to tune the threshold. Add `csv`, `json`, `xml`, or `zip` to `asset_extensions` if you serve those file types and want them protected.
 
 ---
 

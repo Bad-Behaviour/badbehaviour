@@ -385,7 +385,7 @@ Only blocks **known bad** fingerprints from config — zero false positives by d
 'geoip' => [
     'enabled'           => true,
     'database_path'     => '/usr/share/GeoIP/GeoLite2-Country.mmdb',
-    'blocked_countries' => ['KP', 'IR'],
+    'blocked_countries' => ['XL', 'ZZ'],
     'blocked_asns'      => [],
 ],
 ```

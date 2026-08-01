@@ -44,6 +44,7 @@ class Registry
 			self::cloud_infrastructure(),
 			self::monitoring(),
 			self::security_scanners(),
+			self::residential_crawlers(),
 			self::utility_bots(),
 			);
 		return self::$cache;
@@ -400,19 +401,6 @@ class Registry
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'Wibybot',
 				),
-			'fossies' => new BotDefinition(
-				id: 'fossies',
-				name: 'FOSSies-Fresher',
-				user_agent_patterns: ['FOSSies-Fresher'],
-				host_patterns: ['fossies.org'],
-				ip_ranges: [
-					'148.251.0.0/16',
-				],
-				verify_dns: true,
-				dns_suffix: 'fossies.org',
-				category: BotCategory::SEARCH_ENGINE,
-				robots_txt_token: 'FOSSies-Fresher',
-				),
 			'coccoc' => new BotDefinition(
 				id: 'coccoc',
 				name: 'Cốc Cốc Bot (Vietnam #1)',
@@ -726,18 +714,6 @@ class Registry
 				robots_txt_token: 'Diffbot',
 				default_action: BotAction::CHALLENGE,
 				description: 'Knowledge-graph / structured-data extractor.',
-				),
-			'brightdata' => new BotDefinition(
-				id: 'brightdata',
-				name: 'Bright Data (Data Collector / Proxy Network)',
-				user_agent_patterns: ['BrightData', 'DataCollector', 'Luminati', 'BrightDataBot'],
-				host_patterns: ['brightdata.com', 'luminati.io'],
-				ip_ranges: [], // Residential proxy network — IP-based detection useless
-				verify_dns: false,
-				category: BotCategory::AI_CRAWLER,
-				robots_txt_token: 'BrightData',
-				default_action: BotAction::BLOCK,
-				description: 'Residential proxy network. Used for AI scraping. Default BLOCK.',
 				),
 		];
 	}
@@ -1102,6 +1078,20 @@ class Registry
 				robots_txt_token: 'DNB-Bot',
 				default_action: BotAction::ALLOW,
 				description: 'German national library.',
+				),
+			'fossies' => new BotDefinition(
+				id: 'fossies',
+				name: 'FOSSies (Fraunhofer SCAI)',
+				user_agent_patterns: ['FOSSies-Fresher'],
+				host_patterns: ['fossies.org'],
+				ip_ranges: [
+					'148.251.0.0/16',
+				],
+				verify_dns: true,
+				dns_suffix: 'fossies.org',
+				category: BotCategory::ARCHIVE_CRAWLER,
+				robots_txt_token: 'FOSSies-Fresher',
+				description: 'FOSS software archive.Indexes open-source releases for research/engineering/science.',
 				),
 			'kb_nl' => new BotDefinition(
 				id: 'kb_nl',
@@ -1485,6 +1475,33 @@ class Registry
 				default_action: BotAction::ALLOW,
 				description: 'Performance / a11y auditing.',
 				),
+		];
+	}
+
+	/**
+	 * Residential proxy networks used for scraping.
+	 * Default action: BLOCK — these are commercial data-collection
+	 * services with no legitimate crawl purpose. They evade IP-based
+	 * detection by routing through real residential connections.
+	 *
+	 * Operators should add residential_crawler to blocked_bot_categories.
+	 */
+	public static function residential_crawlers(): array
+	{
+		return [
+			'brightdata' => new BotDefinition(
+				id: 'brightdata',
+				name: 'Bright Data (Residential Proxy Network)',
+				user_agent_patterns: ['BrightData', 'DataCollector', 'Luminati', 'BrightDataBot'],
+				host_patterns: ['brightdata.com', 'luminati.io'],
+				ip_ranges: [],  // Residential — IP detection is useless
+				verify_dns: false,
+				category: BotCategory::RESIDENTIAL_PROXY,
+				robots_txt_token: 'BrightData',
+				default_action: BotAction::BLOCK,
+				description: 'Residential proxy network used for AI/scraping. Default BLOCK.',
+				),
+			// Future: 'oxylabs', 'smartproxy', 'iproyal', 'geosurf', 'netnut'
 		];
 	}
 

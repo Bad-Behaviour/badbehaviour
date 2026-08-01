@@ -16,6 +16,7 @@ enum BotCategory: string
 	case SHOPPING_CRAWLER      = 'shopping_crawler';
 	case CLOUD_INFRASTRUCTURE  = 'cloud_infrastructure';
 	case SECURITY_SCANNER      = 'security_scanner';
+	case RESIDENTIAL_PROXY    = 'residential_proxy';
 
 	/**
 	 * Human-readable label for dashboards / logging.
@@ -35,6 +36,7 @@ enum BotCategory: string
 			self::SHOPPING_CRAWLER      => 'Shopping Crawler',
 			self::CLOUD_INFRASTRUCTURE  => 'Cloud Infrastructure',
 			self::SECURITY_SCANNER      => 'Security Scanner',
+			self::RESIDENTIAL_PROXY     => 'Residential Proxy',
 		};
 	}
 
@@ -59,6 +61,7 @@ enum BotCategory: string
 
 			// Strict
 			self::SECURITY_SCANNER => 'log_only',
+			self::RESIDENTIAL_PROXY => 'block',
 			self::MALICIOUS        => 'block',
 			default                => 'allow',
 		};

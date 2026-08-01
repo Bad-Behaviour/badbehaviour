@@ -563,7 +563,7 @@ return [
          * @var string[]
          */
         'blocked_countries' => [
-            // 'KP', 'IR',
+            // 'XL', 'ZZ',
         ],
 
         /**

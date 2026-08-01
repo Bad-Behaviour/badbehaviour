@@ -121,8 +121,11 @@ if ($result->code === ResultCode::BLOCKED_MALICIOUS_UA) { /* ... */ }
 | `a92a8eaa` | `ResultCode::BLOCKED_FINGERPRINT` |
 | `f1182195` | `ResultCode::BLOCKED_CUSTOM_RULE` |
 | `b6e5e5b9` | `ResultCode::BLOCKED_GEOIP` |
+| *(new in 3.0)* | `ResultCode::BLOCKED_RESIDENTIAL_PROXY` |
 
-For full mapping, see `Core/ResultCode.php` — values match the enum's `->value` string.
+The final row is a new code introduced in 3.0 with no 2.x equivalent. Use it to filter logs and dashboards for residential-proxy blocks (e.g., `SELECT COUNT(*) FROM bad_behaviour WHERE status_code = 'blocked.residential_proxy'`).
+
+For the full mapping, see `Core/ResultCode.php` — values match the enum's `->value` string.
 
 ### 4. Adapter Interface
 
@@ -196,6 +199,58 @@ CREATE INDEX IF NOT EXISTS "idx_request_uri_hash" ON "prefix_bad_behaviour" ("re
 
 ## New Features in 3.0
 
+### Expanded Bot Registry & Categories (NEW)
+
+3.0 ships with **~100 bots across 11 categories**
+
+| Category | Default | Examples |
+|---|---|---|
+| `search_engine` | `allow` (verified) | Googlebot, Bingbot, Yandex, Baidu, DuckDuckBot, Brave, Kagi, Naver, Sogou, Qihoo360, ByteDance, Petal, Cốc Cốc, Mail.ru, Stract, Marginalia |
+| `ai_crawler` | `challenge` | GPTBot, ClaudeBot, Gemini, Meta-ExternalAgent, PerplexityBot, Grok, Mistral, Cohere, Amazonbot, Diffbot |
+| `social_crawler` | `allow` (verified) / `log_only` (unverified) | Facebook, Twitter, LinkedIn, Slack, Telegram, WhatsApp, KakaoTalk, LINE, WeChat, Notion |
+| `seo_crawler` | `challenge` | Semrush, Ahrefs, MJ12, DotBot, SimilarWeb, Seobility, Botify, Lumar, Screaming Frog |
+| `archive_crawler` | `allow` (verified) | Internet Archive, Common Crawl, UKWA, BnF, DNB, KB-NL, **FOSSies** |
+| `monitoring` | `allow` | UptimeRobot, Pingdom, StatusCake, GTmetrix, Lighthouse |
+| `feed_reader` *(new)* | `allow` | Feedly, Inoreader, Flipboard, NewsBlur, Google News, Apple News |
+| `shopping_crawler` *(new)* | `allow` | Google Shopping, Bing Shopping, Facebook Catalog, Pinterest Shopping, Shopify |
+| `cloud_infrastructure` *(new)* | **`hard allow`** | Cloudflare, AWS ELB/ALB, GCP LB, Azure LB/Front Door, Fastly |
+| `security_scanner` *(new)* | `log_only` | Qualys, Detectify, Rapid7, Shodan, Censys |
+| `residential_proxy` *(new)* | `block` | Bright Data (Luminati) |
+| `malicious` | `block` | Known-bad actors |
+| `unknown` | (catch-all) | — |
+
+**Categorical defaults are tunable** via `bot_categories.{blocked, log_only, challenge, allowed}`:
+
+```php
+'bot_categories' => [
+    'blocked'   => ['malicious'],          // block entirely
+    'log_only'  => ['security_scanner'],   // record, never block
+    'challenge' => [],                     // issue PoW/captcha
+    'allowed'   => [                       // bypass (verified only)
+        'feed_reader',
+        'shopping_crawler',
+        'cloud_infrastructure',
+        'monitoring',
+        'archive_crawler',
+    ],
+],
+```
+
+### Cloud Infrastructure Fast Path (NEW — Critical)
+
+A new early-exit check runs **before** UA matching: if the IP falls in a known cloud LB range (Cloudflare, AWS, GCP, Azure, Fastly), the request is **immediately allowed**.
+
+```php
+// In BotDetector::detect_uncached() — runs FIRST
+if ($this->is_cloud_infrastructure_ip($ip)) {
+    return Result::allow($package);
+}
+```
+
+**Why this matters**: blocking CDN health probes marks your origin unhealthy in the load balancer and takes your site offline. This was the #1 outage vector in older bot blockers. The fast path covers ~30 known CIDR blocks statically; enable `enable_dynamic_ip_ranges` for live coverage from Cloudflare/AWS/GCP/Fastly feeds.
+
+⚠️ **Never** add cloud LB ranges to `custom_rules` with `action: 'block'`. Even if the fast path short-circuits before custom rules, defensive coding means: don't put yourself in a position to accidentally block the CDN.
+
 ### AI Crawler Control
 
 ```php
@@ -207,6 +262,8 @@ CREATE INDEX IF NOT EXISTS "idx_request_uri_hash" ON "prefix_bad_behaviour" ("re
 ```
 
 Verified tokens: `GPTBot`, `ClaudeBot`, `Google-Extended`, `PerplexityBot`, `Meta-ExternalAgent`, `Applebot-Extended`, `CCBot`, `ia_archiver`, `GrokBot`, `MistralBot`, `YouBot`.
+
+> **Migration note**: `brightdata` (Bright Data / Luminati residential proxy network) is **no longer in the `ai_crawler` category**. It now lives in the new `residential_proxy` category with default action `BLOCK`. If you relied on `bot_categories.blocked: ['ai_crawler']` to catch Bright Data, you must add `'residential_proxy'` to that list. The bot is still blocked out of the box.
 
 ### Client Hints Validation (NEW)
 
@@ -229,10 +286,49 @@ Detects AI-agent patterns (Brave Leo, ChatGPT operator, Playwright scrapers):
 
 Off by default — risk of false positives on power users.
 
+### Head Request Detection (NEW)
+
+```php
+'enable_head_request_detection' => true,   // default: true
+'head_require_referer'          => true,
+'head_flood_threshold'          => 20,
+'head_probe_threshold'          => 50,
+'head_referer_exempt_paths'     => ['/api/', '/wp-json/', '/health', '/status'],
+```
+
+Detects HEAD request abuse for site mapping and reconnaissance. Three signals:
+- HEAD without Referer (except `/api/`, `/wp-json/`, `/health`, `/status`)
+- HEAD flood per session (>20 requests)
+- HEAD probing per IP (>50 requests in 5 minutes)
+
+Low FP risk — enabled by default.
+
+### Asset Scraping Detection (NEW)
+
+```php
+'enable_asset_scraping_detection' => true,  // default: true
+'asset_extensions'                => ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'pdf', 'doc', 'docx'],
+'asset_no_referer_threshold'      => 10,
+'asset_only_session_threshold'    => 20,
+'asset_pattern_threshold'         => 100,
+```
+
+Detects AI training crawlers and image harvesters that download assets in bulk without loading HTML pages first. Three signals:
+- Asset requests without Referer (>10/hr per IP)
+- Asset-only session (>20 assets, zero HTML loads)
+- Sequential asset pattern (>100 assets in 5 min per IP)
+
+Low FP risk — enabled by default.
+
 ### Dynamic IP Range Feeds (NEW, experimental)
 
 ```php
 'enable_dynamic_ip_ranges' => true,
+'dynamic_ip_ranges' => [
+    'enabled' => true,
+    'ttl'     => 86400,
+    'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
+],
 ```
 
 Pulls fresh ranges from Google, Bing, OpenAI, Anthropic, Apple, Perplexity, DuckDuckGo, Amazon, Cloudflare. Requires cron:
@@ -241,7 +337,7 @@ Pulls fresh ranges from Google, Bing, OpenAI, Anthropic, Apple, Perplexity, Duck
 0 */6 * * * php /path/to/badbehaviour/bin/update-ip-ranges.php
 ```
 
-**Status: experimental** — caching boundaries and timing issues to be resolved before graduating from experimental. See [README → Dynamic IP Range Feeds](README.md#dynamic-ip-range-feeds-experimental).
+**Status: experimental** — caching boundaries and timing issues to be resolved before graduating from experimental. Stale-cache fallback is automatic; if a feed fetch fails, the application uses the last-known good data. See [PERFORMANCE.md → Keep cloud ranges up to date](PERFORMANCE.md#keep-cloud-ranges-up-to-date).
 
 ### Rate Limiting
 
@@ -350,6 +446,9 @@ Audit permitted bots/search-engines without affecting their behavior:
 | Client Hints validation | N/A | **Disabled** (`enable_client_hints_validation = false`) |
 | Agentic detection | N/A | **Disabled** (`enable_agentic_detection = false`) |
 | Dynamic IP ranges | N/A | **Disabled** (`enable_dynamic_ip_ranges = false`) |
+| Head request detection | N/A | **Enabled** (`enable_head_request_detection = true`) |
+| Asset scraping detection | N/A | **Enabled** (`enable_asset_scraping_detection = true`) |
+| Cloud LB fast path | N/A | **Enabled** (always-on safety check) |
 | Verified search engines | Bypass all | **Bypass all** |
 
 **Result**: Drop-in upgrade for most sites — no config changes needed beyond creating `bb_config.php` from the example.
@@ -467,25 +566,45 @@ Add to `lang/en.php`:
 'BbEnableClientHints'          => 'Enable Client Hints validation',
 'BbEnableAgentic'              => 'Enable agentic behavior detection',
 'BbEnableDynamicIpRanges'      => 'Enable dynamic IP ranges (experimental)',
+'BbEnableHeadRequestDetection' => 'Enable HEAD request abuse detection',
+'BbEnableAssetScrapingDetection' => 'Enable asset scraping detection',
 'BbShowContactInfo'            => 'Show contact info on block page',
 'BbShowDetailedBlockPage'      => 'Show detailed block page',
 'BbDnsblEnabled'               => 'Enable DNSBL checks',
 'BbRateLimitEnabled'           => 'Enable rate limiting',
 'BbChallengeEnabled'           => 'Enable challenges',
 'BbGeoipEnabled'               => 'Enable GeoIP lookups',
+'BbBotCategoriesBlocked'       => 'Bot categories to block',
+'BbBotCategoriesLogOnly'       => 'Bot categories to log only',
+'BbBotCategoriesChallenge'     => 'Bot categories to challenge',
+'BbBotCategoriesAllowed'       => 'Bot categories to allow',
 ```
 
 ---
 
 ## Performance Notes
 
-1. **DNS Verification**: Cached 1 hour per IP
-2. **Rate Limiting**: Requires persistent adapter storage (Redis/DB) for production
-3. **GeoIP**: Load MaxMind DB once at startup
-4. **Static Files**: Configure `performance.skip_extensions`/`skip_paths` to avoid processing CSS/JS/images
-5. **Logging**: Only blocked requests logged by default (`verbose = false`)
-6. **Dynamic Feeds** (experimental): runs out-of-band via cron — never on the request path
-7. **Client Hints validation**: cheap (string parsing) — safe to enable at any scale
+See [PERFORMANCE.md](PERFORMANCE.md) for full benchmarks. Highlights:
+
+1. **DNS Verification**: Cached 7 days per `(IP, dns_suffix)` pair (was 1 hour in 2.x)
+2. **Cloud LB fast path**: 8 μs per request — covers ~30 static CIDR blocks
+3. **Result cache**: 5-minute TTL per `(IP, UA, config_fingerprint)` — expected 40–70% hit rate on busy sites
+4. **Rate Limiting**: Requires persistent adapter storage (Redis/DB) for production
+5. **GeoIP**: Load MaxMind DB once at startup
+6. **Static Files**: Configure `performance.skip_extensions`/`skip_paths` to avoid processing CSS/JS/images (~145 μs saved per skipped request)
+7. **Logging**: Only blocked requests logged by default (`verbose = false`)
+8. **Dynamic Feeds** (experimental): runs out-of-band via cron — never on the request path
+9. **Client Hints validation**: cheap (string parsing) — safe to enable at any scale
+
+Headline numbers from `tests/benchmark.php`:
+
+| Request type | Latency |
+|--------------|--------:|
+| Static resource | 12 μs |
+| Cloud LB health probe | 8 μs |
+| Empty UA (block) | 62 μs |
+| Browser HTML page | 158 μs |
+| Verified search engine | 84 μs |
 
 ---
 
@@ -513,11 +632,15 @@ Log format (when your adapter persists results):
   "country": "US",
   "asn": "AS12345",
   "support_key": "c000-0201-acf1",
-  "rule_id": null
+  "rule_id": null,
+  "bot_category": null,
+  "bot_verified": false
 }
 ```
 
 `rule_id` is populated for `custom_rules` matches (including `action: 'log'`).
+`bot_category` is one of: `search_engine`, `ai_crawler`, `social_crawler`, `seo_crawler`, `archive_crawler`, `monitoring`, `feed_reader`, `shopping_crawler`, `cloud_infrastructure`, `security_scanner`, `residential_proxy`, `malicious`, `unknown`.
+`code` includes `blocked.residential_proxy` for residential-proxy blocks.
 
 ---
 
@@ -533,6 +656,8 @@ Log format (when your adapter persists results):
 | `enable_dynamic_ip_ranges` stale data | Run `bin/update-ip-ranges.php` via cron |
 | Client Hints false positives | Disable for Electron apps; check `enable_client_hints_validation = false` |
 | Agentic detection false positives | Require session cookies; monitor for power-user patterns |
+| Origin marked unhealthy by CDN | Check that cloud LB ranges are NOT in `custom_rules` block list — see [PERFORMANCE.md → Trust the cloud fast path](PERFORMANCE.md#trust-the-cloud-fast-path) |
+| HEAD requests from monitoring blocked | Add monitoring path prefixes to `head_referer_exempt_paths` |
 
 ---
 
@@ -561,7 +686,7 @@ ALTER TABLE `prefix_bad_behaviour`
 Bad Behaviour follows [Semantic Versioning](https://semver.org/):
 
 - **Patch (3.0.x)**: bug fixes, no config changes required
-- **Minor (3.x.0)**: new optional detectors / feed sources, opt-in only, no breaking changes
+- **Minor (3.x.0)**: new optional detectors / feed sources / bot categories, opt-in only, no breaking changes
 - **Major (x.0.0)**: breaking config or interface changes (e.g. 3.0 INI → PHP array)
 
 **Always review** `CHANGELOG.md` before upgrading minor versions — new opt-in features may be worth enabling. Major versions require reading the migration guide section for the relevant version bump.
@@ -571,6 +696,7 @@ Bad Behaviour follows [Semantic Versioning](https://semver.org/):
 ## Support
 
 - [Configuration Reference](CONFIGURATION.md)
+- [Performance Guide](PERFORMANCE.md)
 - [Issues](https://github.com/Bad-Behaviour/badbehaviour/issues)
 - [Discussions](https://github.com/Bad-Behaviour/badbehaviour/discussions)
 - [Wiki](https://github.com/Bad-Behaviour/badbehaviour/wiki)

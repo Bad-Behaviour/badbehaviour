@@ -141,9 +141,25 @@ return [
         'strict'           => false,
     ],
 
-    // ===== BOT CATEGORIES =====
+    // ===== BOT CATEGORIES (11 categories) =====
     'bot_categories' => [
-        'blocked' => ['malicious'],
+        'blocked'   => ['malicious'],
+        'log_only'  => ['security_scanner'],
+        'challenge' => [],
+        'allowed'   => [
+            'feed_reader',
+            'shopping_crawler',
+            'cloud_infrastructure',
+            'monitoring',
+            'archive_crawler',
+        ],
+    ],
+
+    // ===== DYNAMIC IP RANGES (cloud providers) =====
+    'dynamic_ip_ranges' => [
+        'enabled' => false,
+        'ttl'     => 86400,
+        'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
     ],
 
     // ===== RATE LIMITS =====
@@ -155,19 +171,59 @@ return [
         'login'      => ['requests' => 10,   'window' => 900],
     ],
 
-    // ===== 3.0 DETECTION FEATURES (opt-in) =====
-    'enable_fingerprinting'          => false,
-    'inspect_json_body'              => false,
-    'inspect_multipart_body'         => false,
-    'enable_behavioral_analysis'     => true,
-    'enable_ai_crawler_control'      => true,
-    'enable_client_hints_validation' => false, // NEW
-    'enable_agentic_detection'       => false, // NEW
-    'enable_dynamic_ip_ranges'       => false, // NEW (EXPERIMENTAL)
+    // ===== DETECTION FEATURES (opt-in) =====
+    'enable_fingerprinting'           => false,
+    'inspect_json_body'               => false,
+    'inspect_multipart_body'          => false,
+    'enable_behavioral_analysis'      => true,
+    'enable_ai_crawler_control'       => true,
+    'enable_client_hints_validation'  => false,
+    'enable_agentic_detection'        => false,
+    'enable_dynamic_ip_ranges'        => false,
+
+    // ===== HEAD REQUEST DETECTION (on by default — low FP risk) =====
+    'enable_head_request_detection'   => true,
+    'head_require_referer'            => true,
+    'head_flood_threshold'            => 20,
+    'head_probe_threshold'            => 50,
+    'head_referer_exempt_paths'       => ['/api/', '/wp-json/', '/health', '/status'],
+
+    // ===== ASSET SCRAPING DETECTION (on by default — low FP risk) =====
+    'enable_asset_scraping_detection' => true,
+    'asset_extensions'                => [
+        'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        'mp3', 'mp4', 'wav', 'ogg', 'webm',
+    ],
+    'asset_no_referer_threshold'      => 10,
+    'asset_only_session_threshold'    => 20,
+    'asset_pattern_threshold'         => 100,
 ];
 ```
 
-> All new 3.0 features are **off by default** for backward compatibility with 2.x.
+> **New 3.0 features** are off by default for backward compatibility with 2.x — except `enable_head_request_detection`, `enable_asset_scraping_detection`, and the hard-coded **cloud-infrastructure safety net** (which can't be disabled and never blocks CDN/LB probes).
+
+---
+
+## Bot Registry (100+ bots, 11 categories)
+
+The 3.0 registry ships with **~80 known bots** across **11 `BotCategory` cases**:
+
+| Category | Default action | Tunable via | Example bots |
+|---|---|---|---|
+| `search_engine` | verified → allow, unverified → block | n/a | Googlebot, Bingbot, Yandex, Baidu, DuckDuckGo, Naver, Daum, Sogou, Qihoo, ByteDance, Seznam, Mojeek, Wiby, FOSSies, **coccoc, mailru, petal, zum, stract, marginalia, centrum** |
+| `ai_crawler` | depends on `ai_crawlers.*` | `ai_crawlers.allowed[]`, `strict`, `block_unverified` | GPTBot, ClaudeBot, Google-Extended, PerplexityBot, Meta-ExternalAgent, Applebot-Extended, GrokBot, MistralBot, CohereBot, YouBot, **amazon_ai, semantic_scholar, diffbot, brightdata (default BLOCK)** |
+| `social_crawler` | verified → allow, unverified → log_only | n/a | Facebook, Twitter, LinkedIn, Discord, Slack, Telegram, WhatsApp, Pinterest, Reddit, **kakao, line, wechat, notion** |
+| `seo_crawler` | verified → default, unverified → block | n/a | Ahrefs, Semrush, MJ12, DotBot, **similarweb, seobility, botify, siteimprove, lumar, oncrawl, screaming_frog, contentking** |
+| `archive_crawler` | verified → allow | `allowed[]` (default) | Internet Archive, Common Crawl, **UKWA, BnF, DNB, KB-NL** |
+| `monitoring` | verified → allow | `allowed[]` (default) | UptimeRobot, Pingdom, StatusCake, GTmetrix, Lighthouse |
+| `feed_reader` *(new)* | allow (verified-only) | `allowed[]` (default) | Feedly, Inoreader, Flipboard, NewsBlur, Google News, Apple News |
+| `shopping_crawler` *(new)* | allow (verified-only) | `allowed[]` (default) | Google Shopping, Bing Shopping, Pinterest Shopping, Facebook Catalog, Shopify |
+| `cloud_infrastructure` *(new)* | **HARD allow — never blocked** | n/a (always allowed) | Cloudflare, AWS ELB, GCP LB, Azure, Fastly health probes |
+| `security_scanner` *(new)* | log_only | `log_only[]` (default) | Qualys, Detectify, Rapid7, Shodan, Censys |
+| `malicious` | hard block | `blocked[]` (default) | Known-bad actors |
+
+> ⚠️ **`cloud_infrastructure` cannot be moved to `blocked[]` or `challenge[]`.** The hard-allow is enforced inside `BotDetector::determine_action()` — the safety override always wins, because blocking these probes takes your origin offline.
 
 ---
 
@@ -192,9 +248,14 @@ START
   ├─ Internal API / B2B / paid content / high abuse target?
   │   └─→ STRICT profile (with full FP audit first)
   │
-  └─ Public CMS with mixed audience (old browsers, AJAX, uploads)?
-      └─→ DEFAULT (strict would break too much)
+  ├─ Public CMS with mixed audience (old browsers, AJAX, uploads)?
+  │   └─→ DEFAULT (strict would break too much)
+  │
+  └─ Behind Cloudflare / AWS ALB / GCP LB / Fastly / Azure?
+      └─→ ANY profile — cloud LB probes are always allowed
 ```
+
+---
 
 ### Profile: **Default** (drop-in 2.x replacement)
 
@@ -208,6 +269,8 @@ START
 - Blocks only clear attacks (SQLi, XSS in URLs, malicious UAs)
 - Allows all known bots, all HTTP tools, all modern browsers
 - DNS-verified search engines and AI crawlers bypass everything
+- Head request detection and asset scraping detection are on (low FP risk)
+- Cloud LB probes are always allowed
 
 **Configuration:**
 
@@ -240,6 +303,20 @@ return [
         'strict'           => false,
     ],
 
+    // Bot categories — defaults are conservative
+    'bot_categories' => [
+        'blocked'   => ['malicious'],
+        'log_only'  => ['security_scanner'],
+        'challenge' => [],
+        'allowed'   => [
+            'feed_reader',
+            'shopping_crawler',
+            'cloud_infrastructure',
+            'monitoring',
+            'archive_crawler',
+        ],
+    ],
+
     // Rate limits — standard
     'rate_limits' => [
         'enabled'    => true,
@@ -249,15 +326,19 @@ return [
         'login'      => ['requests' => 10,   'window' => 900],
     ],
 
-    // ===== 3.0 FEATURES — all off =====
-    'enable_fingerprinting'          => false,
-    'inspect_json_body'              => false,
-    'inspect_multipart_body'         => false,
-    'enable_behavioral_analysis'     => true,   // safe (rotating UA, rate)
-    'enable_ai_crawler_control'      => true,
-    'enable_client_hints_validation' => false,  // would break old Firefox/IE
-    'enable_agentic_detection'       => false,  // would break power users
-    'enable_dynamic_ip_ranges'       => false,  // experimental
+    // ===== DETECTION FEATURES — opt-in =====
+    'enable_fingerprinting'           => false,
+    'inspect_json_body'               => false,
+    'inspect_multipart_body'          => false,
+    'enable_behavioral_analysis'      => true,   // safe (rotating UA, rate)
+    'enable_ai_crawler_control'       => true,
+    'enable_client_hints_validation'  => false,  // would break old Firefox/IE
+    'enable_agentic_detection'        => false,  // would break power users
+    'enable_dynamic_ip_ranges'        => false,  // experimental
+
+    // Head + asset scraping — ON by default, low FP risk
+    'enable_head_request_detection'   => true,
+    'enable_asset_scraping_detection' => true,
 ];
 ```
 
@@ -267,6 +348,10 @@ return [
 - ✅ curl / wget / Python-requests work
 - ✅ Firefox 1–88 works (no Sec-CH-UA required)
 - ✅ IE 11 works (no modern headers required)
+- ✅ RSS readers (Feedly, Apple News) work
+- ✅ Product crawlers (Google Shopping, FB Catalog) work
+- ✅ Cloudflare / AWS / GCP LB probes always allowed
+- ✅ Security scanners (Shodan, Qualys) are logged, never blocked
 - ❌ Does NOT catch spoofed UAs from real Chromium browsers
 - ❌ Does NOT catch AI agents mimicking humans
 
@@ -283,7 +368,7 @@ return [
 **What it adds over Default:**
 - Client Hints validation — catches most UA spoofing from Chromium browsers
 - Agentic detection — catches AI scrapers mimicking human behavior
-- Dynamic IP ranges — fresh ranges from Google/Bing/OpenAI/etc.
+- Dynamic IP ranges — fresh ranges from Google/Bing/OpenAI/AWS/Cloudflare/etc.
 - Detailed block page — easier user support
 
 **Configuration:** Start from Default, then flip these:
@@ -303,6 +388,11 @@ return [
 
     // Week 2: Dynamic IP ranges (requires cron first!)
     'enable_dynamic_ip_ranges'       => true,
+    'dynamic_ip_ranges' => [
+        'enabled' => true,
+        'ttl'     => 86400,
+        'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
+    ],
 
     // Week 3: Agentic detection (after you understand your power users)
     'enable_agentic_detection'       => true,
@@ -326,13 +416,13 @@ return [
 - ⚠️ **Old Chromium (< 89)** — ~3% of traffic in 2024. Won't send Client Hints. Either accept the FP rate or whitelist old Chrome.
 - ⚠️ **Agentic detection requires session cookies** — anonymous traffic is skipped. If you don't use sessions, this detector does nothing.
 - ⚠️ **Agentic FP triggers** — single-page apps with rapid navigation, power users with many tabs, automated testing. Monitor for `type: 'agentic_nonlinear'` in logs.
-- ⚠️ **Dynamic IP ranges** — requires `bin/update-ip-ranges.php` on cron. Without it, falls back to static ranges (same as Default). See [experimental notes](#enabler_dynamic_ip_ranges).
+- ⚠️ **Dynamic IP ranges** — requires `bin/update-ip-ranges.php` on cron. Without it, falls back to static ranges (same as Default). See [`enable_dynamic_ip_ranges`](#enable_dynamic_ip_ranges).
 
 **Recommended rollout order for Medium:**
 
 1. Day 1: flip `show_detailed_block_page = true` (no FP risk, just observability)
 2. Week 1: enable `enable_client_hints_validation` (lowest FP risk — Firefox/Safari/old Chrome are not validated)
-3. Week 2: deploy `bin/update-ip-ranges.php` cron, then enable `enable_dynamic_ip_ranges`
+3. Week 2: deploy `bin/update-ip-ranges.php` cron, then enable `enable_dynamic_ip_ranges` and the `dynamic_ip_ranges` block
 4. Week 3: enable `enable_agentic_detection` after you've audited your power users
 5. Week 4+: consider `enable_fingerprinting` only if you've curated `fingerprints.bad_ja3[]`
 
@@ -352,6 +442,7 @@ return [
 - Body inspection — checks JSON bodies for attack patterns
 - Stricter rate limits
 - Tight AI allowlist (or zero AI)
+- May block specific bot categories (`seo_crawler`, `social_crawler`)
 
 **Configuration:** Start from Medium, then add:
 
@@ -397,6 +488,20 @@ return [
         'block_unverified' => true,
         'strict'           => true,  // block even verified
     ],
+
+    // Block SEO + social crawlers too (strict-mode anti-link-spam)
+    'bot_categories' => [
+        'blocked'   => ['malicious', 'seo_crawler', 'social_crawler'],
+        'log_only'  => ['security_scanner'],
+        'challenge' => [],
+        'allowed'   => [
+            'feed_reader',
+            'shopping_crawler',
+            'cloud_infrastructure',
+            'monitoring',
+            'archive_crawler',
+        ],
+    ],
 ];
 ```
 
@@ -408,6 +513,7 @@ return [
 - 🔴 **Tight rate limits** — generous crawlers and power users will hit limits. Monitor 429 responses.
 - 🔴 **JA3 fingerprinting** — only effective if you've curated `bad_ja3[]` from observed attacks. Empty config = no effect.
 - 🔴 **Zero AI policy** — legitimate academic research, archival, and content syndication use cases will be blocked. Document this publicly.
+- 🔴 **Blocking `seo_crawler`** — link analysis tools (Ahrefs, Semrush) won't see your site. If you do SEO yourself, you'll be flying blind.
 
 ---
 
@@ -429,9 +535,56 @@ What breaks at each level:
 | AJAX / fetch / XHR | ✅ | ✅ | ⚠️ if `inspect_json_body` |
 | File uploads | ✅ | ✅ | 🔴 if `inspect_multipart_body` |
 | Webhooks (off-site POST) | ✅ | ✅ | ⚠️ if `offsite_forms` |
+| Cloudflare / AWS / GCP / Azure / Fastly probes | ✅ | ✅ | ✅ |
+| RSS readers (Feedly, Apple News) | ✅ | ✅ | ✅ |
+| Product crawlers (Google Shopping, FB Catalog) | ✅ | ✅ | ✅ |
+| Security scanners (Shodan, Qualys) | ✅ logged | ✅ logged | ✅ logged |
 | AI agents (Brave Leo, etc.) | ❌ allowed | ✅ detected | ✅ detected |
 
 ✅ works • ⚠️ may need config adjustment • 🔴 will break • ❌ not detected
+
+---
+
+## Cloud Infrastructure Safety — **READ THIS IF YOU'RE BEHIND A CDN**
+
+If your site sits behind **Cloudflare, AWS ELB/ALB, GCP Load Balancer, Azure Front Door, or Fastly**, the load balancer periodically sends health-check probes to your origin. These probes come from the CDN's IP ranges, often with generic UAs like `ELB-HealthChecker/1.0`, `GoogleHC`, or `curl/7.x`.
+
+**If Bad Behaviour blocks these probes**, your CDN marks your origin as "unhealthy" and **takes your site offline** — a much bigger outage than the bot traffic would have caused.
+
+### Why it's hard to get right
+
+- UA-only matching fails: probes have generic UAs that look suspicious.
+- IP-range matching fails: CDNs add ranges frequently and silently (Cloudflare publishes 15+ IPv4 ranges today, all of which have changed in the last 3 years).
+- DNS verification fails: probes don't have stable hostnames.
+
+### The solution
+
+Two layers of defense:
+
+1. **Static IP ranges** ship in the `Registry` for every major CDN (`cloudflare_health`, `aws_elb_health`, `google_cloud_health`, `azure_health`, `fastly_health`). These work out-of-the-box with `enable_dynamic_ip_ranges = false`.
+
+2. **`CloudIpRangeProvider`** pulls **fresh** CIDR lists from official AWS/Cloudflare/Fastly/GCP feeds when `dynamic_ip_ranges.enabled = true`. Cached 24h with a 7-day stale fallback.
+
+`BotDetector::is_cloud_infrastructure_ip()` is the **first check** in the bot pipeline. It runs **before UA matching**. Any IP matching a known cloud range short-circuits to `ALLOW` regardless of UA. This is hard-coded — you cannot accidentally turn it off.
+
+### Verification
+
+```php
+use BadBehaviour\Bot\Registry;
+use BadBehaviour\Util\IpUtil;
+
+// All five cloud bots are present and hard-allowed
+foreach (Registry::cloud_infrastructure() as $id => $def) {
+    // $def->default_action === BotAction::ALLOW (enforced)
+    // $def->robots_txt_token === null  (no robots.txt governance)
+    // $def->ip_ranges is non-empty OR dynamic loading is enabled
+}
+
+// Test a known CF IP
+IpUtil::match_cidr('173.245.48.1', '173.245.48.0/20');  // true
+```
+
+If your CDN isn't on the list, [open an issue](https://github.com/Bad-Behaviour/badbehaviour/issues) — adding a new cloud provider is a 30-line patch.
 
 ---
 
@@ -442,7 +595,7 @@ What breaks at each level:
 | Setting | Type | Default | Risk | Description |
 |---------|------|---------|------|-------------|
 | `logging` | bool | `true` | **NONE** | Required for audit trail |
-| `verbose` | bool | `false` | **LOW** | When true, logs *every* request (not just blocks) |
+| `verbose` | bool | `false` | 🟢 **LOW** | When true, logs *every* request (not just blocks) |
 | `strict` | bool | `false` | 🔴 **HIGH** | Strict mode — extra checks for Accept-Encoding, etc. Breaks old browsers / non-browser clients |
 | `offsite_forms` | bool | `false` | 🟡 **MEDIUM** | Reject form POSTs where Referer doesn't match Host |
 | `show_contact_info` | bool | `false` | 🟢 **LOW** | Show admin email on block page |
@@ -453,14 +606,14 @@ What breaks at each level:
 ```php
 // Simple (default when both flags are false)
 <h1>Access Denied</h1>
-<p>You don't have permission to access this resource.</p>
+<p>You don't have permission to access this resource</p>
 <div class="ref">Reference #abc-1234-def0</div>
 
 // Detailed (when show_detailed_block_page = true)
 <h1>Access Denied</h1>
-<p>We're sorry, but we could not fulfill your request for <code>/path</code>.</p>
-<p><strong>Reason:</strong> Bot blocked: AhrefsBot</p>
-<p>Your technical support key is: <strong>abc-1234-def0</strong></p>
+<p>We're sorry, but we could not fulfill your request for <code>/path</code</p>
+<p><strong>Reason</strong> Bot blocked: AhrefsBot</p>
+<p>Your technical support key is: <strong>abc-1234-def0</strong</p>
 // + contact paragraph (when show_contact_info = true)
 ```
 
@@ -497,28 +650,134 @@ What breaks at each level:
 | `strict` | bool | `false` | 🟡 **MEDIUM** | `true` = block even verified unallowed AI |
 
 **Verified AI Crawlers** (IP + DNS verified):
-| Token | Robots.txt | Owner | Verification |
-|-------|------------|-------|--------------|
-| `GPTBot` | `GPTBot` | OpenAI | DNS `openai.com` |
-| `ClaudeBot` | `ClaudeBot` | Anthropic | DNS `anthropic.com` |
-| `Google-Extended` | `Google-Extended` | Google | DNS `googlebot.com` |
-| `PerplexityBot` | `PerplexityBot` | Perplexity | IP ranges only |
-| `Meta-ExternalAgent` | `Meta-ExternalAgent` | Meta | DNS `facebook.com` |
-| `Applebot-Extended` | `Applebot-Extended` | Apple | DNS `applebot.apple.com` |
-| `GrokBot` | `GrokBot` | xAI | DNS `x.ai` |
-| `MistralBot` | `MistralBot` | Mistral AI | DNS `mistral.ai` |
-| `CCBot` | `CCBot` | Common Crawl | IP ranges only |
-| `ia_archiver` | `ia_archiver` | Internet Archive | IP ranges only |
+
+| Token | Robots.txt | Owner | Verification | Default action |
+|-------|------------|-------|--------------|----------------|
+| `GPTBot` | `GPTBot` | OpenAI | DNS `openai.com` | challenge |
+| `ClaudeBot` | `ClaudeBot` | Anthropic | DNS `anthropic.com` | challenge |
+| `Google-Extended` | `Google-Extended` | Google | DNS `googlebot.com` | challenge |
+| `PerplexityBot` | `PerplexityBot` | Perplexity | IP ranges | challenge |
+| `Meta-ExternalAgent` | `Meta-ExternalAgent` | Meta | DNS `facebook.com` | challenge |
+| `Applebot-Extended` | `Applebot-Extended` | Apple | DNS `applebot.apple.com` | challenge |
+| `GrokBot` | `GrokBot` | xAI | DNS `x.ai` | challenge |
+| `MistralBot` | `MistralBot` | Mistral AI | DNS `mistral.ai` | challenge |
+| `CohereBot` | `CohereBot` | Cohere | DNS `cohere.com` | challenge |
+| `YouBot` | `YouBot` | You.com | DNS `you.com` | challenge |
+| `CCBot` | `CCBot` | Common Crawl | IP ranges | challenge |
+| `ia_archiver` | `ia_archiver` | Internet Archive | DNS `archive.org` | challenge |
+| `Amazonbot` | `Amazonbot` | Amazon | DNS + IP | challenge |
+| `Diffbot` | `Diffbot` | Diffbot | DNS + IP | challenge |
+| `BrightData` | `BrightData` | Bright Data | UA-only | **block** (residential proxy) |
 
 ---
 
 ### Bot Categories (`bot_categories`)
 
-| Setting | Type | Default | Risk | Notes |
-|---------|------|---------|------|-------|
-| `blocked[]` | string[] | `["malicious"]` | 🟡 **MEDIUM** | Categories: `search_engine`, `ai_crawler`, `social_crawler`, `seo_crawler`, `archive_crawler`, `monitoring`, `malicious`, `unknown` |
+11 categories with four configurable behaviors:
 
-> Only `malicious` blocked by default. Adding `seo_crawler` blocks Ahrefs, Semrush, MJ12bot, etc.
+```php
+'bot_categories' => [
+    'blocked'   => ['malicious'],
+    'log_only'  => ['security_scanner'],
+    'challenge' => [],
+    'allowed'   => [
+        'feed_reader',
+        'shopping_crawler',
+        'cloud_infrastructure',
+        'monitoring',
+        'archive_crawler',
+    ],
+],
+```
+
+| Setting | Type | Default | Risk | Effect |
+|---------|------|---------|------|--------|
+| `blocked[]` | string[] | `['malicious']` | 🟡 **MEDIUM** | Hard-block by category |
+| `log_only[]` | string[] | `['security_scanner']` | 🟢 **LOW** | Record only, never block |
+| `challenge[]` | string[] | `[]` | 🟡 **MEDIUM** | Force PoW/captcha |
+| `allowed[]` | string[] | feed/shopping/cloud/monitoring/archive | 🟢 **LOW** | Verified-only allow |
+
+**Valid category names** (11 cases):
+
+```
+search_engine, ai_crawler, social_crawler, seo_crawler,
+archive_crawler, monitoring, feed_reader, shopping_crawler,
+cloud_infrastructure, security_scanner, malicious, unknown
+```
+
+> ⚠️ **`cloud_infrastructure` cannot be moved to `blocked[]` or `challenge[]`.** The hard-allow is enforced in `BotDetector::determine_action()` and overrides any configuration. This is intentional — blocking these probes takes your origin offline.
+
+#### Common category recipes
+
+**Block all SEO crawlers (Ahrefs, Semrush, MJ12, etc.):**
+```php
+'bot_categories' => [
+    'blocked' => ['malicious', 'seo_crawler'],
+],
+```
+
+**Challenge AI scrapers but allow verified:**
+```php
+'ai_crawlers' => [
+    'allowed' => ['GPTBot', 'ClaudeBot'],
+    'block_unverified' => true,
+    'strict' => false,
+],
+'bot_categories' => [
+    'challenge' => ['ai_crawler'],
+],
+```
+
+**Log but allow social crawlers (for analytics):**
+```php
+// already the default — social_crawler category is verified-allow
+// for analytics, add a custom_rule with action: 'log'
+```
+
+---
+
+### Dynamic IP Ranges (`dynamic_ip_ranges`)
+
+Pulls fresh IP ranges from cloud provider feeds to prevent hardcoded CIDR drift.
+
+| Setting | Type | Default | Risk | Description |
+|---------|------|---------|------|-------------|
+| `enabled` | bool | `false` | 🟡 **EXPERIMENTAL** | Master switch. Requires `bin/update-ip-ranges.php` on cron |
+| `ttl` | int | `86400` | 🟢 **LOW** | Cache TTL for merged feed (seconds). Lower = fresher, more cron pressure |
+| `feeds[]` | string[] | `['aws', 'cloudflare', 'fastly', 'gcp']` | 🟢 **LOW** | Subset of cloud-provider feeds to pull |
+
+**Two independent feed pipelines:**
+
+1. **Bot-specific feeds** (`FeedRegistry`) — refreshes Googlebot, Bingbot, GPTBot, Claude, Applebot, Perplexity, DuckDuckGo, Amazonbot, Cloudflare v4/v6 ranges.
+
+2. **Cloud-provider feeds** (`CloudIpRangeProvider`) — used by the `BotDetector` fast path. Pulls from `ip-ranges.amazonaws.com`, `api.cloudflare.com/client/v4/ips`, `api.fastly.com/public-ip-list`, `gstatic.com/ipranges/cloud.json`.
+
+**Note:** Azure is in the registry but its JSON endpoint shape differs — currently a TODO. `azure_health` relies on the static ranges shipped with the registry.
+
+**Cron setup:**
+```bash
+# Refresh every 6 hours
+0 */6 * * * php /path/to/badbehaviour/bin/update-ip-ranges.php >> /var/log/badbehaviour-feeds.log 2>&1
+```
+
+**Known issues** (why "experimental"):
+1. **Caching boundaries** — file cache doesn't share across multi-server deployments; use the MediaWiki adapter's WAN cache for production
+2. **Feed shape changes** — vendors occasionally add new fields; parsers must be tolerant
+3. **Cold-start latency** — first request after TTL expiry triggers fetches unless cron runs in time
+4. **CA bundle portability** — auto-detection works on Debian/RHEL/Homebrew but not on stripped-down containers
+
+**CLI flags:**
+```bash
+php bin/update-ip-ranges.php                       # Full refresh
+php bin/update-ip-ranges.php --dry-run             # Fetch but don't cache
+php bin/update-ip-ranges.php --feeds=google,anthropic  # Subset only
+php bin/update-ip-ranges.php --ttl=43200           # Override cache TTL
+```
+
+**Exit codes:**
+- `0` — success (all feeds fetched or stale cache used)
+- `1` — partial failure (some feeds failed)
+- `2` — total failure (no feeds fetched, no cache)
 
 ---
 
@@ -536,7 +795,7 @@ What breaks at each level:
 | `login.requests` | int | `10` | 🟢 **LOW** | Brute force protection |
 | `login.window` | int | `900` | — | Seconds (15 min) |
 
-**Login endpoint detection**: Automatically triggers on URLs matching `/(login|signin|auth|password)/i`.
+**Login endpoint detection**: automatically triggers on URLs matching `/(login|signin|auth|password)/i`.
 
 ---
 
@@ -600,7 +859,23 @@ Use `log` when you want to *observe* a permitted bot/search-engine without chang
         'id'      => 'audit_gptbot',
     ],
 
-    // 3. Audit the new "Brave Leo" agentic UA — decide policy later
+    // 3. Audit Feedly (feed reader you allow)
+    [
+        'type'    => 'ua_contains',
+        'value'   => 'Feedly',
+        'action'  => 'log',
+        'id'      => 'audit_feedly',
+    ],
+
+    // 4. Audit a security scanner auditing you
+    [
+        'type'    => 'ua_contains',
+        'value'   => 'Shodan',
+        'action'  => 'log',
+        'id'      => 'audit_shodan',
+    ],
+
+    // 5. Audit the new "Brave Leo" agentic UA — decide policy later
     [
         'type'    => 'header',
         'header'  => 'Sec-CH-UA',
@@ -609,7 +884,7 @@ Use `log` when you want to *observe* a permitted bot/search-engine without chang
         'id'      => 'brave_leo_agentic',
     ],
 
-    // 4. Audit monitoring services you whitelist
+    // 6. Audit monitoring services you whitelist
     [
         'type'    => 'ua_regex',
         'value'   => '/UptimeRobot|Pingdom|StatusCake/i',
@@ -647,6 +922,51 @@ Use `log` when you want to *observe* a permitted bot/search-engine without chang
 |---------|------|---------|-------|
 | `skip_extensions[]` | string[] | `css, js, png, jpg, jpeg, gif, ico, svg, woff, woff2, ttf, eot, webp, avif, map, txt` | Never inspect these |
 | `skip_paths[]` | string[] | `/static/, /assets/, /media/, /images/, /css/, /js/, /fonts/, /dist/, /build/, /vendor/, /node_modules/` | Prefix match |
+
+---
+
+### Head Request Detection (`head_*`)
+
+Detects abuse of HEAD requests: site mapping, link-checking at scale, and rapid reconnaissance. HEAD is cheap (no body transfer) and ideal for fingerprinting a site without reading content.
+
+| Setting | Type | Default | Risk | When to Enable |
+|---------|------|---------|------|----------------|
+| `enable_head_request_detection` | bool | `true` | 🟢 **LOW** | Keep enabled — blocks a real attack vector |
+| `head_require_referer` | bool | `true` | 🟢 **LOW** | Keep enabled — link checkers send Referer naturally |
+| `head_flood_threshold` | int | `20` | 🟢 **LOW** | Requests per session before block; tune for your traffic |
+| `head_probe_threshold` | int | `50` | 🟢 **LOW** | HEAD probes per IP per 5 min; lower = stricter |
+| `head_referer_exempt_paths` | string[] | `['/api/', '/wp-json/', '/health', '/status']` | 🟢 **LOW** | Paths where HEAD without Referer is legitimate |
+
+**Exempt paths** should include any endpoint where REST clients or monitoring tools legitimately issue HEAD without a Referer. Defaults cover most CMS APIs and common health-check endpoints.
+
+**Three signals:**
+
+1. **HEAD without Referer** — site mapping typically omits Referer; real browsers send it.
+2. **HEAD flood per session** — >20 HEAD requests in a single session = enumeration.
+3. **HEAD probing per IP** — >50 HEAD requests from one IP in 5 minutes = reconnaissance.
+
+---
+
+### Asset Scraping Detection (`asset_*`)
+
+Detects direct asset scraping (AI training crawlers, image harvesters, bulk downloaders). Legitimate browsers load HTML first, then assets referenced from it. Scrapers directly request assets from a URL list with no HTML navigation.
+
+| Setting | Type | Default | Risk | When to Enable |
+|---------|------|---------|------|----------------|
+| `enable_asset_scraping_detection` | bool | `true` | 🟢 **LOW** | Keep enabled — targets a real scraping pattern |
+| `asset_extensions` | string[] | image, doc, audio, video formats | 🟡 **MEDIUM** | Add/remove based on what content you serve |
+| `asset_no_referer_threshold` | int | `10` | 🟢 **LOW** | Asset requests without Referer per IP per hour |
+| `asset_only_session_threshold` | int | `20` | 🟢 **LOW** | Asset requests with no HTML loads per session |
+| `asset_pattern_threshold` | int | `100` | 🟢 **LOW** | Sequential asset URLs per IP per 5 min |
+
+**When to extend `asset_extensions`**: add extensions for content types you serve that you want to protect (e.g., `'csv'`, `'json'`, `'xml'`, `'zip'`).
+**When to remove**: remove extensions used by legitimate APIs that don't send Referer (rare — most APIs return JSON, not files).
+
+**Three signals:**
+
+1. **Asset without Referer** — bots fetching `/img1.png, /img2.png, …` directly don't send Referer. Legitimate browsers do.
+2. **Asset-only session** — >20 asset requests in a session where `html_requests === 0` = pure asset harvesting. Real browsers always load HTML first.
+3. **Sequential asset pattern** — >100 assets from one IP in 5 minutes = scraping.
 
 ---
 
@@ -695,9 +1015,9 @@ Only blocks **known bad** fingerprints from config — zero false positives by d
 
 ---
 
-### 3.0 Detection Features (Opt-in)
+### Detection Features (Opt-in)
 
-These are the new detectors introduced in 3.0. **All default to `false`** for legacy compatibility.
+These are the new detectors. **All default to `false`** for legacy compatibility — except `enable_head_request_detection` and `enable_asset_scraping_detection`, which default to `true` (low FP risk).
 
 | Setting | Type | Default | Risk | Description |
 |---------|------|---------|------|-------------|
@@ -708,7 +1028,9 @@ These are the new detectors introduced in 3.0. **All default to `false`** for le
 | `enable_ai_crawler_control` | bool | `true` | 🟢 **LOW** | Verified AI allowlist enforcement |
 | `enable_client_hints_validation` | bool | `false` | 🟡 **MEDIUM** | Sec-CH-UA cross-check (requires Chromium 89+) |
 | `enable_agentic_detection` | bool | `false` | 🟡 **MEDIUM** | AI-agent pattern detection (think-then-fetch, precision) |
-| `enable_dynamic_ip_ranges` | bool | `false` | 🟡 **EXPERIMENTAL** | Use FeedRegistry (requires cron, see [Feeds](README.md#dynamic-ip-range-feeds)) |
+| `enable_dynamic_ip_ranges` | bool | `false` | 🟡 **EXPERIMENTAL** | Use FeedRegistry (requires cron, see [`dynamic_ip_ranges`](#dynamic-ip-ranges-dynamic_ip_ranges)) |
+| `enable_head_request_detection` | bool | `true` | 🟢 **LOW** | HEAD flooding + Referer check |
+| `enable_asset_scraping_detection` | bool | `true` | 🟢 **LOW** | Asset-only session detection |
 
 #### `enable_client_hints_validation`
 
@@ -722,7 +1044,7 @@ False positive risk: Electron apps, very old Chromium, some headless tools.
 
 #### `enable_agentic_detection`
 
-Three pattern detectors (see [`AgenticBehaviorDetector`](README.md#agentic-behavior-detection-30)):
+Three pattern detectors:
 1. **Think-then-fetch** — long pause + asset burst
 2. **Non-linear navigation** — 5+ unrelated sections in 8 requests
 3. **Precision targeting** — high API ratio, no CSS/fonts/tracking
@@ -731,7 +1053,7 @@ False positive risk: power users, single-page-app users. Requires session cookie
 
 #### `enable_dynamic_ip_ranges` (Experimental)
 
-Pulls fresh IP ranges from Google, Bing, OpenAI, Anthropic, Apple, Perplexity, Cloudflare feeds. Requires `bin/update-ip-ranges.php` on cron. Known issues: caching boundaries in multi-server deployments, cold-start latency, CA bundle portability. See [Feeds](README.md#dynamic-ip-range-feeds-experimental) for full details.
+Pulls fresh IP ranges from Google, Bing, OpenAI, Anthropic, Apple, Perplexity, DuckDuckGo, Amazon, AWS, Cloudflare, Fastly, GCP feeds. Requires `bin/update-ip-ranges.php` on cron. See [`dynamic_ip_ranges`](#dynamic-ip-ranges-dynamic_ip_ranges) for the configuration block and [`enable_dynamic_ip_ranges`](#enable_dynamic_ip_ranges-experimental) for details.
 
 ---
 
@@ -762,6 +1084,8 @@ ca = "CA"
 de = "DE"
 ```
 
+> Whitelist runs **before** BotDetector. Whitelisted IPs/UAs skip all detection — including the cloud-LB safety net (not a problem in practice: whitelisting your own IPs is the whole point).
+
 ---
 
 ## Risk Matrix Summary
@@ -776,11 +1100,16 @@ de = "DE"
 | `enable_client_hints_validation` | 🟡 MEDIUM | `false` | 1–2 weeks monitoring |
 | `enable_agentic_detection` | 🟡 MEDIUM | `false` | Power-user FPs ruled out |
 | `enable_dynamic_ip_ranges` | 🟡 EXPERIMENTAL | `false` | Cron deployed + single server or Redis |
+| `enable_head_request_detection` | 🟢 LOW | `true` | Keep enabled |
+| `enable_asset_scraping_detection` | 🟢 LOW | `true` | Keep enabled |
 | `block_unverified_ai` | 🟢 LOW | `true` | Keep enabled |
 | `strict_ai` | 🟡 MEDIUM | `false` | Zero AI policy |
 | `enable_behavioral_analysis` | 🟢 LOW | `true` | Keep enabled |
 | `enable_ai_crawler_control` | 🟢 LOW | `true` | Keep enabled |
 | `reverse_proxy.enabled` | 🟡 MEDIUM | `false` | Behind proxy + `addresses[]` |
+| `bot_categories.blocked` | 🟡 MEDIUM | `['malicious']` | Custom policy |
+| `bot_categories.allowed` | 🟢 LOW | feed/shopping/cloud/monitoring/archive | Custom policy |
+| Cloud LB safety net | 🟢 LOW | **always on** | Cannot disable |
 
 ---
 
@@ -850,6 +1179,24 @@ return [
         'strict'           => false,
     ],
 
+    // ===== BOT CATEGORIES =====
+    'bot_categories' => [
+        'blocked'   => ['malicious'],
+        'log_only'  => ['security_scanner'],
+        'challenge' => [],
+        'allowed'   => [
+            'feed_reader', 'shopping_crawler', 'cloud_infrastructure',
+            'monitoring', 'archive_crawler',
+        ],
+    ],
+
+    // ===== DYNAMIC IP RANGES =====
+    'dynamic_ip_ranges' => [
+        'enabled' => true,
+        'ttl'     => 86400,
+        'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
+    ],
+
     // ===== RATE LIMITS =====
     'rate_limits' => [
         'enabled'    => true,
@@ -859,15 +1206,19 @@ return [
         'login'      => ['requests' => 10,   'window' => 900],
     ],
 
-    // ===== 3.0 FEATURES (gradual rollout) =====
-    'enable_fingerprinting'          => false,  // Week 3+
-    'inspect_json_body'              => false,  // Never for AJAX apps
-    'inspect_multipart_body'         => false,  // Never for uploads
-    'enable_behavioral_analysis'     => true,
-    'enable_ai_crawler_control'      => true,
-    'enable_client_hints_validation' => true,   // Week 1 — low FP risk
-    'enable_agentic_detection'       => false,  // Week 4+ — monitor FPs
-    'enable_dynamic_ip_ranges'       => true,   // After cron deployed
+    // ===== DETECTION FEATURES (gradual rollout) =====
+    'enable_fingerprinting'           => false,  // Week 3+
+    'inspect_json_body'               => false,  // Never for AJAX apps
+    'inspect_multipart_body'          => false,  // Never for uploads
+    'enable_behavioral_analysis'      => true,
+    'enable_ai_crawler_control'       => true,
+    'enable_client_hints_validation'  => true,   // Week 1 — low FP risk
+    'enable_agentic_detection'        => false,  // Week 4+ — monitor FPs
+    'enable_dynamic_ip_ranges'        => true,   // After cron deployed
+
+    // ===== HEAD + ASSET SCRAPING (on by default) =====
+    'enable_head_request_detection'   => true,
+    'enable_asset_scraping_detection' => true,
 
     // ===== CUSTOM RULES — audit permitted bots =====
     'custom_rules' => [
@@ -882,6 +1233,12 @@ return [
             'value'   => 'GPTBot',
             'action'  => 'log',
             'id'      => 'audit_gptbot',
+        ],
+        [
+            'type'    => 'ua_contains',
+            'value'   => 'Feedly',
+            'action'  => 'log',
+            'id'      => 'audit_feedly',
         ],
     ],
 ];
@@ -909,6 +1266,13 @@ tail -f /var/log/wackowiki/bad_behaviour.log  # or your DB table
 
 # 5. Verify rate limits (should 429 after 60)
 for i in {1..65}; do curl -s -o /dev/null -w "%{http_code}\n" /; done | sort | uniq -c
+
+# 6. Verify cloud LB probes pass through
+curl -H "User-Agent: ELB-HealthChecker/1.0" https://yourwiki/health
+# Expect 200 — never 403
+
+# 7. Test the dynamic IP cron
+php /path/to/badbehaviour/bin/update-ip-ranges.php --dry-run
 ```
 
 ---

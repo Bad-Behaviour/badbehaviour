@@ -1,4 +1,5 @@
 <?php
+// src/Util/HeaderUtil.php - HTTP/3 documentation additions
 
 namespace BadBehaviour\Util;
 
@@ -73,6 +74,42 @@ class HeaderUtil
 		return false;
 	}
 
+	/**
+	 * Detect JA3 TLS fingerprint if forwarded by reverse proxy.
+	 *
+	 * Supported sources:
+	 *   - Cloudflare Enterprise (CF-Ray-Ja3, X-Client-Ja3)
+	 *   - HAProxy SSL-Client-Ja3
+	 *   - nginx with ja3-nginx-module (X-Client-Ja3)
+	 *
+	 * === HTTP/3 (QUIC) LIMITATION ===
+	 *
+	 * HTTP/3 uses QUIC over UDP and encrypts more of the handshake than TLS over TCP.
+	 * Standard JA3 (TLS ClientHello fingerprint) CANNOT be computed for HTTP/3
+	 * connections from the application layer because:
+	 *
+	 *   1. The TLS ClientHello is encrypted inside the QUIC Initial packet
+	 *   2. QUIC's transport parameters replace the TLS layer for many handshake fields
+	 *   3. There's no application-layer visibility into QUIC frames
+	 *
+	 * For HTTP/3 detection, you MUST rely on:
+	 *
+	 *   (a) Reverse proxy forwarding — Cloudflare and some CDNs extract and
+	 *       forward QUIC fingerprints via custom headers:
+	 *         - Cloudflare: HTTP/3 fingerprint is NOT exposed (proprietary)
+	 *         - Custom: X-Http3-Fp, X-QUIC-Fp, X-Alpn-H3
+	 *
+	 *   (b) Browser UA + Client Hints — HTTP/3-capable browsers (Chrome 87+,
+	 *       Firefox 88+, Safari 14+) are identifiable via Sec-CH-UA headers,
+	 *       which BadBehaviour's ClientHintsDetector handles.
+	 *
+	 *   (c) ALPN negotiation — When the reverse proxy terminates QUIC and
+	 *       forwards HTTP/1.1, the X-Alpn-H3 header may be set:
+	 *         - "h3"     = HTTP/3 over QUIC
+	 *         - "h3-29"  = HTTP/3 draft 29 (legacy)
+	 *
+	 * Returns null when no fingerprint source is available.
+	 */
 	public static function get_ja3_fingerprint(): ?string
 	{
 		$headers = [
@@ -93,6 +130,46 @@ class HeaderUtil
 		return null;
 	}
 
+	/**
+	 * Return the HTTP/3 fingerprint headers if forwarded by the proxy.
+	 * Returns null if not HTTP/3 (or not detectable).
+	 *
+	 * Possible header sources (config-dependent):
+	 *   - X-Alpn-H3:        "h3" or "h3-29"
+	 *   - X-QUIC-Fp:        QUIC transport parameter hash (CDN-specific)
+	 *   - X-Http3-Fp:       Custom HTTP/3 fingerprint (proprietary)
+	 *
+	 * Note: As of 2026, no standardized HTTP/3 fingerprint exists comparable to JA3.
+	 * The QUIC working group has discussed "QTP" (QUIC Transport Parameters)
+	 * but it has not been standardized.
+	 *
+	 * @return array{alpn: ?string, fingerprint: ?string, is_http3: bool}
+	 */
+	public static function get_http3_info(): array
+	{
+		$alpn = $_SERVER['HTTP_X_ALPN_H3'] ?? null;
+		$fingerprint = $_SERVER['HTTP_X_QUIC_FP'] ?? $_SERVER['HTTP_X_HTTP3_FP'] ?? null;
+
+		$is_http3 = false;
+		if ($alpn && (str_starts_with($alpn, 'h3') || str_starts_with($alpn, 'h3-'))) {
+			$is_http3 = true;
+		}
+
+		return [
+			'alpn'       => $alpn,
+			'fingerprint' => $fingerprint,
+			'is_http3'   => $is_http3,
+		];
+	}
+
+	/**
+	 * Return HTTP/2 settings if forwarded by reverse proxy.
+	 * Returns null when not available.
+	 *
+	 * HTTP/2 SETTINGS frame is unencrypted and can be captured at the proxy,
+	 * but the application layer never sees it directly — only via headers
+	 * like HTTP2-Settings (nginx) or X-HTTP2-Settings (HAProxy).
+	 */
 	public static function get_h2_settings(): ?string
 	{
 		return $_SERVER['HTTP_HTTP2_SETTINGS'] ??

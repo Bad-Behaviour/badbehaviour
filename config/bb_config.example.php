@@ -198,21 +198,114 @@ return [
     // ============================================================
 
     /**
-     * Categories of known bots to block entirely.
-     * Only 'malicious' is blocked by default.
+     * Categories of known bots to handle in specific ways.
+     * Each entry configures the default behavior for that category.
      *
-     * Adding 'seo_crawler' blocks Ahrefs, Semrush, MJ12bot, DotBot, etc.
-     * Adding 'social_crawler' blocks social media preview fetchers.
+     * Categories:
+     *   search_engine        — Googlebot, Bingbot, Yandex, Baidu, regional SE
+     *   ai_crawler           — GPTBot, Claude, Gemini, etc.
+     *   social_crawler       — Facebook, Twitter, Kakao, LINE, WeChat
+     *   seo_crawler          — Ahrefs, Semrush, Siteimprove, etc.
+     *   archive_crawler      — Internet Archive, BnF, UKWA, etc.
+     *   monitoring           — UptimeRobot, Pingdom
+     *   feed_reader          — Feedly, Apple News, Google News   (NEW)
+     *   shopping_crawler     — Google Shopping, FB Catalog       (NEW)
+     *   cloud_infrastructure — Cloudflare/AWS/GCP/Azure/Fastly   (NEW — never block)
+     *   security_scanner     — Qualys, Shodan, Censys            (NEW — log only)
+     *   malicious            — Known-bad actors
      *
-     * Categories: search_engine, ai_crawler, social_crawler, seo_crawler,
-     *             archive_crawler, monitoring, malicious, unknown
+     * 'blocked' — block entirely
+     * 'challenge' — issue PoW/captcha
+     * 'allow' — bypass (verified only)
+     * 'log_only' — record, never block
      */
-    'bot_categories' => [
-        /**
-         * @var string[]
-         */
-        'blocked' => ['malicious'],
-    ],
+	'bot_categories' => [
+		/**
+		 * Categories to BLOCK entirely.
+		 * Default: ['malicious'] — block nothing else out-of-the-box.
+		 *
+		 * Add 'seo_crawler' to block Ahrefs, Semrush, etc.
+		 * Add 'social_crawler' to block FB/Twitter link previews (rare).
+		 *
+		 * @var string[]
+		 */
+		'blocked' => ['malicious'],
+
+		/**
+		 * Categories that LOG only without blocking.
+		 * Security scanners fit here — auditing YOU is not an attack.
+		 *
+		 * @var string[] Default: ['security_scanner']
+		 */
+		'log_only' => ['security_scanner'],
+
+		/**
+		 * Categories that should be CHALLENGED (PoW/captcha).
+		 * Default empty — by default new categories (feed/shopping/cloud)
+		 * are ALLOWED. Add 'ai_crawler' here to force challenge on ALL AI.
+		 *
+		 * @var string[]
+		 */
+		'challenge' => [],
+
+		/**
+		 * Categories that should be ALLOWED (verified only).
+		 * Default — feed/shopping/cloud/monitoring/archive.
+		 *
+		 * @var string[]
+		 */
+		'allowed' => [
+			'feed_reader',
+			'shopping_crawler',
+			'cloud_infrastructure',
+			'monitoring',
+			'archive_crawler',
+		],
+	],
+
+	// ============================================================
+	// DYNAMIC IP RANGE FEEDS
+	// ============================================================
+
+	/**
+	 * Pull fresh IP ranges from official cloud provider feeds to avoid
+	 * hardcoded CIDR drift. Set true once you've confirmed the cron is
+	 * running (see bin/update-ip-ranges.php).
+	 *
+	 * Critical for: cloud_infrastructure category (Cloudflare, AWS, GCP,
+	 * Azure, Fastly). Without this, you'll get blocked-outage incidents
+	 * when providers rotate ranges.
+	 */
+	'dynamic_ip_ranges' => [
+		/**
+		 * Master switch for pulling from AWS/Azure/GCP/Cloudflare/Fastly feeds.
+		 * Requires cron: php bin/update-ip-ranges.php every 6-24 hours.
+		 *
+		 * @var bool Default: false
+		 */
+		'enabled' => false,
+
+		/**
+		 * Cache TTL for the merged IP range data.
+		 * Lower = fresher (but more cron pressure). Higher = longer stale window.
+		 *
+		 * @var int Default: 86400 (24h)
+		 */
+		'ttl' => 86400,
+
+		/**
+		 * Specific feeds to enable. Disable a feed by removing it.
+		 * All are recommended for global deployments.
+		 *
+		 * @var string[]
+		 */
+		'feeds' => [
+			'aws',         // ip-ranges.amazonaws.com
+			'cloudflare',  // api.cloudflare.com/client/v4/ips
+			'fastly',      // api.fastly.com/public-ip-list
+			'gcp',         // gstatic.com/ipranges/cloud.json
+		],
+	],
 
     // ============================================================
     // RATE LIMITS
@@ -530,7 +623,7 @@ return [
     ],
 
     // ============================================================
-    // 3.0 DETECTION FEATURES (All Opt-In)
+    // DETECTION FEATURES (All Opt-In)
     // ============================================================
     //
     // All features below are OFF by default for 2.x compatibility.

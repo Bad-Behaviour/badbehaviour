@@ -1,27 +1,31 @@
 <?php
-// src/Detection/BotDetector.php - Final version with dynamic cloud ranges
+
+declare(strict_types=1);
 
 namespace BadBehaviour\Detection;
 
-use BadBehaviour\Bot\BotCategory;
 use BadBehaviour\Bot\BotAction;
-use BadBehaviour\Bot\Registry;
+use BadBehaviour\Bot\BotCategory;
 use BadBehaviour\Bot\BotDefinition;
+use BadBehaviour\Bot\RegistryInterface;
 use BadBehaviour\Configuration;
 use BadBehaviour\Core\Interfaces\AdapterInterface;
-use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
+use BadBehaviour\Feeds\CloudIpRangeProvider;
 use BadBehaviour\Util\IpUtil;
+use BadBehaviour\Util\RequestPackage;
 
 class BotDetector
 {
 	private Configuration $config;
 	private AdapterInterface $adapter;
+	private RegistryInterface $registry;
+
 	private array $dns_cache = [];
 	private ?array $dynamic_ranges = null;
 	private bool $dynamic_ranges_fetched = false;
-	private ?\BadBehaviour\Feeds\CloudIpRangeProvider $cloud_provider = null;
+	private ?CloudIpRangeProvider $cloud_provider = null;
 
 	/**
 	 * Per-instance result memoization (NOT static — avoids cross-config pollution).
@@ -33,15 +37,22 @@ class BotDetector
 	private string $config_fingerprint;
 	private const RESULT_CACHE_TTL = 300;
 
-	public function __construct(Configuration $config, AdapterInterface $adapter)
-	{
+	public function __construct(
+		Configuration $config,
+		AdapterInterface $adapter,
+		?RegistryInterface $registry = null  // ← NEW: optional injection
+	) {
 		$this->config = $config;
 		$this->adapter = $adapter;
+		// If no registry injected, fall back to the default shipped registry.
+		// No global state mutation here — keep BotDetector pure.
+		$this->registry = $registry ?? \BadBehaviour\Bot\RegistryFactory::default();
+
 		$this->config_fingerprint = $this->compute_config_fingerprint($config);
 
-		// Initialise cloud range provider if available
+		// Initialize cloud range provider if available
 		if (method_exists($adapter, 'get') && $config->enable_dynamic_ip_ranges) {
-			$this->cloud_provider = new \BadBehaviour\Feeds\CloudIpRangeProvider($adapter);
+			$this->cloud_provider = new CloudIpRangeProvider($adapter);
 		}
 	}
 
@@ -53,6 +64,9 @@ class BotDetector
 			'block_unverified' => $config->block_unverified_ai,
 			'strict_ai'        => $config->strict_ai,
 			'strict_se'        => $config->strict_search_engines,
+			// Registry identity participates in the cache key so swapping
+			// the registry cleanly invalidates cached results.
+			'registry_hash'    => spl_object_hash($this->registry),
 		])), 0, 16);
 	}
 
@@ -96,12 +110,12 @@ class BotDetector
 
 		$dynamic_ranges = $this->get_dynamic_ranges();
 
-		// Primary: substring match against indexed UA fragments
-		$candidate_ids = Registry::find_by_ua($ua);
+		// Primary: substring match against the registry's indexed UA fragments
+		$candidate_ids = $this->registry->find_by_ua($ua);
 
 		// Secondary: token match (with noise filter)
 		if (empty($candidate_ids)) {
-			$candidate_ids = Registry::find_by_tokens($ua);
+			$candidate_ids = $this->registry->find_by_tokens($ua);
 		}
 
 		if (empty($candidate_ids)) {
@@ -109,7 +123,7 @@ class BotDetector
 		}
 
 		foreach ($candidate_ids as $bot_id) {
-			$def = Registry::all()[$bot_id] ?? null;
+			$def = $this->registry->get($bot_id);
 			if ($def === null) {
 				continue;
 			}
@@ -130,7 +144,7 @@ class BotDetector
 			$verified = $ip_match || $dns_verified;
 			$action = $this->determine_action($def, $verified);
 
-			return match($action) {
+			return match ($action) {
 				BotAction::ALLOW => Result::allow($package),
 				BotAction::LOG_ONLY => Result::allow($package),
 				BotAction::CHALLENGE => Result::challenge(
@@ -163,15 +177,19 @@ class BotDetector
 
 	/**
 	 * Check if IP belongs to any known cloud infrastructure provider.
+	 *
 	 * CRITICAL fast path: do NOT block these or your origin gets marked
 	 * unhealthy and your CDN takes you offline.
+	 *
+	 * Uses the INJECTED registry's cloud_infrastructure() method so swapping
+	 * registries (e.g., preset='human-only') affects this check too.
 	 */
 	private function is_cloud_infrastructure_ip(string $ip): bool
 	{
 		static $cloud_ranges = null;
 		if ($cloud_ranges === null) {
 			$cloud_ranges = [];
-			foreach (Registry::cloud_infrastructure() as $bot) {
+			foreach ($this->registry->cloud_infrastructure() as $bot) {
 				$cloud_ranges = array_merge($cloud_ranges, $bot->ip_ranges);
 			}
 			// Optional: append dynamic ranges if enabled
@@ -210,6 +228,7 @@ class BotDetector
 	private function set_cached_result(string $key, ?Result $result): void
 	{
 		if (count($this->result_cache) >= $this->result_cache_max) {
+			// LRU-style eviction: drop the oldest 10% of entries
 			$evict_count = (int)($this->result_cache_max * 0.1);
 			$evicted = array_slice($this->result_cache, 0, $evict_count, true);
 			$this->result_cache = array_diff_key($this->result_cache, $evicted);
@@ -219,6 +238,8 @@ class BotDetector
 
 	private function rebuild_result(Result $cached, RequestPackage $package): Result
 	{
+		// Cached Results carry the wrong package reference; rebuild so the
+		// returned Result points at THIS request's package (support key etc.).
 		if ($cached->is_allowed()) {
 			return Result::allow($package);
 		}
@@ -319,9 +340,10 @@ class BotDetector
 	private function code_for_category(BotCategory $cat): ResultCode
 	{
 		return match($cat) {
-			BotCategory::AI_CRAWLER     => ResultCode::BLOCKED_AI_CRAWLER,
-			BotCategory::SEO_CRAWLER    => ResultCode::BLOCKED_SEO_CRAWLER,
-			default                     => ResultCode::BLOCKED_BOT,
+			BotCategory::AI_CRAWLER         => ResultCode::BLOCKED_AI_CRAWLER,
+			BotCategory::SEO_CRAWLER        => ResultCode::BLOCKED_SEO_CRAWLER,
+			BotCategory::RESIDENTIAL_PROXY  => ResultCode::BLOCKED_BOT,
+			default                         => ResultCode::BLOCKED_BOT,
 		};
 	}
 
@@ -336,10 +358,20 @@ class BotDetector
 			$this->dns_cache[$key] = (bool)$cached;
 			return (bool)$cached;
 		}
+		// Schedule background DNS lookup for the next request.
+		// Returns false now — we don't block on DNS round-trip latency.
 		$this->schedule_background_dns_lookup($ip, $suffix, $key);
 		return false;
 	}
 
+	/**
+	 * Defer the DNS verification to shutdown. On the next request, the cached
+	 * result will be consulted via $this->adapter->get().
+	 *
+	 * Background lookups cost ~50-200ms each — we never want them on the
+	 * hot path. Only run once per (IP, suffix) tuple per process lifetime
+	 * (advisory — actual cache lives in the adapter).
+	 */
 	private function schedule_background_dns_lookup(string $ip, string $suffix, string $key): void
 	{
 		register_shutdown_function(function() use ($ip, $suffix, $key) {

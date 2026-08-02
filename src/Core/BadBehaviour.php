@@ -1,11 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace BadBehaviour\Core;
 
-use BadBehaviour\Bot\Registry;
-use BadBehaviour\Bot\BotDefinition;
-use BadBehaviour\Bot\BotCategory;
-use BadBehaviour\Bot\BotAction;
+use BadBehaviour\Bot\RegistryFactory;
+use BadBehaviour\Bot\RegistryInterface;
 use BadBehaviour\Configuration;
 use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Core\Interfaces\CacheInterface;
@@ -21,9 +21,9 @@ use BadBehaviour\Detection\DnsblDetector;
 use BadBehaviour\Detection\FingerprintDetector;
 use BadBehaviour\Detection\HeadRequestDetector;
 use BadBehaviour\Detection\RateLimitDetector;
-use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Util\HeaderUtil;
 use BadBehaviour\Util\IpUtil;
+use BadBehaviour\Util\RequestPackage;
 
 class BadBehaviour
 {
@@ -35,6 +35,7 @@ class BadBehaviour
 	private ?LoggerInterface $logger;
 	private ?CacheInterface $cache;
 	private ?GeoIpInterface $geoip;
+	private RegistryInterface $registry;  // ← NEW
 
 	private BotDetector $bot_detector;
 	private BlacklistDetector $blacklist_detector;
@@ -47,7 +48,12 @@ class BadBehaviour
 	private HeadRequestDetector $head_detector;
 	private AssetScrapingDetector $asset_detector;
 
-	public function __construct(Configuration $config)
+	/**
+	 * @param Configuration $config
+	 * @param RegistryInterface|null $registry Optional bot registry override.
+	 *        If null, loads from config/bb_registry.php (or falls back to DefaultRegistry).
+	 */
+	public function __construct(Configuration $config, ?RegistryInterface $registry = null)
 	{
 		$this->config = $config;
 		$this->adapter = $config->adapter ?? throw new \InvalidArgumentException('Adapter is required');
@@ -55,7 +61,11 @@ class BadBehaviour
 		$this->cache = $config->cache;
 		$this->geoip = $config->geoip;
 
-		$this->bot_detector = new BotDetector($this->config, $this->adapter);
+		// === Registry: explicit injection > config file > default ===
+		$this->registry = $registry ?? RegistryFactory::from_file();
+
+		// Pass registry to BotDetector (others don't need it directly)
+		$this->bot_detector = new BotDetector($this->config, $this->adapter, $this->registry);
 		$this->blacklist_detector = new BlacklistDetector($this->config);
 		$this->behavioral_detector = new BehavioralDetector($this->config, $this->adapter);
 		$this->fingerprint_detector = new FingerprintDetector($this->config, $this->adapter);
@@ -65,6 +75,28 @@ class BadBehaviour
 		$this->agentic_detector = new AgenticBehaviorDetector($this->config, $this->adapter);
 		$this->head_detector = new HeadRequestDetector($this->config, $this->adapter);
 		$this->asset_detector = new AssetScrapingDetector($this->config, $this->adapter);
+	}
+
+	/**
+	 * Return a clone of this BadBehaviour instance with a different registry.
+	 *
+	 * Useful for per-request swapping in multi-tenant setups.
+	 * Detectors that depend on the registry are rebuilt; others are reused.
+	 */
+	public function with_registry(RegistryInterface $registry): self
+	{
+		$clone = clone $this;
+		$clone->registry = $registry;
+		$clone->bot_detector = new BotDetector($this->config, $this->adapter, $registry);
+		return $clone;
+	}
+
+	/**
+	 * Get the currently active registry.
+	 */
+	public function get_registry(): RegistryInterface
+	{
+		return $this->registry;
 	}
 
 	public function run(array $server = null): Result
@@ -104,7 +136,7 @@ class BadBehaviour
 				ResultCode::BLOCKED_MALICIOUS_UA,
 				'Empty or invalid User-Agent',
 				$package
-				);
+			);
 		}
 
 		// FAST PATH 3: Whitelisted IP → immediate allow (skip all detectors)
@@ -119,7 +151,7 @@ class BadBehaviour
 				$geoip['country'] ?? null,
 				null,
 				null
-				);
+			);
 		}
 
 		// Enrich with fingerprints (cheap — just string hashing)
@@ -153,10 +185,9 @@ class BadBehaviour
 
 		$result = $this->detect($package);
 
-		// Same logging logic
+		// Same logging logic as run()
 		if ($this->config->logging) {
 			$should_log = !$result->is_allowed() || $this->config->verbose;
-
 			if ($should_log) {
 				$this->adapter->log_request($package, $result);
 			}
@@ -419,18 +450,17 @@ HTML;
 	}
 
 	// Convenience factory
-	public static function withAdapter(
+	public static function with_adapter(
 		\BadBehaviour\Core\Interfaces\AdapterInterface $adapter,
-		array $configOverrides = []
-		): self
-		{
-			// Load settings from adapter (which reads bb_config.php for WackoWiki)
-			$adapter_settings = $adapter->get_settings();
+		array $config_overrides = []
+	): self {
+		// Load settings from adapter (which reads bb_config.php for WackoWiki)
+		$adapter_settings = $adapter->get_settings();
 
-			// Merge: adapter settings < explicit overrides
-			$merged = array_merge($adapter_settings, $configOverrides);
+		// Merge: adapter settings < explicit overrides
+		$merged = array_merge($adapter_settings, $config_overrides);
 
-			$config = Configuration::from_array($merged, $adapter);
-			return new self($config);
+		$config = Configuration::from_array($merged, $adapter);
+		return new self($config);
 	}
 }

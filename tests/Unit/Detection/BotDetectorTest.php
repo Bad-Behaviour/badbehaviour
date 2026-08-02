@@ -334,7 +334,8 @@ class BotDetectorTest extends TestCase
 
     	$this->assertTrue($result->is_blocked(),
     		'BrightData residential proxy must default to BLOCK');
-    	$this->assertEquals(ResultCode::BLOCKED_AI_CRAWLER, $result->code);
+    	$this->assertEquals(ResultCode::BLOCKED_BOT, $result->code,
+    		'Residential proxy is blocked via the generic BLOCKED_BOT code (see BotDetector::code_for_category)');
     }
 
     // ========================================================================

@@ -12,6 +12,7 @@ Trusted by thousands of sites—from personal blogs to enterprise platforms—to
 | **DoS Mitigation** | Helps prevent denial-of-service conditions caused by bot swarms. |
 | **Cloud Safety** | Hard-allows Cloudflare/AWS/GCP/Azure/Fastly LB health probes — blocking these = origin marked unhealthy = site-wide outage. |
 | **Zero-Config Defaults** | Works out-of-the-box on most PHP platforms in minutes. |
+| **Custom Bot Registries** | Pluggable, composable bot set: add internal bots, swap registries per tenant, or filter the ~100 shipped bots without forking the library. |
 
 ### How It's Different
 Unlike WAFs or content filters that inspect *payloads*, Bad Behaviour analyzes the **delivery mechanism**:
@@ -20,7 +21,7 @@ Unlike WAFs or content filters that inspect *payloads*, Bad Behaviour analyzes t
 *   **Behavioral & Agentic Analysis** (Rate anomalies, AI-agent patterns)
 *   **Request-Method Analysis** (HEAD flooding for site mapping)
 *   **Asset-Scraping Detection** (AI training crawlers that skip HTML loads)
-*   **Attacker Software Identification** — **100+ verified bots** across 11 categories, dynamic IP feeds
+*   **Attacker Software Identification** — **100+ verified bots** across 11 categories, dynamic IP feeds, **customizable registries**
 *   **Cloud-LB Safety Net** — pre-UA-match fast path for AWS/Cloudflare/GCP/Azure/Fastly health probes
 
 This allows it to block **zero-day exploits and novel scrapers** that signature-based tools miss.
@@ -49,7 +50,7 @@ php -r "require 'vendor/autoload.php'; \BadBehaviour\Bootstrap::run();"
 
 ## What's New in 3.0 (Complete Modern Rewrite)
 
-Version 3.0 is a complete rewrite of Bad Behaviour, modernizing the 10+ year old codebase from procedural PHP to a clean, typed PHP 8.2+ architecture. It bundles the full bot-registry expansion, four new bot categories, and the cloud-infrastructure safety net that used to live in the now-abandoned 3.1 line.
+Version 3.0 is a complete rewrite of Bad Behaviour, modernizing the 10+ year old codebase from procedural PHP to a clean, typed PHP 8.2+ architecture. It bundles the full bot-registry expansion, four new bot categories, the cloud-infrastructure safety net, and a fully pluggable registry system.
 
 ### Core changes
 
@@ -58,8 +59,42 @@ Version 3.0 is a complete rewrite of Bad Behaviour, modernizing the 10+ year old
 * **Structured JSON logging** — SIEM-ready logging with semantic result codes
 * **IPv6 Support** — full CIDR matching with binary comparison (no GMP required)
 * **Challenge System** — builtin proof-of-work, hCaptcha, reCAPTCHA v3, Cloudflare Turnstile
+* **Custom Bot Registries** — `RegistryInterface` + eight implementations + factory + presets + per-tenant swap
 * **Complete Bot Registry** — **100+ bots** across **11 categories** (Search, AI, Social, SEO, Archive, Monitoring, Feed, Shopping, Cloud, Security, Malicious)
 * **Legacy-Compatible Defaults** — **zero false positives on AJAX, JSON APIs, file uploads, curl/wget** — works like 2.x out of the box
+
+### Custom registries (new pluggable system)
+
+Before: a single static `Registry` class holding ~100 bots; customization meant forking the library.
+
+After: a proper `RegistryInterface` hierarchy you can compose without touching the library:
+
+| Class | Purpose |
+|---|---|
+| `DefaultRegistry` | The ~100 shipped bots (read-only singleton) |
+| `InMemoryRegistry` | Wrap a user-provided array of `BotDefinition`s |
+| `EmptyRegistry` | No-op singleton — "humans only" baseline |
+| `FilteredRegistry` | Keep/exclude lists + category filters |
+| `MergedRegistry` | Compose multiple registries, last-wins per ID |
+| `CustomRegistry` | Built from a config array, with validation |
+| `RegistryFactory` | Builder entry point — `from_array()`, `from_file()`, `default()` |
+| `Presets` | `full` / `minimal` / `verified-only` / `no-ai` / `no-seo` / `eu-only` / `human-only` / `custom` |
+
+Pick a preset via the new `config/bb_registry.php` (ships with `full` + `cloud_infrastructure` safety net), or inject your own `RegistryInterface` programmatically:
+
+```php
+$registry = RegistryFactory::from_array([
+    'preset'             => 'minimal',
+    'exclude_categories' => ['seo_crawler'],
+    'additions'          => ['my_bot' => [/* BotDefinition schema */]],
+]);
+$bb = new BadBehaviour($config, $registry);
+
+// Per-tenant swap (multi-tenant deployments):
+$bb->with_registry($tenant_registry);
+```
+
+See [**Custom Bot Registries**](#custom-bot-registries) below for the full schema, presets, and examples.
 
 ### Bot registry expansion (~50 → ~100 bots)
 
@@ -77,16 +112,20 @@ Version 3.0 is a complete rewrite of Bad Behaviour, modernizing the 10+ year old
 
 ### UA matching improvements
 
-*   **`NOISE_TOKENS`** list to filter generic tokens (`"mozilla"`, `"compatible"`, `"browser"`, `"chrome"`, `"google"`, `"facebook"`, …) that cause false positives in token-based matching.
+*   **`RegistryTokens::NOISE`** list to filter generic tokens (`"mozilla"`, `"compatible"`, `"browser"`, `"chrome"`, `"google"`, `"facebook"`, …) that cause false positives in token-based matching.
 *   `find_by_tokens()` ignores tokens <5 chars and noise tokens.
 *   `find_by_ua()` ignores fragments <4 chars.
+*   `RegistryTokens` is the **single source of truth** — referenced by `DefaultRegistry`, `InMemoryRegistry`, `MergedRegistry`, `FilteredRegistry`, and `CustomRegistry` so noise rules stay consistent across all registry types.
 
 ### BotDetector changes
 
-*   **Fast path**: `is_cloud_infrastructure_ip()` runs **BEFORE** UA matching. Any IP in known cloud LB ranges short-circuits to `ALLOW` regardless of UA. This is the most important safety improvement — prevents the catastrophic "CDN marks origin unhealthy → outage" failure mode.
+*   **`RegistryInterface` injection** — `new BotDetector($config, $adapter, $registry)`. Defaults to `RegistryFactory::default()` for drop-in compatibility.
+*   **Fast path**: `is_cloud_infrastructure_ip()` runs **BEFORE** UA matching. Any IP in known cloud LB ranges short-circuits to `ALLOW` regardless of UA. **Reads the injected registry's `cloud_infrastructure()` method** so swapping the registry affects this check too (e.g., `human-only` preset removes the safety net — see warning below).
 *   `determine_action()` gains hard-blocks for explicitly-blocked categories, hard-allows for `cloud_infrastructure`, and per-category defaults for feed/shopping/monitoring/archive (verified-only).
-*   Result cache keyed by config fingerprint so config changes auto-invalidate the cache without explicit flushing.
+*   Result cache keyed by config fingerprint **and `spl_object_hash($registry)`** so swapping the registry cleanly invalidates cached results.
 *   DNS verification scheduled via `register_shutdown_function` so it doesn't add to request latency.
+
+> ⚠️ **Cloud-LB safety depends on your registry**. The `full` preset (shipped default) includes `cloudflare_health`, `aws_elb_health`, `google_cloud_health`, `azure_health`, `fastly_health`. If you build a `custom` registry or pick a preset that drops these without re-adding them, **the cloud-LB fast path becomes empty and your CDN probes will be evaluated against UA/behavior rules**. The shipped `config/bb_registry.php` force-includes `cloud_infrastructure` via `include_categories` as a safety net — keep that if you use any non-`full` preset.
 
 ### Detection gaps closed
 
@@ -96,10 +135,15 @@ Version 3.0 is a complete rewrite of Bad Behaviour, modernizing the 10+ year old
 | Stale IP ranges | `IpFeedInterface` + `FeedRegistry` — pulls fresh ranges from Google, Bing, OpenAI, Anthropic, Apple, Perplexity, DuckDuckGo, Amazon, Cloudflare (cron-driven, **experimental**) |
 | AI agents mimicking humans | `AgenticBehaviorDetector` — detects think-then-fetch bursts, non-linear navigation, precision targeting (no CSS/fonts/tracking) |
 | HEAD flooding + direct asset scraping | `HeadRequestDetector` + `AssetScrapingDetector` — flags site-mapping via HEAD and AI training scrapers hitting `/img1.png, /img2.png, …` without loading the HTML page that references them |
-| **CDN/LB probes blocked by mistake** | `BotDetector::is_cloud_infrastructure_ip()` — IP-range fast path BEFORE UA match; **never** blocks Cloudflare/AWS/GCP/Azure/Fastly probes |
+| **CDN/LB probes blocked by mistake** | `BotDetector::is_cloud_infrastructure_ip()` — IP-range fast path BEFORE UA match; **never** blocks Cloudflare/AWS/GCP/Azure/Fastly probes (when registry contains the cloud bots) |
 
 ### New infrastructure
 
+*   **`Bot\RegistryInterface`** — public contract for third-party integrations. Returns arrays of `BotDefinition` keyed by ID; snake_case methods to match the existing project style.
+*   **`Bot\Registry\DefaultRegistry`** — extracted ~100 shipped bots into a typed, self-contained class with per-category accessor methods (`search_engines()`, `ai_crawlers()`, `cloud_infrastructure()`, etc.).
+*   **`Bot\RegistryFactory`** — three entry points: `from_file()` (loads `config/bb_registry.php`), `from_array()` (build from config), `default()` (singleton `DefaultRegistry`).
+*   **`Bot\Registry\Presets`** — eight named presets (`full`, `minimal`, `verified-only`, `no-ai`, `no-seo`, `eu-only`, `human-only`, `custom`).
+*   **`Bot\RegistryTokens`** — single source of truth for `NOISE` tokens and `MIN_TOKEN_LENGTH` constants.
 *   **`Feeds\CloudIpRangeProvider`** — pulls fresh CIDRs from AWS/Cloudflare/Fastly/GCP official JSON feeds to prevent hardcoded CIDR drift. Caches via `CacheInterface` with 24h TTL; falls back to stale cache on fetch failure.
 *   **`bin/update-ip-ranges.php`** extended to refresh both bot-specific feeds and cloud-provider feeds, tagged by bot ID heuristically.
 *   **`BotCategory::label()`** and **`BotCategory::default_action_hint()`** helpers for dashboards and logging.
@@ -130,6 +174,7 @@ Global, per-minute, POST, and login endpoints with adapter-backed storage.
 - All procedural `.inc.php` files replaced with OOP classes in `src/`
 - Hex result codes (e.g. `'17f4e8c8'`) replaced with semantic `ResultCode` enum
 - Configuration format changed from INI to a **PHP array** in `bb_config.php`
+- **Bot registry is now injectable** — code that called `Registry::all()` directly must use `RegistryFactory::default()->all()` (or accept a `RegistryInterface`)
 - Adapter interface expanded with new required methods
 - Database schema updated with new columns (`bot_category`, `ja3`, `header_order_hash`, `asn`, `country`)
 - Custom adapters must implement new `CacheInterface` methods
@@ -154,7 +199,8 @@ src/
 │       ├── CacheInterface.php    # Rate limit/behavior storage
 │       └── GeoIpInterface.php    # MaxMind/ipinfo.io integration
 ├── Detection/
-│   ├── BotDetector.php           # 100+ known bots; cloud-LB fast path BEFORE UA match
+│   ├── BotDetector.php           # 100+ known bots; cloud-LB fast path BEFORE UA match;
+│   │                             # accepts RegistryInterface injection
 │   ├── BlacklistDetector.php     # Malicious UA, URL attacks, form body (form-only)
 │   ├── BehavioralDetector.php    # Rate anomalies, rotating UA/IP, think time, headers
 │   ├── FingerprintDetector.php   # JA3, H2, header order (opt-in, config-only)
@@ -165,13 +211,24 @@ src/
 │   ├── HeadRequestDetector.php   # HEAD flooding + Referer check
 │   └── AssetScrapingDetector.php # asset-only sessions + sequential patterns
 ├── Bot/
-│   ├── BotDefinition.php
+│   ├── BotDefinition.php         # Immutable bot record
 │   ├── BotCategory.php           # 11 cases: SEARCH_ENGINE, AI_CRAWLER, SOCIAL_CRAWLER,
 │   │                             # SEO_CRAWLER, ARCHIVE_CRAWLER, MONITORING, MALICIOUS,
 │   │                             # UNKNOWN, FEED_READER, SHOPPING_CRAWLER,
 │   │                             # CLOUD_INFRASTRUCTURE, SECURITY_SCANNER
-│   ├── BotAction.php
-│   └── Registry.php              # 100+ known bots; label() + default_action_hint() helpers
+│   ├── BotAction.php             # ALLOW, CHALLENGE, BLOCK, LOG_ONLY
+│   ├── RegistryInterface.php     # Public contract — all registry types implement this
+│   ├── RegistryFactory.php       # from_file() / from_array() / default()
+│   ├── RegistryTokens.php        # Shared NOISE / MIN_TOKEN_LENGTH constants
+│   └── Registry/
+│       ├── DefaultRegistry.php   # ~100 shipped bots (the real `Registry`)
+│       ├── InMemoryRegistry.php  # Wrap a user-provided array
+│       ├── EmptyRegistry.php     # No-op singleton
+│       ├── FilteredRegistry.php  # Keep/exclude + category filters
+│       ├── MergedRegistry.php    # Compose registries, last-wins per ID
+│       ├── CustomRegistry.php    # Built from a config array (validated)
+│       └── Presets.php           # full / minimal / verified-only / no-ai / no-seo /
+│                                 # eu-only / human-only / custom
 ├── Challenge/
 │   ├── ChallengeInterface.php
 │   ├── BuiltinChallenge.php      # Proof-of-work
@@ -230,12 +287,20 @@ use BadBehaviour\Configuration;
 
 $adapter = new GenericAdapter();
 $config = Configuration::from_array([], $adapter);   // safe defaults
-$bb = new BadBehaviour($config);
+$bb = new BadBehaviour($config);                    // uses RegistryFactory::default()
 
 $result = $bb->run();
 if (!$result->is_allowed()) {
     $bb->handle_result($result);
 }
+```
+
+**Inject a custom registry:**
+```php
+use BadBehaviour\Bot\RegistryFactory;
+
+$registry = RegistryFactory::from_file();   // loads config/bb_registry.php if present
+$bb = new BadBehaviour($config, $registry);
 ```
 
 **For MediaWiki (e.g. `LocalSettings.php`):**
@@ -289,6 +354,182 @@ Existing 2.x integrations continue to work unchanged — the legacy entry points
    * MediaWiki: `include( './extensions/Bad-Behaviour/bad-behaviour-mediawiki.php' );`
    * Generic: `require_once 'bad-behaviour-generic.php';`
    * WackoWiki: `require_once 'bad-behaviour-wackowiki.php';`
+
+---
+
+## Custom Bot Registries
+
+The shipped `DefaultRegistry` covers ~100 verified bots across 11 categories. It's **read-only** and the **default** when no config file is present.
+
+For customization, drop a `config/bb_registry.php` (shipped with safe defaults — see below) or build a registry programmatically.
+
+### Config file: `config/bb_registry.php`
+
+The shipped default looks like this:
+
+```php
+<?php
+// config/bb_registry.php  — shipped default, safe for production
+return [
+    'preset' => 'full',
+    'include_categories' => [
+        'cloud_infrastructure',   // SAFETY NET — keep this if you ever switch presets
+    ],
+];
+```
+
+Override by copying `config/bb_registry.example.php` to `config/bb_registry.php` and editing it. Full schema:
+
+```php
+return [
+    // Starting set (see Presets below)
+    'preset' => 'minimal',
+
+    // Remove entire categories (applied after preset)
+    'exclude_categories' => ['seo_crawler'],
+
+    // Force-include categories (overrides exclude). SAFETY: always keep
+    // cloud_infrastructure here if you're behind a CDN.
+    'include_categories' => ['cloud_infrastructure'],
+
+    // Remove specific bots by ID
+    'exclude_bots' => ['petal', 'brightdata'],
+
+    // Add your own bots (merged on top of the filtered preset)
+    'additions' => [
+        'internal_uptime' => [
+            'name' => 'Internal Uptime Monitor',
+            'user_agent_patterns' => ['InternalMonitor/1.0'],
+            'category' => 'monitoring',
+            'ip_ranges' => ['10.0.0.0/8'],
+            'verify_dns' => true,
+            'dns_suffix' => 'monitor.internal',
+            'default_action' => 'allow',
+        ],
+    ],
+
+    // ONLY used when preset='custom': defines the complete bot set.
+    // Cloud_infrastructure bots MUST be included manually.
+    'bots' => [
+        // ...
+    ],
+];
+```
+
+**Filter execution order:** `preset → exclude_categories → include_categories → exclude_bots → additions`.
+
+### Presets
+
+| Preset | What it ships | Use when |
+|---|---|---|
+| `full` | All ~100 shipped bots (default) | Small/medium sites, want coverage |
+| `minimal` | ~30 most common bots (~3× faster matching) | High-traffic sites, speed matters |
+| `verified-only` | Only bots with DNS verification or IP ranges | Stricter, but may miss regional bots |
+| `no-ai` | Everything except `AI_CRAWLER` | Publishers blocking AI training crawlers |
+| `no-seo` | Everything except `SEO_CRAWLER` | Block SEO crawlers only |
+| `eu-only` | EU search engines + EU-relevant bots | GDPR-conscious deployments |
+| `human-only` | Empty (humans-only baseline) | Combine with `additions` for known bots only |
+| `custom` | Only the `bots` you define | Total control — must include cloud_infrastructure manually |
+
+### BotDefinition schema (for `additions` and `bots`)
+
+```php
+'my_bot' => [
+    'name'                => 'My Bot',                    // required
+    'user_agent_patterns' => ['MyBot', 'MyBot/1.0'],      // required, ≥1 entry, ≥3 chars each
+    'category'            => 'search_engine',             // required, see BotCategory enum
+    'host_patterns'       => ['bot.example.com'],         // optional
+    'ip_ranges'           => ['10.0.0.0/8'],              // optional, CIDRs
+    'verify_dns'          => true,                        // optional
+    'dns_suffix'          => 'example.com',               // optional, required if verify_dns=true
+    'robots_txt_token'    => 'MyBot',                     // optional
+    'default_action'      => 'allow',                     // optional: allow|challenge|block|log_only
+    'description'         => 'What this bot does',        // optional
+],
+```
+
+Valid `category` values: `search_engine`, `ai_crawler`, `social_crawler`, `seo_crawler`, `archive_crawler`, `monitoring`, `feed_reader`, `shopping_crawler`, `cloud_infrastructure`, `security_scanner`, `malicious`, `residential_proxy`, `unknown`.
+
+Valid `default_action` values: `allow`, `challenge`, `block`, `log_only`.
+
+### Programmatic registries
+
+```php
+use BadBehaviour\Bot\RegistryFactory;
+use BadBehaviour\Bot\Registry\MergedRegistry;
+use BadBehaviour\Bot\Registry\InMemoryRegistry;
+use BadBehaviour\Bot\Registry\FilteredRegistry;
+use BadBehaviour\Bot\BotDefinition;
+use BadBehaviour\Bot\BotCategory;
+
+// From config file
+$registry = RegistryFactory::from_file();
+
+// From config array
+$registry = RegistryFactory::from_array([
+    'preset' => 'minimal',
+    'additions' => ['my_bot' => [/* schema */]],
+]);
+
+// Manual composition (chain registries with last-wins semantics)
+$registry = new MergedRegistry([
+    RegistryFactory::default(),                                       // base
+    new FilteredRegistry($otherRegistry, exclude_categories: ['seo_crawler']),
+    new InMemoryRegistry(['override' => new BotDefinition(...)]),     // overrides
+]);
+
+// Per-tenant swap on an existing instance
+$bb = $bb->with_registry($tenant_registry);
+```
+
+### Validating custom registries
+
+```php
+$registry = new CustomRegistry($bots_array);
+if ($registry->has_errors()) {
+    foreach ($registry->get_errors() as $err) {
+        // ['bot_id' => 'my_bot', 'error' => 'missing user_agent_patterns']
+        error_log("Bot registry: {$err['bot_id']} — {$err['error']}");
+    }
+}
+```
+
+Invalid entries are **logged and skipped** — the registry keeps valid bots. This is intentional: bad config shouldn't break the entire library.
+
+### Inspecting the active registry
+
+```php
+// What does my current registry contain?
+$registry = $bb->get_registry();
+
+echo "Total bots: " . $registry->count() . "\n";
+foreach ($registry->cloud_infrastructure() as $id => $bot) {
+    echo "  {$id}: {$bot->name} — {$bot->ip_ranges[0]}\n";
+}
+
+// Which preset-like groups exist?
+$registry->search_engines();      // ['googlebot' => BotDefinition, ...]
+$registry->ai_crawlers();
+$registry->social_crawlers();
+$registry->seo_crawlers();
+$registry->archive_crawlers();
+$registry->monitoring();
+$registry->feed_readers();
+$registry->shopping_crawlers();
+$registry->cloud_infrastructure();
+$registry->security_scanners();
+$registry->residential_crawlers();
+```
+
+### Cloud-LB safety with custom registries
+
+The `BotDetector::is_cloud_infrastructure_ip()` fast path reads `$registry->cloud_infrastructure()`. If your custom registry drops `cloud_infrastructure` bots, that fast path becomes empty and your CDN's health probes get evaluated against the rest of the pipeline — which they will likely fail.
+
+Three safe patterns:
+
+1. **`preset = 'full'`** (shipped default) — keeps everything.
+2. **`preset = 'minimal'`** with `include_categories = ['cloud_infrastructure']` — fastest, still safe.
+3. **`preset = 'custom'`** — you **must** include all five cloud bots manually (`cloudflare_health`, `aws_elb_health`, `google_cloud_health`, `azure_health`, `fastly_health`) in your `bots` definition.
 
 ---
 
@@ -450,6 +691,7 @@ See [`CONFIGURATION.md`](docs/CONFIGURATION.md#configuration-profiles) for full 
 - **`strict = true`** requires `Accept-Encoding` header — breaks some privacy-focused browsers.
 - **`inspect_json_body` / `inspect_multipart_body`** — almost never safe to enable on public sites.
 - **Cloud LB probes are ALWAYS allowed** — the cloud fast path runs before every other check, in every profile.
+- **`cloud_infrastructure` is hard-coded `ALLOW`** in `BotDetector::determine_action()` — `bot_categories.blocked[]` cannot override it.
 
 ---
 
@@ -588,7 +830,7 @@ See [Dynamic IP Range Feeds](#dynamic-ip-range-feeds-experimental) for setup.
 | `security_scanner` | log_only | `log_only[]` (default) | Shodan, Qualys, Censys, Detectify, Rapid7 |
 | `malicious` | hard block | `blocked[]` (default) | Known-bad actors |
 
-> ⚠️ **`cloud_infrastructure` is hard-coded as `ALLOW` in `BotDetector::determine_action()` and cannot be moved to `blocked[]` or `challenge[]`.** This is intentional — blocking these probes takes your origin offline. The setting exists only for completeness; the safety override always wins.
+> ⚠️ **`cloud_infrastructure` is hard-coded as `ALLOW` in `BotDetector::determine_action()` and cannot be moved to `blocked[]` or `challenge[]`.** This is intentional — blocking these probes takes your origin offline. The setting exists only for completeness; the safety override always wins. If you build a custom registry that drops cloud bots, see [Custom Bot Registries → Cloud-LB safety](#cloud-lb-safety-with-custom-registries).
 
 ### Rate Limiting (`rate_limits`)
 
@@ -725,8 +967,8 @@ de = "DE"
 1. **Whitelist** — IP, UA, URL, ASN, Country
 2. **Custom Rules** — IP, UA regex, ASN, Country, Header (incl. `action: 'log'`)
 3. **BotDetector** —
-   - **Cloud LB fast path** — IP-range check against AWS/Cloudflare/Fastly/GCP; **short-circuits to ALLOW** before any UA matching
-   - **UA match** — 100+ known bots (verified Search/AI **bypass all checks**)
+   - **Cloud LB fast path** — IP-range check against `$registry->cloud_infrastructure()` (Cloudflare/AWS/Fastly/GCP); **short-circuits to ALLOW** before any UA matching
+   - **UA match** — ~100 known bots (verified Search/AI **bypass all checks**)
 3b. **HeadRequestDetector** — HEAD flooding + Referer check (enabled by default)
 4. **ClientHintsDetector** — Sec-CH-UA cross-check (opt-in)
 5. **BlacklistDetector** — Malicious UA, URL attack patterns, **form body only**
@@ -737,7 +979,7 @@ de = "DE"
 9. **DnsblDetector** — http:BL, Spamhaus, SpamCop
 10. **FingerprintDetector** — JA3, H2, header order (**opt-in only**)
 
-> **Why does step 3 have two phases?** The cloud-LB fast path runs **before** UA matching so that a probe from a Cloudflare IP with an unrecognized UA still gets through. UA matching happens *after* we've confirmed the IP is not from a known cloud provider.
+> **Why does step 3 have two phases?** The cloud-LB fast path runs **before** UA matching so that a probe from a Cloudflare IP with an unrecognized UA still gets through. UA matching happens *after* we've confirmed the IP is not from a known cloud provider (per the active registry).
 
 ---
 
@@ -860,20 +1102,22 @@ If your site sits behind **Cloudflare, AWS ELB/ALB, GCP Load Balancer, Azure Fro
 
 Two layers of defense:
 
-1. **Static IP ranges** ship in the `Registry` for every major CDN (`cloudflare_health`, `aws_elb_health`, `google_cloud_health`, `azure_health`, `fastly_health`). These work out-of-the-box with `enable_dynamic_ip_ranges = false`.
+1. **Static IP ranges** ship in the `DefaultRegistry` for every major CDN (`cloudflare_health`, `aws_elb_health`, `google_cloud_health`, `azure_health`, `fastly_health`). These work out-of-the-box with `enable_dynamic_ip_ranges = false`.
 2. **`CloudIpRangeProvider`** pulls **fresh** CIDR lists from official AWS/Cloudflare/Fastly/GCP feeds when `dynamic_ip_ranges.enabled = true`. Cached 24h with a 7-day stale fallback.
 
-`BotDetector::is_cloud_infrastructure_ip()` is the **first check** in the bot pipeline. It runs **before UA matching**. Any IP matching a known cloud range short-circuits to `ALLOW` regardless of UA. This is hard-coded — you cannot accidentally turn it off.
+`BotDetector::is_cloud_infrastructure_ip()` is the **first check** in the bot pipeline. It runs **before UA matching**. Any IP matching a known cloud range short-circuits to `ALLOW` regardless of UA. This is hard-coded — you cannot accidentally turn it off, **as long as your active registry contains cloud bots**. The shipped `config/bb_registry.php` and the `full` preset both do; if you customize, see [Custom Bot Registries → Cloud-LB safety](#cloud-lb-safety-with-custom-registries).
 
 ### Verification
 
 ```php
-use BadBehaviour\Bot\Registry;
+use BadBehaviour\Bot\RegistryFactory;
 use BadBehaviour\Util\IpUtil;
 
+$registry = RegistryFactory::default();   // or your custom registry
+
 // All five cloud bots are present and hard-allowed
-foreach (Registry::cloud_infrastructure() as $id => $def) {
-    // $def->default_action === BotAction::ALLOW (enforced)
+foreach ($registry->cloud_infrastructure() as $id => $def) {
+    // $def->default_action === BotAction::ALLOW (enforced by BotDetector)
     // $def->robots_txt_token === null  (no robots.txt governance)
     // $def->ip_ranges is non-empty OR dynamic loading is enabled
 }

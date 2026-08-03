@@ -205,25 +205,141 @@ return [
 
 ---
 
-## Bot Registry (100+ bots, 11 categories)
+## Bot Registry — Custom, Composable, Pluggable
 
-The 3.0 registry ships with **~80 known bots** across **11 `BotCategory` cases**:
+The bot registry is now a **pluggable, composable system** built on a `RegistryInterface` contract. The default ships ~100 verified bots across 12 categories, but operators can swap, filter, or build entirely custom bot sets without forking the library.
+
+### Architecture
+
+| Component | Purpose |
+|-----------|---------|
+| `RegistryInterface` | Read-only contract for any registry implementation |
+| `DefaultRegistry` | All ~100 shipped bots extracted as `BotDefinition` instances |
+| `InMemoryRegistry` | Wrap a user-provided array of `BotDefinition`s |
+| `EmptyRegistry` | No-op singleton (humans-only baseline) |
+| `FilteredRegistry` | Keep/exclude filters + category filters over any inner registry |
+| `MergedRegistry` | Compose multiple registries (last-wins semantics) |
+| `CustomRegistry` | Config-array driven, with per-bot validation |
+| `Presets` | Named subsets: `full`, `minimal`, `verified-only`, `no-ai`, `no-seo`, `eu-only`, `human-only`, `custom` |
+| `RegistryFactory` | Builder entry points — `from_file()`, `from_array()`, `default()` |
+| `RegistryTokens` | Single source of truth for `NOISE` tokens and `MIN_TOKEN_LENGTH` |
+
+### Configuration File: `config/bb_registry.php`
+
+A new config file controls which bots the library recognizes. Operators drop a `bb_registry.php` with one of eight preset names, optional category filters, and an `additions` array for internal bots.
+
+```php
+<?php
+// config/bb_registry.php — ship with one of these:
+
+return [
+    'preset'             => 'full',                          // see Presets::AVAILABLE
+    'exclude_categories' => ['seo_crawler'],                  // optional
+    'include_categories' => ['cloud_infrastructure'],         // optional (overrides exclude)
+    'exclude_bots'       => ['petal'],                       // optional
+    'additions'          => [/* your internal bots */],       // optional
+];
+```
+
+**Filter execution order:**
+1. Load preset
+2. Apply `exclude_categories`
+3. Apply `include_categories` (overrides exclude)
+4. Apply `exclude_bots`
+5. Merge `additions` (custom bots on top)
+
+**Available presets:**
+
+| Preset | Use case |
+|--------|----------|
+| `full` | All ~100 shipped bots (default if `bb_registry.php` is absent) |
+| `minimal` | ~30 most common bots (3× faster matching) |
+| `verified-only` | Only bots with DNS verification or IP ranges |
+| `no-ai` | Everything except AI crawlers |
+| `no-seo` | Everything except SEO crawlers |
+| `eu-only` | European search engines + EU-relevant bots |
+| `human-only` | Empty registry (combine with `additions`) |
+| `custom` | Use ONLY bots defined in the `bots` key |
+
+### Per-Category Behavior (12 categories)
 
 | Category | Default action | Tunable via | Example bots |
 |---|---|---|---|
-| `search_engine` | verified → allow, unverified → block | n/a | Googlebot, Bingbot, Yandex, Baidu, DuckDuckGo, Naver, Daum, Sogou, Qihoo, ByteDance, Seznam, Mojeek, Wiby, FOSSies, **coccoc, mailru, petal, zum, stract, marginalia, centrum** |
-| `ai_crawler` | depends on `ai_crawlers.*` | `ai_crawlers.allowed[]`, `strict`, `block_unverified` | GPTBot, ClaudeBot, Google-Extended, PerplexityBot, Meta-ExternalAgent, Applebot-Extended, GrokBot, MistralBot, CohereBot, YouBot, **amazon_ai, semantic_scholar, diffbot, brightdata (default BLOCK)** |
-| `social_crawler` | verified → allow, unverified → log_only | n/a | Facebook, Twitter, LinkedIn, Discord, Slack, Telegram, WhatsApp, Pinterest, Reddit, **kakao, line, wechat, notion** |
-| `seo_crawler` | verified → default, unverified → block | n/a | Ahrefs, Semrush, MJ12, DotBot, **similarweb, seobility, botify, siteimprove, lumar, oncrawl, screaming_frog, contentking** |
-| `archive_crawler` | verified → allow | `allowed[]` (default) | Internet Archive, Common Crawl, **UKWA, BnF, DNB, KB-NL** |
+| `search_engine` | verified → allow, unverified → block | n/a | Googlebot, Bingbot, Yandex, Baidu, DuckDuckBot, Brave, Kagi, Naver, Daum, Sogou, Qihoo360, ByteDance, Seznam, Mojeek, Wiby, Cốc Cốc, Mail.ru, Petal, Zum, Stract, Marginalia, Centrum |
+| `ai_crawler` | depends on `ai_crawlers.*` | `ai_crawlers.allowed[]`, `strict`, `block_unverified` | GPTBot, ClaudeBot, Google-Extended, PerplexityBot, Meta-ExternalAgent, Applebot-Extended, GrokBot, MistralBot, CohereBot, YouBot, Amazonbot, Semantic Scholar, Diffbot, **BrightData (default BLOCK)** |
+| `social_crawler` | verified → allow, unverified → log_only | n/a | Facebook, Twitter, LinkedIn, Discord, Slack, Telegram, WhatsApp, Pinterest, Reddit, Kakao, LINE, WeChat, Notion |
+| `seo_crawler` | verified → default, unverified → block | n/a | Ahrefs, Semrush, MJ12, DotBot, Similarweb, Seobility, Botify, Siteimprove, Lumar, Oncrawl, Screaming Frog, ContentKing |
+| `archive_crawler` | verified → allow | `allowed[]` (default) | Internet Archive, Common Crawl, UKWA, BnF, DNB, KB-NL, FOSSies |
 | `monitoring` | verified → allow | `allowed[]` (default) | UptimeRobot, Pingdom, StatusCake, GTmetrix, Lighthouse |
-| `feed_reader` *(new)* | allow (verified-only) | `allowed[]` (default) | Feedly, Inoreader, Flipboard, NewsBlur, Google News, Apple News |
-| `shopping_crawler` *(new)* | allow (verified-only) | `allowed[]` (default) | Google Shopping, Bing Shopping, Pinterest Shopping, Facebook Catalog, Shopify |
-| `cloud_infrastructure` *(new)* | **HARD allow — never blocked** | n/a (always allowed) | Cloudflare, AWS ELB, GCP LB, Azure, Fastly health probes |
-| `security_scanner` *(new)* | log_only | `log_only[]` (default) | Qualys, Detectify, Rapid7, Shodan, Censys |
+| `feed_reader` | allow (verified-only) | `allowed[]` (default) | Feedly, Inoreader, Flipboard, NewsBlur, Google News, Apple News |
+| `shopping_crawler` | allow (verified-only) | `allowed[]` (default) | Google Shopping, Bing Shopping, Facebook Catalog, Pinterest Shopping, Shopify |
+| `cloud_infrastructure` | **HARD allow — never blocked** | n/a (always allowed) | Cloudflare, AWS ELB, GCP LB, Azure, Fastly health probes |
+| `security_scanner` | log_only | `log_only[]` (default) | Qualys, Detectify, Rapid7, Shodan, Censys |
+| `residential_proxy` | hard block | `blocked[]` (default) | Bright Data / Luminati |
 | `malicious` | hard block | `blocked[]` (default) | Known-bad actors |
 
 > ⚠️ **`cloud_infrastructure` cannot be moved to `blocked[]` or `challenge[]`.** The hard-allow is enforced inside `BotDetector::determine_action()` — the safety override always wins, because blocking these probes takes your origin offline.
+
+### Adding Custom Bots
+
+To add your own bots (internal monitoring, niche crawlers), use the `additions` key:
+
+```php
+return [
+    'preset'    => 'full',
+    'additions' => [
+        'internal_uptime_monitor' => [
+            'name'                => 'Internal Uptime Monitor',
+            'user_agent_patterns' => ['InternalMonitor/1.0'],
+            'host_patterns'       => ['monitor.internal'],
+            'ip_ranges'           => ['10.0.0.0/8'],
+            'verify_dns'          => true,
+            'dns_suffix'          => 'monitor.internal',
+            'category'            => 'monitoring',
+            'default_action'      => 'allow',
+            'description'         => 'Our internal uptime checker',
+        ],
+    ],
+];
+```
+
+Required keys: `name`, `user_agent_patterns` (≥1 entry), `category` (one of the 12 cases).
+Optional keys: `host_patterns`, `ip_ranges`, `verify_dns`, `dns_suffix`, `robots_txt_token`, `default_action` (`allow`/`challenge`/`block`/`log_only`), `description`.
+
+Invalid entries are logged via `error_log()` and skipped — they don't break the whole registry. Check `$registry->has_errors()` programmatically if you build registries in code.
+
+### Programmatic Composition
+
+```php
+use BadBehaviour\Bot\RegistryFactory;
+use BadBehaviour\Bot\Registry\MergedRegistry;
+use BadBehaviour\Bot\Registry\EmptyRegistry;
+use BadBehaviour\Bot\Registry\InMemoryRegistry;
+use BadBehaviour\Bot\BotDefinition;
+use BadBehaviour\Bot\BotCategory;
+
+// Option 1: From a config array
+$registry = RegistryFactory::from_array([
+    'preset' => 'no-ai',
+    'additions' => [/* ... */],
+]);
+
+// Option 2: Per-tenant swap
+$tenant_registry = $default_bb->with_registry(
+    new MergedRegistry([
+        $default_bb->get_registry(),
+        new InMemoryRegistry($tenant_specific_bots),
+    ])
+);
+
+// Option 3: Custom registry with empty baseline
+$registry = new MergedRegistry([
+    EmptyRegistry::instance(),
+    new InMemoryRegistry($my_bots),
+]);
+```
+
+See `config/bb_registry.example.php` for a fully-commented example.
 
 ---
 
@@ -570,11 +686,15 @@ Two layers of defense:
 ### Verification
 
 ```php
-use BadBehaviour\Bot\Registry;
+use BadBehaviour\Bot\Registry\DefaultRegistry;
+use BadBehaviour\Bot\RegistryInterface;
 use BadBehaviour\Util\IpUtil;
 
+// Default registry (or inject your own — see "Bot Registry" section above)
+$registry = new DefaultRegistry();
+
 // All five cloud bots are present and hard-allowed
-foreach (Registry::cloud_infrastructure() as $id => $def) {
+foreach ($registry->cloud_infrastructure() as $id => $def) {
     // $def->default_action === BotAction::ALLOW (enforced)
     // $def->robots_txt_token === null  (no robots.txt governance)
     // $def->ip_ranges is non-empty OR dynamic loading is enabled
@@ -584,7 +704,37 @@ foreach (Registry::cloud_infrastructure() as $id => $def) {
 IpUtil::match_cidr('173.245.48.1', '173.245.48.0/20');  // true
 ```
 
-If your CDN isn't on the list, [open an issue](https://github.com/Bad-Behaviour/badbehaviour/issues) — adding a new cloud provider is a 30-line patch.
+**Verifying via the active registry** (in a running app):
+
+```php
+// In production code, the registry is whatever was injected or loaded
+// from config/bb_registry.php. Access it via BadBehaviour::get_registry():
+$bb = BadBehaviour::withAdapter($adapter);
+$registry = $bb->get_registry();
+
+foreach ($registry->cloud_infrastructure() as $id => $def) {
+    assert($def->default_action === BotAction::ALLOW);
+    assert($def->robots_txt_token === null);
+    assert(!empty($def->ip_ranges));
+}
+```
+
+**Filtering check** (after applying `exclude_categories`/`include_categories`):
+
+```php
+$registry = RegistryFactory::from_array([
+    'preset'             => 'full',
+    'include_categories' => ['cloud_infrastructure'],  // safety net
+    'exclude_categories' => ['seo_crawler'],           // unrelated
+]);
+
+// cloud_infrastructure MUST still be present even if you tried to exclude it
+// via the wrong key order. The include_categories step overrides exclude.
+$cf = $registry->get('cloudflare_health');
+assert($cf !== null);
+```
+
+If your CDN isn't on the list, [open an issue](https://github.com/Bad-Behaviour/badbehaviour/issues) — adding a new cloud provider is a 30-line patch to `DefaultRegistry::cloud_infrastructure()`.
 
 ---
 

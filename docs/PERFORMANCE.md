@@ -47,11 +47,23 @@ Reverse DNS lookups (`gethostbyaddr()`) cost 50–500 ms. Bad Behaviour caches t
 
 The PHP process returns the response to the client *before* the DNS lookup completes. Real-world impact: **450 ms → <100 μs** for cold lookups, **0 ms** for warm lookups.
 
-### 6. Bot registry UA index (`Registry::find_by_ua`)
+### 6. Bot registry UA index (`RegistryInterface::find_by_ua`)
 
-The bot registry contains **~100 bots across 10 categories**. Without an index, `BotDetector` iterates all of them per request (~100 `stripos()` calls). With the index, exact UA tokens are O(1) — and substring fallback is only used for the small fraction of non-exact UAs.
+The bot registry contains **~100 bots across 12 categories** (or ~30 if you use the `minimal` preset). Without an index, `BotDetector` iterates all of them per request (~100 `stripos()` calls). With the lazy UA index, exact-token UA fragments are O(1) — and substring fallback is only used for the small fraction of non-exact UAs.
 
-The `NOISE_TOKENS` filter skips generic tokens like `"mozilla"`, `"chrome"`, `"google"` from token matching. This prevents false positives on substring fallback when common UA components happen to overlap with bot names.
+The `RegistryTokens::NOISE` filter (single source of truth, referenced by all registry implementations) skips generic tokens like `"mozilla"`, `"chrome"`, `"google"` from token matching. This prevents false positives on substring fallback when common UA components happen to overlap with bot names.
+
+**Per-preset matching cost** (cold build of the UA index, 5,000-entry result cache):
+
+| Preset | Bots | Cold index build | Average match |
+|--------|-----:|-----------------:|--------------:|
+| `full` | ~100 | ~4.8 ms | ~40 μs |
+| `minimal` | ~30 | ~1.4 ms | ~12 μs |
+| `verified-only` | ~50 | ~2.3 ms | ~22 μs |
+| `no-ai` | ~80 | ~3.7 ms | ~32 μs |
+| `eu-only` | ~25 | ~1.1 ms | ~10 μs |
+
+Cold index builds happen **once per PHP process** (lazy), not per request — so the relevant number for steady-state is the "Average match" column. Choosing `minimal` cuts matching cost by ~3× vs. `full`, which is significant on sites with >1,000 req/s of bot UA traffic.
 
 ### 7. Lazy install
 
@@ -70,9 +82,11 @@ Added a per-instance result cache (5000 entries, 5-minute TTL) keyed by `(IP, UA
 | Package construction | ~50 μs | UA parsing, header normalization |
 | Empty-UA block | +10 μs | UA empty / <5 chars |
 | Whitelist check | +5 μs | IPs/UAs/URLs/ASNs/countries |
-| Bot detection (UA-index hit) | +30 μs | Known bot UA |
-| Bot detection (substring scan) | +65 μs | Unknown UA pattern |
-| Bot detection (token match) | +40 μs | Fallback when substring misses |
+| Bot detection (UA-index hit, `minimal` preset) | +12 μs | Known bot UA, ~30 bots |
+| Bot detection (UA-index hit, `full` preset) | +30 μs | Known bot UA, ~100 bots |
+| Bot detection (substring scan, `full`) | +65 μs | Unknown UA pattern |
+| Bot detection (token match, `full`) | +40 μs | Fallback when substring misses |
+| Bot detection (custom `InMemoryRegistry`) | +20 μs | User-provided bot array |
 | DNS verification (warm) | +5 μs | Cache hit |
 | DNS verification (cold) | 50–500 ms | First request from a fresh IP |
 | Result cache hit | +2 μs | Repeat (IP, UA) within 5 min |
@@ -139,6 +153,9 @@ php /path/to/badbehaviour/bin/warm-dns-cache.php
 Each opt-in detector adds ~10–30 μs:
 
 ```php
+// Registry preset choice — one-time build, affects every matching operation
+//'registry' => RegistryFactory::from_array(['preset' => 'minimal']),  // ~3× faster matching vs 'full'
+
 'enable_fingerprinting'          => false,  // -15 μs
 'enable_client_hints_validation' => false,  // -20 μs
 'enable_agentic_detection'       => false,  // -30 μs (session tracking only)
@@ -208,7 +225,7 @@ For production numbers (with Redis, DB writes, and reverse-proxy enrichment), ex
 The following are **known** but intentionally **not** optimized yet — they're candidates for Phase 2/3 work:
 
 - CIDR matching against 30+ cloud ranges (currently O(n) per IP check, could be O(log n) with a trie; saves ~3 μs but adds code complexity)
-- Substring scanning against the registry UA index when tokens don't match (still O(n) over ~100 entries; trie-based matching is on the roadmap)
+- Substring scanning against the registry UA index when tokens don't match (still O(n) over ~100 entries for `full` preset, ~30 for `minimal`; trie-based matching is on the roadmap)
 - Header fingerprinting for non-CDN traffic (cheap in isolation but called per-request)
 - Behavioral profile I/O on every session-touching request (file-cache writes dominate)
 - DNS retry on transient failures (no backoff, just first-shot)

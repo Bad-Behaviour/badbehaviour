@@ -201,21 +201,21 @@ CREATE INDEX IF NOT EXISTS "idx_request_uri_hash" ON "prefix_bad_behaviour" ("re
 
 ### Expanded Bot Registry & Categories (NEW)
 
-3.0 ships with **~100 bots across 11 categories**
+3.0 ships with **~100 bots across 12 categories**. Every bot is now a typed `BotDefinition` object, every registry implements the `RegistryInterface` contract, and the shipped data lives in `DefaultRegistry`.
 
 | Category | Default | Examples |
 |---|---|---|
-| `search_engine` | `allow` (verified) | Googlebot, Bingbot, Yandex, Baidu, DuckDuckBot, Brave, Kagi, Naver, Sogou, Qihoo360, ByteDance, Petal, Cốc Cốc, Mail.ru, Stract, Marginalia |
+| `search_engine` | `allow` (verified) | Googlebot, Bingbot, Yandex, Baidu, DuckDuckBot, Brave, Kagi, Naver, Sogou, Qihoo360, ByteDance, Petal, Cốc Cốc, Mail.ru, Stract, Marginalia, Centrum |
 | `ai_crawler` | `challenge` | GPTBot, ClaudeBot, Gemini, Meta-ExternalAgent, PerplexityBot, Grok, Mistral, Cohere, Amazonbot, Diffbot |
 | `social_crawler` | `allow` (verified) / `log_only` (unverified) | Facebook, Twitter, LinkedIn, Slack, Telegram, WhatsApp, KakaoTalk, LINE, WeChat, Notion |
 | `seo_crawler` | `challenge` | Semrush, Ahrefs, MJ12, DotBot, SimilarWeb, Seobility, Botify, Lumar, Screaming Frog |
 | `archive_crawler` | `allow` (verified) | Internet Archive, Common Crawl, UKWA, BnF, DNB, KB-NL, **FOSSies** |
 | `monitoring` | `allow` | UptimeRobot, Pingdom, StatusCake, GTmetrix, Lighthouse |
-| `feed_reader` *(new)* | `allow` | Feedly, Inoreader, Flipboard, NewsBlur, Google News, Apple News |
-| `shopping_crawler` *(new)* | `allow` | Google Shopping, Bing Shopping, Facebook Catalog, Pinterest Shopping, Shopify |
-| `cloud_infrastructure` *(new)* | **`hard allow`** | Cloudflare, AWS ELB/ALB, GCP LB, Azure LB/Front Door, Fastly |
-| `security_scanner` *(new)* | `log_only` | Qualys, Detectify, Rapid7, Shodan, Censys |
-| `residential_proxy` *(new)* | `block` | Bright Data (Luminati) |
+| `feed_reader` | `allow` | Feedly, Inoreader, Flipboard, NewsBlur, Google News, Apple News |
+| `shopping_crawler` | `allow` | Google Shopping, Bing Shopping, Facebook Catalog, Pinterest Shopping, Shopify |
+| `cloud_infrastructure` | **`hard allow`** | Cloudflare, AWS ELB/ALB, GCP LB, Azure LB/Front Door, Fastly |
+| `security_scanner` | `log_only` | Qualys, Detectify, Rapid7, Shodan, Censys |
+| `residential_proxy` | `block` | Bright Data (Luminati) |
 | `malicious` | `block` | Known-bad actors |
 | `unknown` | (catch-all) | — |
 
@@ -223,10 +223,10 @@ CREATE INDEX IF NOT EXISTS "idx_request_uri_hash" ON "prefix_bad_behaviour" ("re
 
 ```php
 'bot_categories' => [
-    'blocked'   => ['malicious'],          // block entirely
-    'log_only'  => ['security_scanner'],   // record, never block
-    'challenge' => [],                     // issue PoW/captcha
-    'allowed'   => [                       // bypass (verified only)
+    'blocked'   => ['malicious', 'residential_proxy'],
+    'log_only'  => ['security_scanner'],
+    'challenge' => [],
+    'allowed'   => [
         'feed_reader',
         'shopping_crawler',
         'cloud_infrastructure',
@@ -235,6 +235,93 @@ CREATE INDEX IF NOT EXISTS "idx_request_uri_hash" ON "prefix_bad_behaviour" ("re
     ],
 ],
 ```
+
+### Custom Registries (NEW) — Pluggable, Composable
+
+The old static `Registry` class is replaced by a proper interface hierarchy so operators can ship tailored bot lists, swap registries per-tenant, or build a completely custom bot set without forking the library.
+
+**Architecture:**
+
+| Component | Purpose |
+|-----------|---------|
+| `RegistryInterface` | Read-only contract — every registry implementation satisfies it |
+| `DefaultRegistry` | All ~100 shipped bots, hardcoded as `BotDefinition` instances |
+| `InMemoryRegistry` | Wrap a user-provided array of `BotDefinition`s (tests, programmatic construction) |
+| `EmptyRegistry` | No-op singleton — humans-only baseline |
+| `FilteredRegistry` | Keep/exclude bot IDs + category filters over any inner registry |
+| `MergedRegistry` | Compose multiple registries (last-wins semantics) |
+| `CustomRegistry` | Config-array driven, with per-bot validation and `get_errors()` reporting |
+| `Presets` | Named subsets: `full`, `minimal`, `verified-only`, `no-ai`, `no-seo`, `eu-only`, `human-only`, `custom` |
+| `RegistryFactory` | Builder entry points: `from_file()`, `from_array()`, `default()` |
+| `RegistryTokens` | Single source of truth for `NOISE` tokens and `MIN_TOKEN_LENGTH` (DRY) |
+
+**New configuration file:** `config/bb_registry.php`
+
+Operators drop a `bb_registry.php` with one of eight preset names, optional category filters, and an `additions` array for internal bots. If the file is absent, `RegistryFactory::default()` (the full ~100-bot registry) is used — backward-compatible default.
+
+```php
+<?php
+// config/bb_registry.php
+
+return [
+    // Pick one of: full | minimal | verified-only | no-ai | no-seo | eu-only | human-only | custom
+    'preset'             => 'minimal',
+
+    // Optional category-level filters
+    'exclude_categories' => ['seo_crawler'],
+    'include_categories' => ['cloud_infrastructure'],   // overrides exclude
+
+    // Optional bot-level filters
+    'exclude_bots'       => ['petal'],
+
+    // Optional: define internal/custom bots (merged on top, last-wins)
+    'additions'          => [
+        'internal_uptime_monitor' => [
+            'name'                => 'Internal Uptime Monitor',
+            'user_agent_patterns' => ['InternalMonitor/1.0'],
+            'host_patterns'       => ['monitor.internal'],
+            'ip_ranges'           => ['10.0.0.0/8'],
+            'verify_dns'          => true,
+            'dns_suffix'          => 'monitor.internal',
+            'category'            => 'monitoring',
+            'default_action'      => 'allow',
+            'description'         => 'Our internal uptime checker',
+        ],
+    ],
+];
+```
+
+**Filter execution order** (applied left-to-right, each step takes the previous output as input):
+1. Load preset (or empty for `human-only`/`custom`)
+2. Apply `exclude_categories` (drop whole categories)
+3. Apply `include_categories` (re-add, overrides exclude — useful as a safety net)
+4. Apply `exclude_bots` (remove specific bots by ID)
+5. Merge `additions` (custom bots on top, last-wins)
+
+**Per-tenant swaps** — `BadBehaviour` accepts a registry at construction and can be cloned with a different one:
+
+```php
+use BadBehaviour\Core\BadBehaviour;
+use BadBehaviour\Bot\Registry\MergedRegistry;
+use BadBehaviour\Bot\Registry\InMemoryRegistry;
+
+$bb = BadBehaviour::withAdapter($adapter);
+
+$tenant_registry = $bb->with_registry(
+    new MergedRegistry([
+        $bb->get_registry(),
+        new InMemoryRegistry($tenant_specific_bots),
+    ])
+);
+
+$result = $tenant_registry->run();
+```
+
+**Validation behavior:** `CustomRegistry` validates each config entry against the `BotDefinition` schema. Invalid entries are logged via `error_log()` and skipped — they don't break the whole registry. Required keys are `name`, `user_agent_patterns` (≥1 entry), and `category` (one of the 12 enum cases). Call `$registry->has_errors()` / `get_errors()` programmatically if you build registries in code.
+
+**Cloud infrastructure safety:** The shipped `config/bb_registry.php` includes `'include_categories' => ['cloud_infrastructure']` as a safety net. This guarantees CDN health probes (Cloudflare, AWS ELB, GCP LB, Azure, Fastly) remain allowed even if a future preset accidentally drops them — blocking them takes your origin offline.
+
+See [CONFIGURATION.md → Bot Registry](CONFIGURATION.md#bot-registry--custom-composable-pluggable) for full programmatic examples.
 
 ### Cloud Infrastructure Fast Path (NEW — Critical)
 

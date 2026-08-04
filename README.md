@@ -96,7 +96,7 @@ $bb->with_registry($tenant_registry);
 
 See [**Custom Bot Registries**](#custom-bot-registries) below for the full schema, presets, and examples.
 
-### Bot registry expansion (~50 → ~100 bots)
+### Bot registry (~100 bots)
 
 | Category | New additions |
 |---|---|

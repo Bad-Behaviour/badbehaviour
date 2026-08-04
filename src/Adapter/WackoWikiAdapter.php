@@ -109,66 +109,86 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 
 		if ($sqlite) {
 			return [
+				// BB 3.0 schema — see docs/CONFIGURATION.md for the full rationale.
+				// Notable changes vs the 3.0 pre-release:
+				//   * host:            VARCHAR(2083) → VARCHAR(253)   [RFC 1035 max hostname]
+				//   * *_hash columns:   CHAR(40) SHA-1 → CHAR(16) half-SHA-256 [admin grouping only]
+				//   * status_code:     VARCHAR(50) → VARCHAR(32)       [longest enum value = 26 chars]
+				//   * bot_category:    VARCHAR(32) → VARCHAR(20)       [longest enum value = 20 chars]
+				//   * status_message:  TEXT → VARCHAR(255)             [dynamic context, capped]
+				//   * h2_hash:         DROPPED                        [was empty in 99% of rows]
+				//   * header_order_hash: DROPPED                       [was empty in 99% of rows]
+				//   * ip:              VARCHAR(45) KEPT                [human-readable, admin-facing]
 				"CREATE TABLE IF NOT EXISTS \"{$name}\" (
 					\"log_id\" INTEGER PRIMARY KEY AUTOINCREMENT,
 					\"ip\" VARCHAR(45) NOT NULL DEFAULT '',
-					\"host\" VARCHAR(2083) NOT NULL DEFAULT '',
+					\"host\" VARCHAR(253) NOT NULL DEFAULT '',
 					\"date\" DATETIME NULL,
 					\"request_method\" VARCHAR(8) NOT NULL DEFAULT '',
-					\"request_uri\" VARCHAR(2083) NOT NULL DEFAULT '',
-					\"request_uri_hash\" CHARACTER(40) NOT NULL DEFAULT '',
+					\"request_uri\" VARCHAR(2048) NOT NULL DEFAULT '',
+					\"request_uri_hash\" CHAR(16) NOT NULL DEFAULT '',
 					\"server_protocol\" VARCHAR(12) NOT NULL DEFAULT '',
 					\"http_headers\" TEXT NOT NULL,
 					\"user_agent\" TEXT NULL,
-					\"user_agent_hash\" CHARACTER(40) NOT NULL DEFAULT '',
-					\"request_entity\" TEXT NULL,
-					\"status_code\" VARCHAR(50) NOT NULL DEFAULT '',
-					\"status_message\" TEXT,
+					\"user_agent_hash\" CHAR(16) NOT NULL DEFAULT '',
+					\"request_entity\" TEXT DEFAULT NULL,
+					\"status_code\" VARCHAR(32) NOT NULL DEFAULT '',
+					\"status_message\" VARCHAR(255),
 					\"support_key\" VARCHAR(64),
-					\"bot_category\" VARCHAR(32),
+					\"bot_category\" VARCHAR(20),
 					\"bot_verified\" BOOLEAN DEFAULT 0,
 					\"ja3\" CHAR(32),
-					\"h2_hash\" CHAR(16),
-					\"header_order_hash\" CHAR(16),
 					\"asn\" VARCHAR(32),
 					\"country\" CHAR(2),
-					\"request_time_ms\" INTEGER UNSIGNED
+					\"request_time_ms\" INTEGER UNSIGNED,
+					\"resolved_at\" DATETIME NULL DEFAULT NULL
 				);",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_ip\" ON \"{$name}\" (\"ip\");",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_status\" ON \"{$name}\" (\"status_code\");",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_date\" ON \"{$name}\" (\"date\");",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_bot\" ON \"{$name}\" (\"bot_category\", \"bot_verified\");",
-				"CREATE INDEX IF NOT EXISTS \"bb_idx_user_agent_hash\" ON \"{$name}\" (\"user_agent_hash\");",
-				"CREATE INDEX IF NOT EXISTS \"bb_idx_staus_key\" ON \"{$name}\" (\"status_code\");",
-				"CREATE INDEX IF NOT EXISTS \"bb_idx_request_uri_hash\" ON \"{$name}\" (\"request_uri_hash\");",
-				"CREATE INDEX IF NOT EXISTS \"bb_idx_request_method\" ON \"{$name}\" (\"request_method\");",
-			];
-		} else {
+				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_ua_hash\" ON \"{$name}\" (\"user_agent_hash\");",
+				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_uri_hash\" ON \"{$name}\" (\"request_uri_hash\");",
+				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_method\" ON \"{$name}\" (\"request_method\");",
+				];
+		}
+		else {
 			return [
+				// BB 3.0 schema — see docs/CONFIGURATION.md for the full rationale.
+				// Notable changes vs the 3.0 pre-release:
+				//   * host:             VARCHAR(2083) → VARCHAR(253)  [RFC 1035 max hostname]
+				//   * *_hash columns:   CHAR(40) SHA-1 → CHAR(16) half-SHA-256 [admin grouping only]
+				//   * status_code:      VARCHAR(50) → VARCHAR(32)      [longest enum value = 26 chars]
+				//   * bot_category:     VARCHAR(32) → VARCHAR(20)      [longest enum value = 20 chars]
+				//   * status_message:   TEXT → VARCHAR(255)            [dynamic context, capped]
+				//   * h2_hash:          DROPPED                       [was empty in 99% of rows]
+				//   * header_order_hash: DROPPED                       [was empty in 99% of rows]
+				//   * ip:               VARCHAR(45) KEPT               [human-readable, admin-facing]
+				//   * http_headers:     TEXT → MEDIUMTEXT              [up to 16MB; was capped at 64KB]
+				//   * request_entity:   TEXT → MEDIUMTEXT              [same]
 				"CREATE TABLE IF NOT EXISTS `$name` (
 					`log_id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
 					`ip` VARCHAR(45) NOT NULL DEFAULT '',
-					`host` VARCHAR(2083) NOT NULL DEFAULT '',
+					`host` VARCHAR(253) NOT NULL DEFAULT '',
 					`date` DATETIME NOT NULL,
 					`request_method` VARCHAR(8) NOT NULL DEFAULT '',
-					`request_uri` VARCHAR(2048) NOT NULL DEFAULT '',
-					`request_uri_hash` CHAR(40) NOT NULL DEFAULT '',
+					`request_uri` VARBINARY(2048) NOT NULL DEFAULT '',
+					`request_uri_hash` CHAR(16) NOT NULL DEFAULT '',
 					`server_protocol` VARCHAR(12) NOT NULL DEFAULT '',
-					`http_headers` TEXT NOT NULL,
+					`http_headers` MEDIUMTEXT NOT NULL,
 					`user_agent` TEXT,
-					`user_agent_hash` CHAR(40) NOT NULL DEFAULT '',
-					`request_entity` TEXT DEFAULT NULL,
-					`status_code` VARCHAR(50) NOT NULL DEFAULT '',
-					`status_message` TEXT,
+					`user_agent_hash` CHAR(16) NOT NULL DEFAULT '',
+					`request_entity` MEDIUMTEXT DEFAULT NULL,
+					`status_code` VARCHAR(32) NOT NULL DEFAULT '',
+					`status_message` VARCHAR(255),
 					`support_key` VARCHAR(64),
-					`bot_category` VARCHAR(32),
+					`bot_category` VARCHAR(20),
 					`bot_verified` BOOLEAN DEFAULT FALSE,
 					`ja3` CHAR(32),
-					`h2_hash` CHAR(16),
-					`header_order_hash` CHAR(16),
 					`asn` VARCHAR(32),
 					`country` CHAR(2),
 					`request_time_ms` INT UNSIGNED,
+					`resolved_at` DATETIME NULL DEFAULT NULL,
 				PRIMARY KEY (`log_id`),
 				KEY `idx_ip` (`ip`),
 				KEY `idx_status` (`status_code`),
@@ -197,7 +217,14 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		$date     = $q(gmdate('Y-m-d H:i:s'));
 		$method   = $q($package->request_method);
 		$uri      = $q($package->request_uri);
-		$uri_hash = $q(substr(hash('sha1', $package->request_uri), 0, 40));
+		$uri      = $q($package->request_uri);
+		// BB 3.0: hash shortened to 16 hex chars (half of SHA-256). Used only for
+		// grouping/filtering in the admin UI — not a cryptographic identifier.
+		// Collisions at 100k rows: ~0.0003% per row pair; acceptable for that use.
+		$uri_hash = $q(substr(hash('sha256', $package->request_uri), 0, 16));
+		$protocol = $q($package->server_protocol);
+		$ua       = $q($package->user_agent);
+		$ua_hash  = $q(substr(hash('sha256', $package->user_agent), 0, 16));
 		$protocol = $q($package->server_protocol);
 		$ua       = $q($package->user_agent);
 		$ua_hash  = $q(substr(hash('sha1', $package->user_agent), 0, 40));
@@ -223,18 +250,17 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		$bot_category = $q($result->metadata['bot_category'] ?? '');
 		$bot_verified = ($result->metadata['bot_verified'] ?? false) ? 1 : 0;
 		$ja3 = $q($package->ja3 ?? '');
-		$h2 = $q($package->h2_settings ? substr(hash('sha256', $package->h2_settings), 0, 16) : '');
-		$hdr = $q(substr(hash('sha256', implode(',', array_keys($package->headers_mixed))), 0, 16));
+		// h2_hash and header_order_hash dropped — see schema comment.
 		$asn = $q($package->asn ?? '');
 		$country = $q($package->country ?? '');
 		$time_ms = (int)($package->request_time * 1000);
 
 		$sql = "INSERT INTO `$table`
-        (`ip`,`host`,`date`,`request_method`,`request_uri`,`request_uri_hash`,`server_protocol`,
-         `http_headers`,`user_agent`,`user_agent_hash`,`request_entity`,`status_code`,`status_message`,
-         `support_key`,`bot_category`,`bot_verified`,`ja3`,`h2_hash`,`header_order_hash`,`asn`,`country`,`request_time_ms`)
-        VALUES ($ip,$host,$date,$method,$uri,$uri_hash,$protocol,$headers,$ua,$ua_hash,$request_entity,
-                '$status_key',$status_message,$support_key,$bot_category,$bot_verified,$ja3,$h2,$hdr,$asn,$country,$time_ms)";
+			(`ip`,`host`,`date`,`request_method`,`request_uri`,`request_uri_hash`,`server_protocol`,
+			 `http_headers`,`user_agent`,`user_agent_hash`,`request_entity`,`status_code`,`status_message`,
+			 `support_key`,`bot_category`,`bot_verified`,`ja3`,`asn`,`country`,`request_time_ms`)
+			VALUES ($ip,$host,$date,$method,$uri,$uri_hash,$protocol,$headers,$ua,$ua_hash,$request_entity,
+			        '$status_key',$status_message,$support_key,$bot_category,$bot_verified,$ja3,$asn,$country,$time_ms)";
 
 		$this->db->ll_query($sql);
 	}

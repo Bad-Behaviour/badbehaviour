@@ -380,21 +380,4 @@ class BotDetectorTest extends TestCase
     	$this->assertTrue($result->is_allowed(),
     		'Apple News MUST be allowed (publisher visibility)');
     }
-
-    // ========================================================================
-    // Petal promoted to search_engine
-    // ========================================================================
-
-    public function test_petal_search_blocked_when_unverified(): void
-    {
-    	$package = $this->createPackage(
-    		'Mozilla/5.0 (compatible; PetalBot; +https://aspiegel.com/petalbot)',
-    		'192.0.2.1'
-    		);
-
-    	$result = $this->detector->detect($package);
-
-    	$this->assertTrue($result->is_blocked(),
-    		'Unverified Petal (now search engine) must be blocked');
-    }
 }

@@ -30,7 +30,7 @@ $config = Configuration::from_array([
     'enable_fingerprinting' => false,
     'enable_client_hints_validation' => false,
     'enable_agentic_detection' => false,
-    'enable_dynamic_ip_ranges' => false,
+	'dynamic_ip_ranges' => ['enabled' => false],
     'enable_behavioral_analysis' => true,
     'enable_ai_crawler_control' => true,
     'rate_limit_enabled' => false,        // Don't pollute counters

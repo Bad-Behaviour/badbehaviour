@@ -105,7 +105,7 @@ return [
         // ['type' => 'header', 'header' => 'Sec-CH-UA', 'value' => 'Brave Leo', 'action' => 'log', 'id' => 'brave_leo_agentic',],
     ],
 
-    // ===== 3.0 FEATURES =====
+	// ===== DETECTION FEATURES (All Opt-In) =====
     'enable_fingerprinting'      => false,
     'inspect_json_body'          => false,
     'inspect_multipart_body'     => false,
@@ -113,7 +113,27 @@ return [
     'enable_ai_crawler_control'  => true,
 	'enable_client_hints_validation' => true,
 	'enable_agentic_detection' => true,
-	'enable_dynamic_ip_ranges'      => false,  // EXPERIMENTAL - DISABLED BY DEFAULT
+
+	// ===== DNS VERIFICATION =====
+	// Synchronous DNS verification for bot identity (replaces deferred lookup).
+	// First request from each bot IP: 40-300ms. Subsequent requests: cached.
+	// Set require_forward_confirm=true only if you observe PTR spoofing abuse.
+	'dns_verification' => [
+		'enabled'                   => true,
+		'timeout_ms'                => 300,
+		'require_forward_confirm'   => false,
+		'positive_ttl'              => 604800,  // 7 days
+		'negative_ttl'              => 86400,   // 1 day
+	],
+
+	// ===== DYNAMIC IP RANGES =====
+	// Pull fresh IP ranges from cloud provider feeds to avoid hardcoded
+	// CIDR drift. Requires cron: php bin/update-ip-ranges.php every 6-24h.
+	'dynamic_ip_ranges' => [
+		'enabled' => false,  // EXPERIMENTAL - DISABLED BY DEFAULT
+		'ttl'     => 86400,
+		'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
+	],
 
 	// ===== HEAD REQUEST DETECTION =====
 	// Detects abuse of HEAD requests for site mapping / reconnaissance

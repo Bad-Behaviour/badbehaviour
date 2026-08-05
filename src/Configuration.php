@@ -80,9 +80,21 @@ readonly class Configuration
         public bool $inspect_multipart_body = false,
         public bool $enable_behavioral_analysis = true,
         public bool $enable_ai_crawler_control = true,
-    	public bool $enable_dynamic_ip_ranges = true,
     	public bool $enable_client_hints_validation = true,
     	public bool $enable_agentic_detection = true,
+
+    	// === DNS verification (synchronous, bounded) ===
+    	// Replaces the deferred register_shutdown_function() pattern.
+    	// See CHANGELOG.md → Unreleased for rationale.
+    	public bool $dns_verification_enabled = true,
+    	public int $dns_verification_timeout_ms = 300,
+    	public bool $dns_verification_require_forward_confirm = false,
+    	public int $dns_verification_positive_ttl = 604800,
+    	public int $dns_verification_negative_ttl = 86400,
+
+    	public bool $dynamic_ip_ranges_enabled = false,
+    	public int $dynamic_ip_ranges_ttl = 86400,
+    	public array $dynamic_ip_ranges_feeds = ['aws', 'cloudflare', 'fastly', 'gcp'],
 
     	public bool $enable_head_request_detection = true,
     	public bool $head_require_referer = true,
@@ -142,6 +154,21 @@ readonly class Configuration
     	$geoip = $merged['geoip'] ?? [];
     	$fingerprints = $merged['fingerprints'] ?? [];
     	$bot_categories = $merged['bot_categories'] ?? [];
+
+    	// NEW: DNS verification (top-level dns_verification.* block)
+    	$dns_verification = $merged['dns_verification'] ?? [];
+    	$dns_verification_enabled = (bool)($dns_verification['enabled'] ?? true);
+    	$dns_verification_timeout_ms = max(50, min(2000, (int)($dns_verification['timeout_ms'] ?? 300)));
+    	$dns_verification_require_forward_confirm = (bool)($dns_verification['require_forward_confirm'] ?? false);
+    	$dns_verification_positive_ttl = max(3600, (int)($dns_verification['positive_ttl'] ?? 604800));
+    	$dns_verification_negative_ttl = max(60, (int)($dns_verification['negative_ttl'] ?? 86400));
+
+    	$dynamic_ip_ranges = $merged['dynamic_ip_ranges'] ?? [];
+    	$dynamic_ip_ranges_enabled = (bool)($dynamic_ip_ranges['enabled'] ?? false);
+    	$dynamic_ip_ranges_ttl = max(3600, (int)($dynamic_ip_ranges['ttl'] ?? 86400));
+    	$dynamic_ip_ranges_feeds = self::ensure_array(
+    		$dynamic_ip_ranges['feeds'] ?? ['aws', 'cloudflare', 'fastly', 'gcp']
+    	);
 
     	// FIX: Proper clamping for httpbl
     	$httpbl_threat = (int)($httpbl['threat'] ?? 25);
@@ -225,7 +252,18 @@ readonly class Configuration
     		enable_ai_crawler_control: (bool)($merged['enable_ai_crawler_control'] ?? true),
     		enable_client_hints_validation: (bool)($merged['enable_client_hints_validation'] ?? true),
     		enable_agentic_detection: (bool)($merged['enable_agentic_detection'] ?? true),
-    		enable_dynamic_ip_ranges: (bool)($merged['enable_dynamic_ip_ranges'] ?? false),
+
+    		// NEW: dns_verification
+    		dns_verification_enabled: $dns_verification_enabled,
+    		dns_verification_timeout_ms: $dns_verification_timeout_ms,
+    		dns_verification_require_forward_confirm: $dns_verification_require_forward_confirm,
+    		dns_verification_positive_ttl: $dns_verification_positive_ttl,
+    		dns_verification_negative_ttl: $dns_verification_negative_ttl,
+
+    		// CHANGED: dynamic_ip_ranges restructured
+    		dynamic_ip_ranges_enabled: $dynamic_ip_ranges_enabled,
+    		dynamic_ip_ranges_ttl: $dynamic_ip_ranges_ttl,
+    		dynamic_ip_ranges_feeds: $dynamic_ip_ranges_feeds,
 
     		enable_head_request_detection: (bool)($merged['enable_head_request_detection'] ?? true),
     		head_require_referer: (bool)($merged['head_require_referer'] ?? true),
@@ -282,9 +320,25 @@ readonly class Configuration
             'inspect_multipart_body' => false,
             'enable_behavioral_analysis' => true,
             'enable_ai_crawler_control' => true,
-        	'enable_dynamic_ip_ranges' => false,  // EXPERIMENTAL - OFF by default
         	'enable_client_hints_validation' => true,
         	'enable_agentic_detection' => true,
+
+        	// NEW: dns_verification defaults
+        	'dns_verification' => [
+        		'enabled' => true,
+        		'timeout_ms' => 300,
+        		'require_forward_confirm' => false,
+        		'positive_ttl' => 604800,
+        		'negative_ttl' => 86400,
+        	],
+
+        	// CHANGED: dynamic_ip_ranges restructured
+        	'dynamic_ip_ranges' => [
+        		'enabled' => false,  // EXPERIMENTAL - OFF by default
+        		'ttl' => 86400,
+        		'feeds' => ['aws', 'cloudflare', 'fastly', 'gcp'],
+        	],
+
         	'enable_head_request_detection' => true,
         	'head_require_referer' => true,
         	'head_flood_threshold' => 20,
@@ -366,9 +420,24 @@ readonly class Configuration
     		'inspect_multipart_body' => $this->inspect_multipart_body,
     		'enable_behavioral_analysis' => $this->enable_behavioral_analysis,
     		'enable_ai_crawler_control' => $this->enable_ai_crawler_control,
-    		'enable_dynamic_ip_ranges' => $this->enable_dynamic_ip_ranges,
     		'enable_client_hints_validation' => $this->enable_client_hints_validation,
     		'enable_agentic_detection' => $this->enable_agentic_detection,
+
+    		// NEW: dns_verification
+    		'dns_verification' => [
+    			'enabled' => $this->dns_verification_enabled,
+    			'timeout_ms' => $this->dns_verification_timeout_ms,
+    			'require_forward_confirm' => $this->dns_verification_require_forward_confirm,
+    			'positive_ttl' => $this->dns_verification_positive_ttl,
+    			'negative_ttl' => $this->dns_verification_negative_ttl,
+    		],
+
+    		// CHANGED: dynamic_ip_ranges restructured
+    		'dynamic_ip_ranges' => [
+    			'enabled' => $this->dynamic_ip_ranges_enabled,
+    			'ttl' => $this->dynamic_ip_ranges_ttl,
+    			'feeds' => $this->dynamic_ip_ranges_feeds,
+    		],
 
     		'enable_head_request_detection' => $this->enable_head_request_detection,
     		'head_require_referer' => $this->head_require_referer,

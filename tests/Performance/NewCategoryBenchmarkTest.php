@@ -28,7 +28,7 @@ class NewCategoryBenchmarkTest extends TestCase
 			'enable_fingerprinting' => false,
 			'enable_client_hints_validation' => false,
 			'enable_agentic_detection' => false,
-			'enable_dynamic_ip_ranges' => false, // Static only for benchmark
+			'dynamic_ip_ranges' => ['enabled' => false], // Static only for benchmark
 			'enable_behavioral_analysis' => true,
 			'enable_ai_crawler_control' => true,
 			'rate_limit_enabled' => false,
@@ -50,7 +50,7 @@ class NewCategoryBenchmarkTest extends TestCase
 	{
 		$adapter = new GenericAdapter();
 		$config = Configuration::from_array([
-			'enable_dynamic_ip_ranges' => false,
+			'dynamic_ip_ranges' => ['enabled' => false],
 			'bot_categories' => ['blocked' => ['malicious']],
 		], $adapter);
 

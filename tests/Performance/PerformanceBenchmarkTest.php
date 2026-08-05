@@ -1,4 +1,5 @@
 <?php
+// tests/Performance/PerformanceBenchmarkTest.php
 
 declare(strict_types=1);
 
@@ -22,15 +23,13 @@ class PerformanceBenchmarkTest extends TestCase
 
     protected function setUp(): void
     {
-    	// Performance test — runs in CI but only emits numbers, never asserts
-    	// hard time bounds (those would be flaky on shared CI runners).
     	$adapter = new GenericAdapter();
     	$config = Configuration::from_array([
     		'logging' => false,
     		'enable_fingerprinting' => false,
     		'enable_client_hints_validation' => false,
     		'enable_agentic_detection' => false,
-    		'enable_dynamic_ip_ranges' => false,
+    		'dynamic_ip_ranges' => ['enabled' => false],
     		'enable_behavioral_analysis' => true,
     		'enable_ai_crawler_control' => true,
     		'rate_limit_enabled' => false,
@@ -67,7 +66,6 @@ class PerformanceBenchmarkTest extends TestCase
 
         fwrite(STDERR, "\n  Static CSS:    {$per_iter} ms/req ({$elapsed_ms} ms / {$iterations} iters)\n");
 
-        // Phase 1 target: < 0.1 ms per request
         $this->assertLessThan(
             0.5,
             $per_iter,

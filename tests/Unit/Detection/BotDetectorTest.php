@@ -1,5 +1,7 @@
 <?php
-// tests/Unit/Detection/BotDetectorTest.php - Add cloud infra tests at the end.
+// tests/Unit/Detection/BotDetectorTest.php
+
+declare(strict_types=1);
 
 namespace BadBehaviour\Tests\Unit\Detection;
 
@@ -81,7 +83,7 @@ class BotDetectorTest extends TestCase
     	$config = \BadBehaviour\Configuration::from_array([
     		'ai_crawlers' => [
     			'allowed' => ['GPTBot'],
-    			'block_unverified' => false,  // CHANGED: don't block unverified, challenge them
+    			'block_unverified' => false,
     			'strict' => false,
     		],
     		'bot_categories' => ['blocked' => ['malicious']],
@@ -147,17 +149,15 @@ class BotDetectorTest extends TestCase
 
     public function test_dynamic_ranges_cached(): void
     {
-        // Use FileCache adapter for testing cache
         $cacheAdapter = new \BadBehaviour\Adapter\GenericAdapter();
 
-        // Manually set cache
         $cacheAdapter->set('bb:ip_ranges:merged', [
             'data' => ['googlebot' => ['64.233.160.0/19']],
             'fetched' => time(),
         ], 3600);
 
         $config = Configuration::from_array([
-        	'enable_dynamic_ip_ranges' => true,
+        	'dynamic_ip_ranges' => ['enabled' => true],
         	'ai_crawlers' => [
         		'allowed' => ['GPTBot'],
         		'block_unverified' => true,
@@ -175,7 +175,6 @@ class BotDetectorTest extends TestCase
 
         $result = $detector->detect($package);
 
-        // Should use cached ranges and allow
         $this->assertNotNull($result);
         $this->assertTrue($result->is_allowed());
     }
@@ -183,7 +182,7 @@ class BotDetectorTest extends TestCase
     public function test_dynamic_ranges_disabled_uses_static(): void
     {
     	$config = Configuration::from_array([
-    		'enable_dynamic_ip_ranges' => false,
+    		'dynamic_ip_ranges' => ['enabled' => false],
     		'ai_crawlers' => [
     			'allowed' => ['GPTBot'],
     			'block_unverified' => true,
@@ -194,10 +193,9 @@ class BotDetectorTest extends TestCase
 
         $detector = new BotDetector($config, new \BadBehaviour\Adapter\GenericAdapter());
 
-        // Googlebot with static range IP should work
         $package = $this->createPackage(
             'Mozilla/5.0 (compatible; Googlebot/2.1)',
-            '66.249.64.1' // In static ranges
+            '66.249.64.1'
         );
 
         $result = $detector->detect($package);
@@ -206,12 +204,11 @@ class BotDetectorTest extends TestCase
     }
 
     // ========================================================================
-    // NEW TESTS: Cloud infrastructure MUST be allowed
+    // Cloud infrastructure MUST be allowed
     // ========================================================================
 
     public function test_cloudflare_health_ip_always_allowed(): void
     {
-    	// Cloudflare IP range: 173.245.48.0/20
     	$package = $this->createPackage('Some Random Probe Agent', '173.245.48.1');
 
     	$result = $this->detector->detect($package);
@@ -222,7 +219,6 @@ class BotDetectorTest extends TestCase
 
     public function test_aws_elb_health_ip_always_allowed(): void
     {
-    	// AWS CloudFront range: 54.239.128.0/19
     	$package = $this->createPackage('AWS-ELB-HealthChecker/1.0', '54.239.128.1');
 
     	$result = $this->detector->detect($package);
@@ -233,7 +229,6 @@ class BotDetectorTest extends TestCase
 
     public function test_gcp_load_balancer_health_always_allowed(): void
     {
-    	// GCP health check range: 35.191.0.0/16
     	$package = $this->createPackage('GoogleHC', '35.191.1.1');
 
     	$result = $this->detector->detect($package);
@@ -244,7 +239,6 @@ class BotDetectorTest extends TestCase
 
     public function test_azure_health_probe_always_allowed(): void
     {
-    	// Azure LB range: 168.63.129.16 (well-known)
     	$package = $this->createPackage('Azure-LB-Health-Probe', '168.63.129.16');
 
     	$result = $this->detector->detect($package);
@@ -255,7 +249,6 @@ class BotDetectorTest extends TestCase
 
     public function test_fastly_health_always_allowed(): void
     {
-    	// Fastly: 151.101.0.0/16 (Fastly CDN egress)
     	$package = $this->createPackage('Fastly', '151.101.1.1');
 
     	$result = $this->detector->detect($package);
@@ -265,14 +258,14 @@ class BotDetectorTest extends TestCase
     }
 
     // ========================================================================
-    // NEW TESTS: Regional search engines
+    // Regional search engines
     // ========================================================================
 
     public function test_coccoc_vietnam_bot_blocked_when_unverified(): void
     {
     	$package = $this->createPackage(
     		'Mozilla/5.0 (compatible; coccocbot/2.0; +http://coccoc.com)',
-    		'192.0.2.1'  // NOT in coccoc ranges
+    		'192.0.2.1'
     		);
 
     	$result = $this->detector->detect($package);
@@ -295,7 +288,7 @@ class BotDetectorTest extends TestCase
     }
 
     // ========================================================================
-    // NEW TESTS: AI crawler additions
+    // AI crawler additions
     // ========================================================================
 
     public function test_amazonbot_blocked_when_unverified(): void
@@ -339,14 +332,14 @@ class BotDetectorTest extends TestCase
     }
 
     // ========================================================================
-    // NEW TESTS: Shopping crawlers allowed (revenue)
+    // Shopping crawlers allowed (revenue)
     // ========================================================================
 
     public function test_facebook_catalog_allowed(): void
     {
     	$package = $this->createPackage(
     		'facebookcatalog/1.0',
-    		'157.240.1.1'  // Facebook IP
+    		'157.240.1.1'
     		);
 
     	$result = $this->detector->detect($package);
@@ -357,7 +350,7 @@ class BotDetectorTest extends TestCase
     }
 
     // ========================================================================
-    // NEW TESTS: Feed readers allowed
+    // Feed readers allowed
     // ========================================================================
 
     public function test_feedly_allowed(): void
@@ -389,7 +382,7 @@ class BotDetectorTest extends TestCase
     }
 
     // ========================================================================
-    // NEW TESTS: Petal promoted to search_engine
+    // Petal promoted to search_engine
     // ========================================================================
 
     public function test_petal_search_blocked_when_unverified(): void

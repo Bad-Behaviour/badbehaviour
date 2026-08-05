@@ -710,25 +710,135 @@ return [
      */
     'enable_agentic_detection' => false,
 
+    // ============================================================
+	// DNS VERIFICATION (synchronous, bounded)
+	// ============================================================
+	//
+	// Replaces the deferred register_shutdown_function() pattern from earlier
+	// versions. When a bot's BotDefinition has verify_dns=true, Bad Behaviour
+	// runs a synchronous DNS check on the first request from any IP claiming
+	// to be that bot. Subsequent requests use the cache.
+	//
+	// === LATENCY COST ===
+	//
+	//   - First request per (IP, suffix) tuple: 40–300ms
+	//   - Cached requests: zero overhead
+	//
+	// === WHY THIS IS DIFFERENT FROM PREVIOUS VERSIONS ===
+	//
+	// Earlier versions used register_shutdown_function() to defer DNS lookups
+	// to keep first-request latency low. That created a false-positive window:
+	// the FIRST request from any bot whose IP wasn't in static ranges was
+	// blocked because verification had not yet completed. Real search engines
+	// retry, so the cache warmed by the second request — but regional /
+	// academic / AI crawlers often do not retry, resulting in permanent blocks.
+	//
+	// The synchronous approach eliminates this window. The latency cost is
+	// bounded by `timeout_ms`; if DNS hangs, the request falls through to
+	// the next defense (CHALLENGE rather than BLOCK).
+	//
+	// === FORWARD-CONFIRM TRADEOFF ===
+	//
+	// With require_forward_confirm=false (default): reverse+suffix match is
+	// sufficient. Catches legitimate IPv6 bots whose forward-confirm fails
+	// due to inconsistent IPv6 resolver paths. Vulnerable to PTR spoofing
+	// (attacker sets PTR to a known bot's hostname).
+	//
+	// With require_forward_confirm=true: requires forward-confirm in addition
+	// to reverse+suffix. Catches PTR spoofing. May FPs IPv6-only bots.
+	//
+	// RECOMMENDATION: keep false unless you observe PTR spoofing. If you
+	// flip to true, add IPv6 bots (Meta-ExternalAgent, Meta-ExternalFetcher)
+	// to ai_crawlers.allowed to compensate.
+
+	'dns_verification' => [
+		/**
+		 * Master switch. When false, DNS verification is skipped entirely
+		 * and bots with verify_dns=true are treated as unverified (falling
+		 * through to the next defense — typically CHALLENGE rather than BLOCK).
+		 *
+		 * @var bool Default: true
+		 */
+		'enabled' => true,
+
+		/**
+		 * Maximum milliseconds to spend on a single DNS verification before
+		 * giving up and treating the result as "could not verify".
+		 *
+		 * @var int Default: 300
+		 */
+		'timeout_ms' => 300,
+
+		/**
+		 * Require forward-confirm (resolve PTR target, confirm original IP
+		 * appears in A/AAAA answer) in addition to reverse+suffix match.
+		 *
+		 * See the section header comment above for the full tradeoff analysis.
+		 *
+		 * @var bool Default: false
+		 */
+		'require_forward_confirm' => false,
+
+		/**
+		 * Cache TTL for VERIFIED results (bot's DNS confirmed).
+		 *
+		 * @var int Default: 604800 (7 days)
+		 */
+		'positive_ttl' => 604800,
+
+		/**
+		 * Cache TTL for FAILED results (bot's DNS did not confirm).
+		 * Shorter than positive — a bot that fixes its DNS shouldn't be
+		 * blocked for a week. Also bounds cache size for spoofed scanners.
+		 *
+		 * @var int Default: 86400 (1 day)
+		 */
+		'negative_ttl' => 86400,
+	],
+
+    // ============================================================
+    // DYNAMIC IP RANGE FEEDS
+    // ============================================================
+
     /**
-     * NEW in 3.0 (EXPERIMENTAL): Pull fresh IP ranges from official feeds
-     * (Google, Bing, OpenAI, Anthropic, Apple, Perplexity, Cloudflare).
+     * Pull fresh IP ranges from official cloud provider feeds to avoid
+     * hardcoded CIDR drift. Set true once you've confirmed the cron is
+     * running (see bin/update-ip-ranges.php) or enabled on-demand refresh
+     * elsewhere in this file.
      *
-     * REQUIRES cron to refresh the feed cache:
-     *   0 */6 * * * php /path/to/badbehaviour/bin/update-ip-ranges.php
-     *
-     * ⚠️  Experimental — known issues:
-     *     1. Caching boundaries in multi-server deployments (file cache
-     *        doesn't share; use Redis via MediaWiki adapter for production)
-     *     2. Feed shape changes (vendors occasionally add fields)
-     *     3. Cold-start latency (first request after TTL expiry)
-     *     4. CA bundle portability in containers
-     *
-     * Risk: 🟡 MEDIUM-EXPERIMENTAL
-     *
-     * @var bool Default: false
+     * Critical for: cloud_infrastructure category (Cloudflare, AWS, GCP,
+     * Azure, Fastly). Without this, you'll get blocked-outage incidents
+     * when providers rotate ranges.
      */
-    'enable_dynamic_ip_ranges' => false,
+    'dynamic_ip_ranges' => [
+        /**
+         * Master switch for pulling from AWS/Cloudflare/Fastly/GCP feeds.
+         *
+         * @var bool Default: false
+         */
+        'enabled' => false,
+
+        /**
+         * Cache TTL for the merged IP range data.
+         * Lower = fresher (but more cron pressure). Higher = longer stale window.
+         *
+         * @var int Default: 86400 (24h)
+         */
+        'ttl' => 86400,
+
+        /**
+         * Specific feeds to enable. Disable a feed by removing it.
+         * All are recommended for global deployments.
+         *
+         * @var string[]
+         */
+        'feeds' => [
+            'aws',         // ip-ranges.amazonaws.com
+            'cloudflare',  // api.cloudflare.com/client/v4/ips
+            'fastly',      // api.fastly.com/public-ip-list
+            'gcp',         // gstatic.com/ipranges/cloud.json
+        ],
+    ],
 
     // ============================================================
     // HEAD REQUEST DETECTION (Enabled by Default — Low FP Risk)
@@ -879,5 +989,4 @@ return [
      * @var int Default: 100
      */
     'asset_pattern_threshold' => 100,
-];
 ];

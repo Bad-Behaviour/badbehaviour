@@ -1,66 +1,135 @@
 #!/usr/bin/env php
 <?php
-// bin/update-ip-ranges.php - with CloudIpRangeProvider
+/**
+ * Bad Behaviour 3.0 — Dynamic IP range feed refresh.
+ *
+ * Fetches IP ranges from official cloud provider feeds and writes them
+ * to the Bad Behaviour cache. Run via cron every 6-24 hours:
+ *
+ *   0 */6 * * * php /path/to/badbehaviour/bin/update-ip-ranges.php >> /var/log/bb-feeds.log 2>&1
+ *
+ * Exit codes:
+ *   0 — Success
+ *   1 — Partial failure (some feeds failed; stale cache may be used)
+ *   2 — Total failure (no fresh data, no cache)
+ *
+ * @see config/bb_config.example.php → dynamic_ip_ranges
+ */
+
+declare(strict_types=1);
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-use BadBehaviour\Feeds\FeedRegistry;
-use BadBehaviour\Feeds\CloudIpRangeProvider;
 use BadBehaviour\Adapter\GenericAdapter;
+use BadBehaviour\Configuration;
+use BadBehaviour\Feeds\CloudIpRangeProvider;
+use BadBehaviour\Feeds\FeedRegistry;
+
+$start = microtime(true);
+$max_total = 30.0;
 
 try {
     $adapter = new GenericAdapter();
-    $registry = new FeedRegistry($adapter);
-    $cloud_provider = new CloudIpRangeProvider($adapter);
+
+    $config = null;
+    $config_paths = [
+        __DIR__ . '/../config/bb_config.php',
+        getenv('BB_CONFIG_PATH') ?: null,
+    ];
+
+    foreach (array_filter($config_paths) as $path) {
+        if (file_exists($path)) {
+            $raw = require $path;
+            $config = is_array($raw) ? Configuration::from_array($raw, $adapter) : null;
+            break;
+        }
+    }
+
+    if ($config === null) {
+        $config = new Configuration(adapter: $adapter);
+    }
+
+    if (!$config->dynamic_ip_ranges_enabled) {
+        echo "[" . date('c') . "] dynamic_ip_ranges.enabled is false. Exiting.\n";
+        echo "Set 'dynamic_ip_ranges.enabled' => true in config/bb_config.php to enable.\n";
+        exit(0);
+    }
+
+    $feed_registry = new FeedRegistry($adapter);
+    $cloud_provider = new CloudIpRangeProvider($adapter, $config->dynamic_ip_ranges_ttl);
 
     echo "[" . date('c') . "] Refreshing IP range feeds...\n\n";
 
-    $start = microtime(true);
     $merged = [];
     $failures = [];
 
-    // === Existing feeds (Google, Bing, OpenAI, Anthropic, etc.) ===
     echo "Bot-specific feeds:\n";
-    foreach ($registry->get_feed_status() as $name => $info) {
+    $reflection = new \ReflectionClass($feed_registry);
+    $feeds_prop = $reflection->getProperty('feeds');
+    $feeds_prop->setAccessible(true);
+    $all_feeds = $feeds_prop->getValue($feed_registry);
+
+    foreach ($all_feeds as $name => $feed) {
+        if (microtime(true) - $start > $max_total) {
+            echo "  [skip] {$name}: global timeout reached\n";
+            $failures[] = $name;
+            continue;
+        }
+
         try {
-            // We use reflection here to access the private feeds array,
-            // OR you can add a public method to FeedRegistry.
-            $reflection = new \ReflectionClass($registry);
-            $feeds_prop = $reflection->getProperty('feeds');
-            $feeds_prop->setAccessible(true);
-            $all_feeds = $feeds_prop->getValue($registry);
+            $data = $feed->fetch();
 
-            if (!isset($all_feeds[$name])) continue;
+            if (empty($data)) {
+                echo "  [empty] {$name}: no data returned\n";
+                $failures[] = $name;
+                continue;
+            }
 
-            $data = $all_feeds[$name]->fetch();
             foreach ($data as $bot_id => $cidrs) {
                 $merged[$bot_id] = array_merge($merged[$bot_id] ?? [], $cidrs);
             }
-            $count = array_sum(array_map('count', $data));
-            echo sprintf("  [ok] %-20s %d CIDRs\n", $name, $count);
+
+            $total_cidrs = array_sum(array_map('count', $data));
+            echo sprintf("  [ok]    %-20s %d CIDRs\n", $name, $total_cidrs);
         } catch (\Throwable $e) {
-            echo sprintf("  [FAIL] %-18s %s\n", $name, $e->getMessage());
+            echo sprintf("  [fail]  %-18s %s\n", $name, $e->getMessage());
             $failures[] = $name;
         }
     }
 
-    // === NEW: Cloud infrastructure feeds ===
     echo "\nCloud infrastructure feeds:\n";
-    foreach (['aws', 'cloudflare', 'fastly', 'gcp'] as $provider) {
+    foreach ($config->dynamic_ip_ranges_feeds as $provider) {
+        if (microtime(true) - $start > $max_total) {
+            echo "  [skip] {$provider}: global timeout reached\n";
+            $failures[] = $provider;
+            continue;
+        }
+
         try {
             $cidrs = $cloud_provider->ranges($provider);
-            if (!empty($cidrs)) {
-                // Tag with bot IDs that should match these ranges
-                foreach (Registry::cloud_infrastructure() as $bot_id => $def) {
-                    // Heuristic: merge AWS into aws_elb_health, CF into cloudflare_health, etc.
-                    if ($thisProviderMatchesBot($provider, $bot_id)) {
-                        $merged[$bot_id] = array_merge($merged[$bot_id] ?? [], $cidrs);
-                    }
-                }
-                echo sprintf("  [ok] %-20s %d CIDRs\n", $provider, count($cidrs));
+
+            if (empty($cidrs)) {
+                echo "  [empty] {$provider}: no data returned\n";
+                $failures[] = $provider;
+                continue;
             }
+
+            $target_bot_ids = match ($provider) {
+                'aws'        => ['aws_elb_health'],
+                'cloudflare' => ['cloudflare_health'],
+                'fastly'     => ['fastly_health'],
+                'gcp'        => ['google_cloud_health'],
+                default      => [],
+            };
+
+            foreach ($target_bot_ids as $bot_id) {
+                $merged[$bot_id] = array_merge($merged[$bot_id] ?? [], $cidrs);
+            }
+
+            echo sprintf("  [ok]    %-20s %d CIDRs (→ %s)\n",
+                $provider, count($cidrs), implode(', ', $target_bot_ids) ?: '(no mapping)');
         } catch (\Throwable $e) {
-            echo sprintf("  [FAIL] %-18s %s\n", $provider, $e->getMessage());
+            echo sprintf("  [fail]  %-18s %s\n", $provider, $e->getMessage());
             $failures[] = $provider;
         }
     }
@@ -68,7 +137,7 @@ try {
     $elapsed = round(microtime(true) - $start, 2);
 
     if (empty($merged)) {
-        echo "\nFATAL: No ranges fetched\n";
+        echo "\nFATAL: No ranges fetched from any feed.\n";
         exit(2);
     }
 
@@ -77,7 +146,7 @@ try {
     $adapter->set('bb:ip_ranges:merged', [
         'data'    => $merged,
         'fetched' => time(),
-    ], 86400);
+    ], $config->dynamic_ip_ranges_ttl);
 
     $total = array_sum(array_map('count', $merged));
     echo sprintf("\n✓ Cached %d total CIDRs across %d bots in %.2fs\n",
@@ -95,16 +164,4 @@ try {
     echo "FATAL: " . $e->getMessage() . "\n";
     error_log("[BadBehaviour] CLI IP fetch failed: " . $e->getMessage());
     exit(2);
-}
-
-function thisProviderMatchesBot(string $provider, string $bot_id): bool
-{
-    return match(true) {
-        str_contains($bot_id, 'cloudflare') => $provider === 'cloudflare',
-        str_contains($bot_id, 'aws') || str_contains($bot_id, 'elb') => $provider === 'aws',
-        str_contains($bot_id, 'google_cloud') || str_contains($bot_id, 'gcp') => $provider === 'gcp',
-        str_contains($bot_id, 'azure') => $provider === 'azure', // not yet implemented
-        str_contains($bot_id, 'fastly') => $provider === 'fastly',
-        default => false,
-    };
 }

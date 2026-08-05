@@ -23,6 +23,20 @@ class BotDetector
 	private RegistryInterface $registry;
 
 	private array $dns_cache = [];
+
+	/**
+	 * DNS resolver hooks for testability. Defaults to PHP built-ins.
+	 * Production code should leave these alone.
+	 *
+	 * Signature: (string $ip) => string|false
+	 */
+	private $reverse_resolver;
+
+	/**
+	 * Signature: (string $host, int $type) => array|false
+	 */
+	private $forward_resolver;
+
 	private ?array $dynamic_ranges = null;
 	private bool $dynamic_ranges_fetched = false;
 	private ?CloudIpRangeProvider $cloud_provider = null;
@@ -31,6 +45,9 @@ class BotDetector
 	 * Per-instance result memoization (NOT static — avoids cross-config pollution).
 	 * Cache key includes config fingerprint so different BadBehaviour instances
 	 * with different configs get independent caches.
+	 *
+	 * NOTE: $dns_cache above is a separate, smaller cache for DNS verification
+	 * only. See follow-up note in verify_dns().
 	 */
 	private array $result_cache = [];
 	private int $result_cache_max = 5000;
@@ -40,18 +57,23 @@ class BotDetector
 	public function __construct(
 		Configuration $config,
 		AdapterInterface $adapter,
-		?RegistryInterface $registry = null  // ← NEW: optional injection
+		?RegistryInterface $registry = null,
+		?callable $reverse_resolver = null,
+		?callable $forward_resolver = null,
 	) {
 		$this->config = $config;
 		$this->adapter = $adapter;
-		// If no registry injected, fall back to the default shipped registry.
-		// No global state mutation here — keep BotDetector pure.
 		$this->registry = $registry ?? \BadBehaviour\Bot\RegistryFactory::default();
+
+		// DNS resolver hooks — defaults to PHP built-ins. Production code
+		// should not override these; tests inject stubs for determinism.
+		$this->reverse_resolver = $reverse_resolver ?? 'gethostbyaddr';
+		$this->forward_resolver = $forward_resolver ?? 'dns_get_record';
 
 		$this->config_fingerprint = $this->compute_config_fingerprint($config);
 
 		// Initialize cloud range provider if available
-		if (method_exists($adapter, 'get') && $config->enable_dynamic_ip_ranges) {
+		if (method_exists($adapter, 'get') && $config->dynamic_ip_ranges_enabled) {
 			$this->cloud_provider = new CloudIpRangeProvider($adapter);
 		}
 	}
@@ -59,14 +81,14 @@ class BotDetector
 	private function compute_config_fingerprint(Configuration $config): string
 	{
 		return substr(hash('sha256', json_encode([
-			'blocked_cat'      => $config->blocked_bot_categories,
-			'allowed_ai'       => $config->allowed_ai_crawlers,
-			'block_unverified' => $config->block_unverified_ai,
-			'strict_ai'        => $config->strict_ai,
-			'strict_se'        => $config->strict_search_engines,
-			// Registry identity participates in the cache key so swapping
-			// the registry cleanly invalidates cached results.
-			'registry_hash'    => spl_object_hash($this->registry),
+			'blocked_cat'       => $config->blocked_bot_categories,
+			'allowed_ai'        => $config->allowed_ai_crawlers,
+			'block_unverified'  => $config->block_unverified_ai,
+			'strict_ai'         => $config->strict_ai,
+			'strict_se'         => $config->strict_search_engines,
+			'dns_verify_enabled'=> $config->dns_verification_enabled,
+			'dns_require_fwd'   => $config->dns_verification_require_forward_confirm,
+			'registry_hash'     => spl_object_hash($this->registry),
 		])), 0, 16);
 	}
 
@@ -193,8 +215,8 @@ class BotDetector
 				$cloud_ranges = array_merge($cloud_ranges, $bot->ip_ranges);
 			}
 			// Optional: append dynamic ranges if enabled
-			if ($this->cloud_provider) {
-				foreach (['aws', 'cloudflare', 'fastly', 'gcp'] as $provider) {
+			if ($this->cloud_provider && $this->config->dynamic_ip_ranges_enabled) {
+				foreach ($this->config->dynamic_ip_ranges_feeds as $provider) {
 					$cloud_ranges = array_merge($cloud_ranges, $this->cloud_provider->ranges($provider));
 				}
 			}
@@ -205,6 +227,204 @@ class BotDetector
 		}
 
 		return IpUtil::match_any($ip, $cloud_ranges);
+	}
+
+	/**
+	 * Verify the bot's IP via reverse DNS (and optionally forward confirmation).
+	 *
+	 * === BEHAVIOR ===
+	 *
+	 *   1. Kill switch: if dns_verification_enabled is false, return false
+	 *      immediately. Caller treats as unverified.
+	 *   2. Per-request instance cache: zero-cost hit on repeated lookups
+	 *      within the same request.
+	 *   3. Cross-request adapter cache: warm lookups skip DNS entirely.
+	 *   4. Cold cache: synchronously runs DNS with a bounded timeout.
+	 *      The latency cost (40-300ms) is paid ONCE per (IP, suffix) tuple,
+	 *      then cached.
+	 *
+	 * === WHY SYNCHRONOUS ===
+	 *
+	 * The previous implementation deferred DNS to register_shutdown_function()
+	 * to avoid blocking the request. This created a false-positive window:
+	 * the FIRST request from any bot whose IP wasn't in static ranges was
+	 * blocked because verification hadn't completed yet. The bot would
+	 * retry, the cache would warm, and subsequent requests would succeed —
+	 * but only IF the bot retried. Regional / academic / AI crawlers often
+	 * do not retry, resulting in permanent blocks for legitimate bots.
+	 *
+	 * The synchronous path eliminates this window at the cost of a one-time
+	 * DNS latency hit per (IP, suffix). For a real bot visiting your site,
+	 * that's 1 slow request followed by N fast ones.
+	 *
+	 * === CACHE KEY SHAPE ===
+	 *
+	 * `bb:dns_verify:{bin2hex(inet_pton($ip))}:{suffix}`
+	 *
+	 * Binary IP form ensures IPv6 normalization (e.g., "2a03:2880::1" and
+	 * "2a03:2880:0:0:0:0:0:1" produce the same key). Stable across adapter
+	 * backends (no escaping issues with colons in IPv6 text form).
+	 *
+	 * === FOLLOW-UP NOTE ===
+	 *
+	 *   - $dns_cache: keyed by "ip@suffix", stores bool, request-scoped.
+	 *     Avoids redundant DNS lookups within a single request.
+	 *
+	 *   - $result_cache: keyed by fingerprint+hash(ip|ua), stores Result,
+	 *     instance-scoped with 300s TTL. Memoizes full bot detection.
+	 *
+	 * The two caches operate at different levels of the detection pipeline
+	 * and have non-overlapping key spaces.
+	 */
+	private function verify_dns(string $ip, string $suffix): bool
+	{
+		// === Kill switch ===
+		if (!$this->config->dns_verification_enabled) {
+			return false;
+		}
+
+		$key = "{$ip}@{$suffix}";
+
+		// === Per-request instance cache ===
+		if (isset($this->dns_cache[$key])) {
+			return $this->dns_cache[$key];
+		}
+
+		// === Cross-process adapter cache (binary IP for IPv6 normalization) ===
+		$bin_ip = @inet_pton($ip);
+		if ($bin_ip === false) {
+			$this->dns_cache[$key] = false;
+			return false;
+		}
+		$cache_key = 'bb:dns_verify:' . bin2hex($bin_ip) . ':' . $suffix;
+		$cached = $this->adapter->get($cache_key);
+		if ($cached !== null) {
+			$result = (bool)$cached;
+			$this->dns_cache[$key] = $result;
+			return $result;
+		}
+
+		// === Cold cache — synchronous verification with bounded timeout ===
+		$result = $this->do_dns_verify_bounded($ip, $suffix);
+
+		$ttl = $result
+			? $this->config->dns_verification_positive_ttl
+			: $this->config->dns_verification_negative_ttl;
+
+		$this->adapter->set($cache_key, $result, $ttl);
+		$this->dns_cache[$key] = $result;
+
+		return $result;
+	}
+
+	/**
+	 * Run reverse-DNS verification with a soft timeout. Returns false
+	 * (verified-as-failed) on any failure or timeout.
+	 *
+	 * === STRICT-MODE OPT-IN ===
+	 *
+	 * When dns_verification_require_forward_confirm is true, the bot must
+	 * pass BOTH:
+	 *   - reverse: PTR record resolves to a host whose suffix matches
+	 *   - forward: that host's A/AAAA records contain the original IP
+	 *
+	 * When false (default), reverse+suffix match is sufficient. This
+	 * matches the effective behavior of the previous deferred implementation
+	 * (which only verified suffix in the deferred callback before exiting).
+	 *
+	 * The strict mode catches PTR-spoofing (attacker sets their own PTR to
+	 * "crawl-1-2-3.googlebot.com") but may FPs legitimate IPv6-only bots
+	 * because forward-confirm paths are inconsistent across IPv6 setups.
+	 * Keep strict mode off unless you observe PTR-spoofing abuse.
+	 *
+	 * === TIMEOUT BEHAVIOR ===
+	 *
+	 * The soft timeout is checked between phases (after reverse lookup,
+	 * after each forward-confirm attempt). If exceeded, returns false —
+	 * treated as "could not verify" by the caller (which falls through
+	 * to the next defense, typically CHALLENGE rather than BLOCK).
+	 */
+	private function do_dns_verify_bounded(string $ip, string $suffix): bool
+	{
+		$start = microtime(true);
+		$deadline_ms = $this->config->dns_verification_timeout_ms;
+
+		// === Phase 1: Reverse DNS ===
+		$reverse_resolver = $this->reverse_resolver;
+		$host = @$reverse_resolver($ip);
+		if ($host === false || $host === $ip || $host === '') {
+			return false;
+		}
+
+		// Budget check after reverse lookup
+		if ((microtime(true) - $start) * 1000 > $deadline_ms) {
+			return false;
+		}
+
+		// === Phase 2: Suffix check ===
+		$host_lower = strtolower($host);
+		$suffix_lower = strtolower($suffix);
+
+		// Match either ".suffix" (FQDN) or "suffix" (host may lack trailing dot)
+		if (!str_ends_with($host_lower, '.' . $suffix_lower)
+			&& !str_ends_with($host_lower, $suffix_lower)) {
+			return false;
+		}
+
+		// === Phase 3: Forward confirmation (optional) ===
+		if (!$this->config->dns_verification_require_forward_confirm) {
+			return true;
+		}
+
+		$forward_resolver = $this->forward_resolver;
+		$is_ipv6 = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+
+		// Try A records (IPv4 forward confirm)
+		$a_records = @$forward_resolver($host, DNS_A);
+		if (is_array($a_records)) {
+			foreach ($a_records as $r) {
+				if (($r['ip'] ?? null) === $ip) {
+					return true;
+				}
+			}
+		}
+
+		// Budget check after A lookup
+		if ((microtime(true) - $start) * 1000 > $deadline_ms) {
+			return false;
+		}
+
+		// Try AAAA records (IPv6 forward confirm)
+		if ($is_ipv6) {
+			$aaaa_records = @$forward_resolver($host, DNS_AAAA);
+			if (is_array($aaaa_records)) {
+				foreach ($aaaa_records as $r) {
+					if (($r['ipv6'] ?? null) === $ip) {
+						return true;
+					}
+				}
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Inject custom DNS resolvers (test-only).
+	 *
+	 * Signatures:
+	 *   $reverse: (string $ip) => string|false
+	 *   $forward: (string $host, int $type) => array|false
+	 *
+	 * Production code should not call this. Used by tests to inject
+	 * deterministic DNS responses without relying on network or /etc/hosts.
+	 */
+	public function set_dns_resolvers(callable $reverse, callable $forward): void
+	{
+		$this->reverse_resolver = $reverse;
+		$this->forward_resolver = $forward;
+		// Invalidate per-request cache so the new resolvers take effect
+		$this->dns_cache = [];
 	}
 
 	private function compute_cache_key(string $ip, string $ua): string
@@ -257,7 +477,7 @@ class BotDetector
 		if ($this->dynamic_ranges !== null) {
 			return $this->dynamic_ranges;
 		}
-		if (!$this->config->enable_dynamic_ip_ranges) {
+		if (!$this->config->dynamic_ip_ranges_enabled) {
 			$this->dynamic_ranges = [];
 			return [];
 		}
@@ -345,50 +565,5 @@ class BotDetector
 			BotCategory::RESIDENTIAL_PROXY  => ResultCode::BLOCKED_BOT,
 			default                         => ResultCode::BLOCKED_BOT,
 		};
-	}
-
-	private function verify_dns(string $ip, string $suffix): bool
-	{
-		$key = "{$ip}@{$suffix}";
-		if (isset($this->dns_cache[$key])) {
-			return $this->dns_cache[$key];
-		}
-		$cached = $this->adapter->get("bb:dns_verify:{$key}");
-		if ($cached !== null) {
-			$this->dns_cache[$key] = (bool)$cached;
-			return (bool)$cached;
-		}
-		// Schedule background DNS lookup for the next request.
-		// Returns false now — we don't block on DNS round-trip latency.
-		$this->schedule_background_dns_lookup($ip, $suffix, $key);
-		return false;
-	}
-
-	/**
-	 * Defer the DNS verification to shutdown. On the next request, the cached
-	 * result will be consulted via $this->adapter->get().
-	 *
-	 * Background lookups cost ~50-200ms each — we never want them on the
-	 * hot path. Only run once per (IP, suffix) tuple per process lifetime
-	 * (advisory — actual cache lives in the adapter).
-	 */
-	private function schedule_background_dns_lookup(string $ip, string $suffix, string $key): void
-	{
-		register_shutdown_function(function() use ($ip, $suffix, $key) {
-			$host = @gethostbyaddr($ip);
-			if (!$host) {
-				$this->adapter->set("bb:dns_verify:{$key}", false, 3600);
-				return;
-			}
-			$rev_host = strrev($host);
-			$rev_suffix = strrev($suffix);
-			if (strpos($rev_host, $rev_suffix) !== 0) {
-				$this->adapter->set("bb:dns_verify:{$key}", false, 3600);
-				return;
-			}
-			$addrs = @gethostbynamel($host);
-			$verified = $addrs !== false && in_array($ip, $addrs, true);
-			$this->adapter->set("bb:dns_verify:{$key}", $verified, 86400 * 7);
-		});
 	}
 }

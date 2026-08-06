@@ -172,7 +172,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					`host` VARCHAR(253) NOT NULL DEFAULT '',
 					`date` DATETIME NOT NULL,
 					`request_method` VARCHAR(8) NOT NULL DEFAULT '',
-					`request_uri` VARBINARY(2048) NOT NULL DEFAULT '',
+					`request_uri` VARCHAR(2048) NOT NULL DEFAULT '',
 					`request_uri_hash` CHAR(16) NOT NULL DEFAULT '',
 					`server_protocol` VARCHAR(12) NOT NULL DEFAULT '',
 					`http_headers` MEDIUMTEXT NOT NULL,
@@ -183,7 +183,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					`status_message` VARCHAR(255),
 					`support_key` VARCHAR(64),
 					`bot_category` VARCHAR(20),
-					`bot_verified` BOOLEAN DEFAULT FALSE,
+					`bot_verified` BOOLEAN DEFAULT 0,
 					`ja3` CHAR(32),
 					`asn` VARCHAR(32),
 					`country` CHAR(2),
@@ -226,8 +226,6 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		$ua       = $q($package->user_agent);
 		$ua_hash  = $q(substr(hash('sha256', $package->user_agent), 0, 16));
 		$protocol = $q($package->server_protocol);
-		$ua       = $q($package->user_agent);
-		$ua_hash  = $q(substr(hash('sha1', $package->user_agent), 0, 40));
 
 		// Build raw headers string WITHOUT individual quoting
 		$headers = "$method $uri $protocol\n";

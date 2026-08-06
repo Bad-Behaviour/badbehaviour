@@ -21,6 +21,7 @@ use BadBehaviour\Detection\DnsblDetector;
 use BadBehaviour\Detection\FingerprintDetector;
 use BadBehaviour\Detection\HeadRequestDetector;
 use BadBehaviour\Detection\RateLimitDetector;
+use BadBehaviour\Util\ErrorReporter;
 use BadBehaviour\Util\HeaderUtil;
 use BadBehaviour\Util\IpUtil;
 use BadBehaviour\Util\RequestPackage;
@@ -62,7 +63,17 @@ class BadBehaviour
 		$this->geoip = $config->geoip;
 
 		// === Registry: explicit injection > config file > default ===
-		$this->registry = $registry ?? RegistryFactory::from_file();
+		// Registry loading can fail (missing file, parse error). Always fall back
+		// to DefaultRegistry — never throw on missing registry config.
+		try {
+			$this->registry = $registry ?? RegistryFactory::from_file();
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter, 'BadBehaviour registry load failed; using defaults', [
+				'error' => $e->getMessage(),
+				'exception_class' => get_class($e),
+			], 'registry_load_failure');
+			$this->registry = RegistryFactory::default();
+		}
 
 		// Pass registry to BotDetector (others don't need it directly)
 		$this->bot_detector = new BotDetector($this->config, $this->adapter, $this->registry);
@@ -99,6 +110,82 @@ class BadBehaviour
 		return $this->registry;
 	}
 
+	/**
+	 * Is the library running in safe-mode (monitor-only)?
+	 *
+	 * Safe-mode is set automatically when:
+	 *   - The adapter's config file is missing or malformed
+	 *   - The adapter reports `is_safe_mode() === true`
+	 *
+	 * In safe-mode, no blocking/challenging/rate-limiting is performed,
+	 * but request logging continues. This prevents misconfiguration from
+	 * taking down the host application.
+	 */
+	public function is_in_safe_mode(): bool
+	{
+		if (method_exists($this->adapter, 'is_safe_mode')) {
+			try {
+				return $this->adapter->is_safe_mode();
+			} catch (\Throwable $e) {
+				return false;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Return diagnostic information for admin dashboards / health checks.
+	 *
+	 * @return array{
+	 *     safe_mode: bool,
+	 *     logging_enabled: bool,
+	 *     detectors_active: array<string, bool>,
+	 *     config_loaded: bool,
+	 *     hint: ?string
+	 * }
+	 */
+	public function diagnostics(): array
+	{
+		$safe_mode = $this->is_in_safe_mode();
+
+		$detectors = [
+			'blacklist'   => true, // always-on
+			'bot'         => true, // always-on
+			'behavioral'  => $this->config->enable_behavioral_analysis,
+			'fingerprint' => $this->config->enable_fingerprinting,
+			'rate_limit'  => $this->config->rate_limit_enabled,
+			'dnsbl'       => $this->config->dnsbl_enabled,
+			'client_hints'=> $this->config->enable_client_hints_validation,
+			'agentic'     => $this->config->enable_agentic_detection,
+			'head'        => $this->config->enable_head_request_detection,
+			'asset'       => $this->config->enable_asset_scraping_detection,
+		];
+
+		$config_loaded = false;
+		if (method_exists($this->adapter, 'is_config_loaded')) {
+			try {
+				$config_loaded = $this->adapter->is_config_loaded();
+			} catch (\Throwable $e) {
+				$config_loaded = false;
+			}
+		}
+
+		$hint = null;
+		if ($safe_mode) {
+			$hint = 'BadBehaviour is running in safe-mode (config missing or invalid). '
+				  . 'Create config/bb_config.php from the sample to enable full protection. '
+				  . 'Traffic is being logged but no requests are being blocked or challenged.';
+		}
+
+		return [
+			'safe_mode'         => $safe_mode,
+			'config_loaded'     => $config_loaded,
+			'logging_enabled'   => $this->config->logging,
+			'detectors_active'  => $detectors,
+			'hint'              => $hint,
+		];
+	}
+
 	public function run(array $server = null): Result
 	{
 		if (php_sapi_name() === 'cli') {
@@ -114,6 +201,26 @@ class BadBehaviour
 			return Result::allow();
 		}
 
+		// LAST-RESORT SAFETY NET:
+		// The entire request pipeline is wrapped so that ANY unexpected
+		// exception degrades gracefully to "allow" instead of 500.
+		// BadBehaviour must NEVER be the reason the host application goes down.
+		try {
+			return $this->run_internal($server);
+		} catch (\Throwable $e) {
+			ErrorReporter::fatal($e, 'BadBehaviour::run');
+			return Result::allow();
+		}
+	}
+
+	/**
+	 * Inner request pipeline — all the real work.
+	 *
+	 * Extracted from run() so the top-level try/catch in run() can
+	 * convert any uncaught exception into a logged "allow" fallback.
+	 */
+	private function run_internal(?array $server): Result
+	{
 		// Lazy install: only runs once per PHP process, and only for
 		// requests that actually need detection.
 		$this->install_once();
@@ -145,28 +252,50 @@ class BadBehaviour
 		}
 
 		// Enrich with GeoIP (only if available — avoid cost when not configured)
-		if ($this->geoip && $geoip = $this->geoip->lookup($package->ip)) {
-			$package = $package->with_enrichment(
-				$geoip['asn'] ?? null,
-				$geoip['country'] ?? null,
-				null,
-				null
-			);
+		if ($this->geoip) {
+			try {
+				if ($geoip = $this->geoip->lookup($package->ip)) {
+					$package = $package->with_enrichment(
+						$geoip['asn'] ?? null,
+						$geoip['country'] ?? null,
+						null,
+						null
+					);
+				}
+			} catch (\Throwable $e) {
+				// GeoIP failures must not break detection
+			}
 		}
 
 		// Enrich with fingerprints (cheap — just string hashing)
-		$ja3 = HeaderUtil::get_ja3_fingerprint();
-		$h2  = HeaderUtil::get_h2_settings();
-		$package = $package->with_enrichment(null, null, $ja3, $h2);
+		try {
+			$ja3 = HeaderUtil::get_ja3_fingerprint();
+			$h2  = HeaderUtil::get_h2_settings();
+			$package = $package->with_enrichment(null, null, $ja3, $h2);
+		} catch (\Throwable $e) {
+			// Fingerprint computation is best-effort
+		}
 
-		// Run detection pipeline
+		// Run detection pipeline (each detector is wrapped in try/catch internally)
 		$result = $this->detect($package);
 
 		// Logging: blocked/challenged always, allowed only when verbose
 		if ($this->config->logging) {
 			$should_log = !$result->is_allowed() || $this->config->verbose;
 			if ($should_log) {
-				$this->adapter->log_request($package, $result);
+				// CRITICAL: logging failures must never crash the request
+				try {
+					$this->adapter->log_request($package, $result);
+				} catch (\Throwable $e) {
+					ErrorReporter::error($this->adapter,
+						'log_request failed (further errors suppressed)',
+						[
+							'error' => $e->getMessage(),
+							'exception_class' => get_class($e),
+						],
+						'log_request_failure'
+					);
+				}
 			}
 		}
 
@@ -175,25 +304,38 @@ class BadBehaviour
 
 	public function run_test_package(RequestPackage $package): Result
 	{
-		if ($this->should_skip_static($package->request_uri)) {
+		try {
+			if ($this->should_skip_static($package->request_uri)) {
+				return Result::allow($package);
+			}
+
+			try {
+				$ja3 = HeaderUtil::get_ja3_fingerprint();
+				$h2 = HeaderUtil::get_h2_settings();
+				$package = $package->with_enrichment(null, null, $ja3, $h2);
+			} catch (\Throwable $e) {
+				// best-effort enrichment
+			}
+
+			$result = $this->detect($package);
+
+			// Same logging logic as run()
+			if ($this->config->logging) {
+				$should_log = !$result->is_allowed() || $this->config->verbose;
+				if ($should_log) {
+					try {
+						$this->adapter->log_request($package, $result);
+					} catch (\Throwable $e) {
+						// Silent: logging failure during test must not affect result
+					}
+				}
+			}
+
+			return $result;
+		} catch (\Throwable $e) {
+			ErrorReporter::fatal($e, 'BadBehaviour::run_test_package');
 			return Result::allow($package);
 		}
-
-		$ja3 = HeaderUtil::get_ja3_fingerprint();
-		$h2 = HeaderUtil::get_h2_settings();
-		$package = $package->with_enrichment(null, null, $ja3, $h2);
-
-		$result = $this->detect($package);
-
-		// Same logging logic as run()
-		if ($this->config->logging) {
-			$should_log = !$result->is_allowed() || $this->config->verbose;
-			if ($should_log) {
-				$this->adapter->log_request($package, $result);
-			}
-		}
-
-		return $result;
 	}
 
 	public function handle_result(Result $result): never
@@ -215,52 +357,118 @@ class BadBehaviour
 		if ($this->is_whitelisted($package)) return Result::allow($package);
 
 		// 2. Custom Rules
-		if ($result = $this->check_custom_rules($package)) return $result;
+		try {
+			if ($result = $this->check_custom_rules($package)) return $result;
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter, 'custom_rules check failed', [
+				'error' => $e->getMessage(),
+			], 'custom_rules_check_failure');
+		}
 
 		// 3. Known Bots (verified ALLOW)
-		if ($result = $this->bot_detector->detect($package)) return $result;
+		try {
+			if ($result = $this->bot_detector->detect($package)) return $result;
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter, 'BotDetector failed', [
+				'error' => $e->getMessage(),
+			], 'bot_detector_failure');
+		}
 
 		// 3b. Head Request Detection (catches HEAD flooding)
 		if ($this->config->enable_head_request_detection) {
-			if ($result = $this->head_detector->detect($package)) return $result;
+			try {
+				if ($result = $this->head_detector->detect($package)) return $result;
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter, 'HeadRequestDetector failed', [
+					'error' => $e->getMessage(),
+				], 'head_detector_failure');
+			}
 		}
 
 		// 4. Client Hints Validation (catches spoofed UAs)
 		if ($this->config->enable_client_hints_validation) {
-			if ($result = $this->client_hints_detector->detect($package)) return $result;
+			try {
+				if ($result = $this->client_hints_detector->detect($package)) return $result;
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter, 'ClientHintsDetector failed', [
+					'error' => $e->getMessage(),
+				], 'client_hints_detector_failure');
+			}
 		}
 
 		// 5. Blacklist (attacks, malicious UA)
-		if ($result = $this->blacklist_detector->detect($package)) return $result;
+		try {
+			if ($result = $this->blacklist_detector->detect($package)) return $result;
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter, 'BlacklistDetector failed', [
+				'error' => $e->getMessage(),
+			], 'blacklist_detector_failure');
+		}
 
 		// 5b. Asset Scraping Detection (catches AI training scrapers)
 		if ($this->config->enable_asset_scraping_detection) {
-			if ($result = $this->asset_detector->detect($package)) return $result;
+			try {
+				if ($result = $this->asset_detector->detect($package)) return $result;
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter, 'AssetScrapingDetector failed', [
+					'error' => $e->getMessage(),
+				], 'asset_detector_failure');
+			}
 		}
 
 		// 6. Behavioral (rate, rotating UA, think time)
 		if ($this->config->enable_behavioral_analysis) {
-			if ($result = $this->behavioral_detector->detect($package)) return $result;
+			try {
+				if ($result = $this->behavioral_detector->detect($package)) return $result;
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter, 'BehavioralDetector failed', [
+					'error' => $e->getMessage(),
+				], 'behavioral_detector_failure');
+			}
 		}
 
 		// 7. Agentic Detection (AI agent patterns)
 		if ($this->config->enable_agentic_detection) {
-			if ($result = $this->agentic_detector->detect($package)) return $result;
+			try {
+				if ($result = $this->agentic_detector->detect($package)) return $result;
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter, 'AgenticBehaviorDetector failed', [
+					'error' => $e->getMessage(),
+				], 'agentic_detector_failure');
+			}
 		}
 
 		// 8. Rate limiting
 		if ($this->config->rate_limit_enabled) {
-			if ($result = $this->rate_limit_detector->detect($package)) return $result;
+			try {
+				if ($result = $this->rate_limit_detector->detect($package)) return $result;
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter, 'RateLimitDetector failed', [
+					'error' => $e->getMessage(),
+				], 'rate_limit_detector_failure');
+			}
 		}
 
 		// 9. DNSBL
 		if ($this->config->dnsbl_enabled) {
-			if ($result = $this->dnsbl_detector->detect($package)) return $result;
+			try {
+				if ($result = $this->dnsbl_detector->detect($package)) return $result;
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter, 'DnsblDetector failed', [
+					'error' => $e->getMessage(),
+				], 'dnsbl_detector_failure');
+			}
 		}
 
 		// 10. Fingerprinting
 		if ($this->config->enable_fingerprinting) {
-			if ($result = $this->fingerprint_detector->detect($package)) return $result;
+			try {
+				if ($result = $this->fingerprint_detector->detect($package)) return $result;
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter, 'FingerprintDetector failed', [
+					'error' => $e->getMessage(),
+				], 'fingerprint_detector_failure');
+			}
 		}
 
 		return Result::allow($package);
@@ -269,20 +477,24 @@ class BadBehaviour
 	// === Static Resource Skip Logic ===
 	private function should_skip_static(string $uri): bool
 	{
-		$path = parse_url($uri, PHP_URL_PATH) ?? $uri;
+		try {
+			$path = parse_url($uri, PHP_URL_PATH) ?? $uri;
 
-		// Check skip_extensions
-		foreach ($this->config->skip_static_extensions as $ext) {
-			if (str_ends_with(strtolower($path), '.' . $ext)) {
-				return true;
+			// Check skip_extensions
+			foreach ($this->config->skip_static_extensions as $ext) {
+				if (str_ends_with(strtolower($path), '.' . $ext)) {
+					return true;
+				}
 			}
-		}
 
-		// Check skip_paths
-		foreach ($this->config->skip_static_paths as $prefix) {
-			if (str_starts_with($path, $prefix)) {
-				return true;
+			// Check skip_paths
+			foreach ($this->config->skip_static_paths as $prefix) {
+				if (str_starts_with($path, $prefix)) {
+					return true;
+				}
 			}
+		} catch (\Throwable $e) {
+			// If static-skip evaluation fails, don't skip — proceed with detection
 		}
 
 		return false;
@@ -290,31 +502,39 @@ class BadBehaviour
 
 	private function is_whitelisted(RequestPackage $package): bool
 	{
-		$whitelist = $this->adapter->get_whitelist();
+		try {
+			$whitelist = $this->adapter->get_whitelist();
+			if (!is_array($whitelist)) {
+				return false;
+			}
 
-		if (!empty($whitelist['ip']) && IpUtil::match_any($package->ip, $whitelist['ip'])) {
-			return true;
-		}
+			if (!empty($whitelist['ip']) && IpUtil::match_any($package->ip, $whitelist['ip'])) {
+				return true;
+			}
 
-		if (!empty($whitelist['useragent']) && in_array($package->user_agent, $whitelist['useragent'], true)) {
-			return true;
-		}
+			if (!empty($whitelist['useragent']) && in_array($package->user_agent, $whitelist['useragent'], true)) {
+				return true;
+			}
 
-		if (!empty($whitelist['url'])) {
-			$clean = strtok($package->request_uri, '?');
-			foreach ($whitelist['url'] as $prefix) {
-				if (str_starts_with($clean, $prefix)) {
-					return true;
+			if (!empty($whitelist['url'])) {
+				$clean = strtok($package->request_uri, '?');
+				foreach ($whitelist['url'] as $prefix) {
+					if (str_starts_with($clean, $prefix)) {
+						return true;
+					}
 				}
 			}
-		}
 
-		if (!empty($whitelist['asn']) && $package->asn && in_array($package->asn, $whitelist['asn'], true)) {
-			return true;
-		}
+			if (!empty($whitelist['asn']) && $package->asn && in_array($package->asn, $whitelist['asn'], true)) {
+				return true;
+			}
 
-		if (!empty($whitelist['country']) && $package->country && in_array($package->country, $whitelist['country'], true)) {
-			return true;
+			if (!empty($whitelist['country']) && $package->country && in_array($package->country, $whitelist['country'], true)) {
+				return true;
+			}
+		} catch (\Throwable $e) {
+			// Whitelist lookup failure must not produce a security bypass,
+			// but also must not crash. Treat as "not whitelisted".
 		}
 
 		return false;
@@ -323,10 +543,12 @@ class BadBehaviour
 	private function check_custom_rules(RequestPackage $package): ?Result
 	{
 		foreach ($this->config->custom_rules as $rule) {
+			if (!is_array($rule)) continue;
+
 			$match = match($rule['type'] ?? '') {
 				'ip'         => IpUtil::match_any($package->ip, (array)($rule['value'] ?? [])),
-				'ua_regex'   => preg_match($rule['value'], $package->user_agent) === 1,
-				'ua_contains'=> stripos($package->user_agent, $rule['value']) !== false,
+				'ua_regex'   => @preg_match($rule['value'] ?? '', $package->user_agent) === 1,
+				'ua_contains'=> stripos($package->user_agent, $rule['value'] ?? '') !== false,
 				'asn'        => $package->asn && $package->asn === ($rule['value'] ?? ''),
 				'country'    => $package->country && $package->country === ($rule['value'] ?? ''),
 				'header'     => isset($package->headers_mixed[$rule['header'] ?? '']) &&
@@ -351,92 +573,130 @@ class BadBehaviour
 		if ($this->install_done) {
 			return;
 		}
+		// Set FIRST so we never retry on this process, even if install fails
 		$this->install_done = true;
 
 		if (defined('BB2_NO_CREATE') || !$this->config->logging) {
 			return;
 		}
 
-		$table = $this->config->adapter->get_settings()['log_table'] ?? 'bad_behaviour';
-		$schema = $this->adapter->get_table_schema($table);
+		// CRITICAL: install errors must NEVER propagate.
+		// The host application must continue serving even if the log table
+		// cannot be created (DB down, missing privileges, schema mismatch, etc.)
+		try {
+			$table = $this->config->adapter->get_settings()['log_table'] ?? 'bad_behaviour';
+			$schema = $this->adapter->get_table_schema($table);
 
-		// Handle both array (SQLite) and string (MySQL)
-		$statements = is_array($schema) ? $schema : [$schema];
+			// Handle both array (SQLite) and string (MySQL)
+			$statements = is_array($schema) ? $schema : [$schema];
 
-		foreach ($statements as $sql) {
-			$this->adapter->query($sql);
+			foreach ($statements as $sql) {
+				if (!$this->adapter->query($sql)) {
+					ErrorReporter::error($this->adapter, 'table creation query returned false', [
+						'sql_preview' => substr((string)$sql, 0, 200),
+					], 'install_query_failed');
+				}
+			}
+		} catch (\Throwable $e) {
+			// Swallow + log. Logging itself must not throw.
+			ErrorReporter::error($this->adapter, 'install_once failed', [
+				'error' => $e->getMessage(),
+				'exception_class' => get_class($e),
+				'hint' => 'Run bin/install-bb.php to set up the log table manually, '
+					. 'or check database connectivity and permissions',
+			], 'install_once_failure');
 		}
 	}
 
 	private function serve_challenge(Result $result): never
 	{
-		$challenge = $this->create_challenge();
-		$html = $challenge->render($result->package?->request_uri ?? '/');
+		try {
+			$challenge = $this->create_challenge();
+			$html = $challenge->render($result->package?->request_uri ?? '/');
 
-		http_response_code(403);
-		header('Content-Type: text/html; charset=utf-8');
-		echo $html;
+			http_response_code(403);
+			header('Content-Type: text/html; charset=utf-8');
+			echo $html;
+		} catch (\Throwable $e) {
+			// If challenge rendering fails, fall back to block page
+			ErrorReporter::error($this->adapter, 'challenge render failed', [
+				'error' => $e->getMessage(),
+			], 'challenge_render_failure');
+			$this->serve_block_page($result);
+		}
 		exit;
 	}
 
 	private function serve_block_page(Result $result): never
 	{
-		http_response_code($result->http_status());
-		header('Content-Type: text/html; charset=utf-8');
+		try {
+			http_response_code($result->http_status());
+			header('Content-Type: text/html; charset=utf-8');
 
-		$support = htmlspecialchars($result->support_key ?? 'unknown');
-		$message = htmlspecialchars($result->message);
-		$uri = htmlspecialchars($result->package?->request_uri ?? '/');
+			$support = htmlspecialchars($result->support_key ?? 'unknown');
+			$message = htmlspecialchars($result->message);
+			$uri = htmlspecialchars($result->package?->request_uri ?? '/');
 
-		// Use !empty() consistently for both flags
-		$show_email = !empty($this->config->show_contact_info);
-		$detailed = !empty($this->config->show_detailed_block_page);
+			// Use !empty() consistently for both flags
+			$show_email = !empty($this->config->show_contact_info);
+			$detailed = !empty($this->config->show_detailed_block_page);
 
-		$email = $show_email ? htmlspecialchars((string) $this->adapter->get_email()) : null;
+			$email = $show_email ? htmlspecialchars((string) $this->adapter->get_email()) : null;
 
-		if ($detailed) {
-			$contact_para = ($show_email && $email)
-			? "<p>If you are unable to fix the problem yourself, please contact <a href=\"mailto:$email\">$email</a> and provide the technical support key shown above.</p>"
-			: '';
+			if ($detailed) {
+				$contact_para = ($show_email && $email)
+				? "<p>If you are unable to fix the problem yourself, please contact <a href=\"mailto:$email\">$email</a> and provide the technical support key shown above.</p>"
+				: '';
 
-			$content = <<<HTML
-    <h1>Access Denied</h1>
-    <p>We're sorry, but we could not fulfill your request for <code>$uri</code> on this server.</p>
-    <p><strong>Reason:</strong> $message</p>
-    <p>Your technical support key is: <strong>$support</strong></p>
-    $contact_para
+				$content = <<<HTML
+			<h1>Access Denied</h1>
+			<p>We're sorry, but we could not fulfill your request for <code>$uri</code> on this server.</p>
+			<p><strong>Reason:</strong> $message</p>
+			<p>Your technical support key is: <strong>$support</strong></p>
+			$contact_para
 HTML;
-		} else {
-			$content = <<<HTML
-    <h1>Access Denied</h1>
-    <p>You don't have permission to access this resource.</p>
-    <div class="ref">Reference #$support</div>
+			} else {
+				$content = <<<HTML
+			<h1>Access Denied</h1>
+			<p>You don't have permission to access this resource.</p>
+			<div class="ref">Reference #$support</div>
 HTML;
-		}
+			}
 
-		echo <<<HTML
+			echo <<<HTML
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Access Denied</title>
-    <style>
-        body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
-        .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%; }
-        h1 { color: #dc3545; margin-bottom: 1rem; }
-        .ref { font-family: monospace; background: #f8f9fa; padding: 0.5rem; border-radius: 4px; display: inline-block; margin-top: 1rem; }
-        code { background: #f8f9fa; padding: 0.2rem 0.4rem; border-radius: 3px; }
-    </style>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Access Denied</title>
+		<style>
+			body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
+			.card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%; }
+			h1 { color: #dc3545; margin-bottom: 1rem; }
+			.ref { font-family: monospace; background: #f8f9fa; padding: 0.5rem; border-radius: 4px; display: inline-block; margin-top: 1rem; }
+			code { background: #f8f9fa; padding: 0.2rem 0.4rem; border-radius: 3px; }
+		</style>
 </head>
 <body>
-    <div class="card">
-        $content
-    </div>
+		<div class="card">
+			$content
+		</div>
 </body>
 </html>
 HTML;
-        exit;
+		} catch (\Throwable $e) {
+			// Last-resort: at least output a minimal plain-text block page
+			// rather than letting BadBehaviour crash the response.
+			try {
+				http_response_code($result->http_status());
+				header('Content-Type: text/plain; charset=utf-8');
+				echo "Access Denied\nReference: " . htmlspecialchars($result->support_key ?? 'unknown') . "\n";
+			} catch (\Throwable $e2) {
+				// Truly nothing we can do; exit gracefully
+			}
+		}
+		exit;
 	}
 
 	private function create_challenge(): \BadBehaviour\Challenge\ChallengeInterface
@@ -455,7 +715,14 @@ HTML;
 		array $config_overrides = []
 	): self {
 		// Load settings from adapter (which reads bb_config.php for WackoWiki)
-		$adapter_settings = $adapter->get_settings();
+		try {
+			$adapter_settings = $adapter->get_settings();
+			if (!is_array($adapter_settings)) {
+				$adapter_settings = [];
+			}
+		} catch (\Throwable $e) {
+			$adapter_settings = [];
+		}
 
 		// Merge: adapter settings < explicit overrides
 		$merged = array_merge($adapter_settings, $config_overrides);

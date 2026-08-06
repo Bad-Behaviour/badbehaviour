@@ -6,6 +6,8 @@ use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Core\Interfaces\LoggerInterface;
 use BadBehaviour\Core\Interfaces\CacheInterface;
 use BadBehaviour\Core\Interfaces\GeoIpInterface;
+use BadBehaviour\Util\SafeConfigLoader;
+use BadBehaviour\Util\SafeMode;
 
 readonly class Configuration
 {
@@ -116,7 +118,10 @@ readonly class Configuration
     ) {}
 
     /**
-     * Create Configuration from PHP config file + optional overrides
+     * Create Configuration from PHP config file + optional overrides.
+     *
+     * Never throws on missing/invalid config — falls back to defaults
+     * via SafeConfigLoader (logs the failure to the adapter or error_log).
      *
      * @param string|array $config PHP config file path OR array
      * @param AdapterInterface|null $adapter
@@ -124,12 +129,13 @@ readonly class Configuration
      */
     public static function from_file(string $config_file, ?AdapterInterface $adapter = null): self
     {
-        $config = file_exists($config_file)
-            ? (require $config_file)
-            : [];
+        // Use shared loader — handles missing file / ParseError / bad return type
+        // uniformly across the library. If load fails, fall back to safe-mode
+        // defaults so the host application never breaks.
+        $config = SafeConfigLoader::load($config_file, $adapter, 'config_from_file');
 
-        if (!is_array($config)) {
-            throw new \InvalidArgumentException("Config file must return an array: $config_file");
+        if ($config === null) {
+            $config = SafeMode::settings(''); // log_table injected later by adapter
         }
 
         return self::from_array($config, $adapter);
@@ -281,7 +287,7 @@ readonly class Configuration
     		);
     }
 
-    private static function get_defaults(): array
+    public static function get_defaults(): array
     {
         return [
             'logging' => true,

@@ -13,6 +13,7 @@ use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
 use BadBehaviour\Feeds\CloudIpRangeProvider;
+use BadBehaviour\Util\ErrorReporter;
 use BadBehaviour\Util\IpUtil;
 use BadBehaviour\Util\RequestPackage;
 
@@ -87,7 +88,12 @@ class BotDetector
 
 		// Initialize cloud range provider if available
 		if (method_exists($adapter, 'get') && $config->dynamic_ip_ranges_enabled) {
-			$this->cloud_provider = new CloudIpRangeProvider($adapter);
+			try {
+				$this->cloud_provider = new CloudIpRangeProvider($adapter);
+			} catch (\Throwable $e) {
+				// Cloud range provider init failed — disable gracefully
+				$this->cloud_provider = null;
+			}
 		}
 	}
 
@@ -107,28 +113,39 @@ class BotDetector
 
 	public function detect(RequestPackage $package): ?Result
 	{
-		$ip = $package->ip;
-		$ua = $package->user_agent;
+		// CRITICAL: never let bot detection crash the response.
+		// Any exception inside detect_uncached must degrade to "no match"
+		// so downstream detectors still get a chance.
+		try {
+			$ip = $package->ip;
+			$ua = $package->user_agent;
 
-		if ($ua === '') {
-			return null;
-		}
-
-		$cache_key = $this->compute_cache_key($ip, $ua);
-		$cached = $this->get_cached_result($cache_key);
-
-		if ($cached !== false) {
-			$cached_result = $cached['result'];
-			if ($cached_result === null) {
+			if ($ua === '') {
 				return null;
 			}
-			return $this->rebuild_result($cached_result, $package);
+
+			$cache_key = $this->compute_cache_key($ip, $ua);
+			$cached = $this->get_cached_result($cache_key);
+
+			if ($cached !== false) {
+				$cached_result = $cached['result'];
+				if ($cached_result === null) {
+					return null;
+				}
+				return $this->rebuild_result($cached_result, $package);
+			}
+
+			$result = $this->detect_uncached($package);
+			$this->set_cached_result($cache_key, $result);
+
+			return $result;
+		} catch (\Throwable $e) {
+			// CRITICAL: never let bot detection crash the response.
+			// Any unexpected error falls through as "no match" so other
+			// detectors (blacklist, behavioral, rate limit) still run.
+			ErrorReporter::fatal($e, 'BotDetector');
+			return null;
 		}
-
-		$result = $this->detect_uncached($package);
-		$this->set_cached_result($cache_key, $result);
-
-		return $result;
 	}
 
 	private function detect_uncached(RequestPackage $package): ?Result
@@ -143,14 +160,22 @@ class BotDetector
 			return Result::allow($package);
 		}
 
-		$dynamic_ranges = $this->get_dynamic_ranges();
+		try {
+			$dynamic_ranges = $this->get_dynamic_ranges();
+		} catch (\Throwable $e) {
+			$dynamic_ranges = [];
+		}
 
 		// Primary: substring match against the registry's indexed UA fragments
-		$candidate_ids = $this->registry->find_by_ua($ua);
+		try {
+			$candidate_ids = $this->registry->find_by_ua($ua);
 
-		// Secondary: token match (with noise filter)
-		if (empty($candidate_ids)) {
-			$candidate_ids = $this->registry->find_by_tokens($ua);
+			// Secondary: token match (with noise filter)
+			if (empty($candidate_ids)) {
+				$candidate_ids = $this->registry->find_by_tokens($ua);
+			}
+		} catch (\Throwable $e) {
+			return null;
 		}
 
 		if (empty($candidate_ids)) {
@@ -158,62 +183,71 @@ class BotDetector
 		}
 
 		foreach ($candidate_ids as $bot_id) {
-			$def = $this->registry->get($bot_id);
-			if ($def === null) {
-				continue;
-			}
+			try {
+				$def = $this->registry->get($bot_id);
+				if ($def === null) {
+					continue;
+				}
 
-			// Merge static + dynamic ranges
-			$all_ranges = array_merge(
-				$def->ip_ranges,
-				$dynamic_ranges[$bot_id] ?? []
-			);
+				// Merge static + dynamic ranges
+				$all_ranges = array_merge(
+					$def->ip_ranges,
+					$dynamic_ranges[$bot_id] ?? []
+				);
 
-			$ip_match = !empty($all_ranges) && IpUtil::match_any($ip, $all_ranges);
+				$ip_match = !empty($all_ranges) && IpUtil::match_any($ip, $all_ranges);
 
-			// === CHANGED: Iterate over dns_suffixes array ===
-			// Previously: single $def->dns_suffix check
-			// Now: try each suffix until one matches (or all fail)
-			// Short-circuits on first match; each suffix has its own cache entry
-			$dns_verified = false;
-			if ($def->verify_dns) {
-				foreach ($def->dns_suffixes as $suffix) {
-					if ($this->verify_dns($ip, $suffix)) {
-						$dns_verified = true;
-						break;
+				// === CHANGED: Iterate over dns_suffixes array ===
+				// Previously: single $def->dns_suffix check
+				// Now: try each suffix until one matches (or all fail)
+				// Short-circuits on first match; each suffix has its own cache entry
+				$dns_verified = false;
+				if ($def->verify_dns) {
+					foreach ($def->dns_suffixes as $suffix) {
+						if ($this->verify_dns($ip, $suffix)) {
+							$dns_verified = true;
+							break;
+						}
 					}
 				}
+
+				$verified = $ip_match || $dns_verified;
+				$action = $this->determine_action($def, $verified);
+
+				return match ($action) {
+					BotAction::ALLOW => Result::allow($package),
+					BotAction::LOG_ONLY => Result::allow($package),
+					BotAction::CHALLENGE => Result::challenge(
+						ResultCode::CHALLENGE_REQUIRED,
+						"Bot challenge required: {$def->name}",
+						$package,
+						[
+							'bot_id'       => $bot_id,
+							'bot_name'     => $def->name,
+							'bot_category' => $def->category->value,
+							'bot_verified' => $verified,
+						]
+					),
+					BotAction::BLOCK => Result::block(
+						$this->code_for_category($def->category),
+						"Bot blocked: {$def->name}",
+						$package,
+						[
+							'bot_id'       => $bot_id,
+							'bot_name'     => $def->name,
+							'bot_category' => $def->category->value,
+							'bot_verified' => $verified,
+						]
+					),
+				};
+			} catch (\Throwable $e) {
+				// Per-bot error: skip this bot, try the next
+				ErrorReporter::error($this->adapter, 'BotDetector per-bot evaluation failed', [
+					'bot_id' => $bot_id,
+					'error' => $e->getMessage(),
+				], 'bot_detector_per_bot_' . $bot_id);
+				continue;
 			}
-
-			$verified = $ip_match || $dns_verified;
-			$action = $this->determine_action($def, $verified);
-
-			return match ($action) {
-				BotAction::ALLOW => Result::allow($package),
-				BotAction::LOG_ONLY => Result::allow($package),
-				BotAction::CHALLENGE => Result::challenge(
-					ResultCode::CHALLENGE_REQUIRED,
-					"Bot challenge required: {$def->name}",
-					$package,
-					[
-						'bot_id'       => $bot_id,
-						'bot_name'     => $def->name,
-						'bot_category' => $def->category->value,
-						'bot_verified' => $verified,
-					]
-				),
-				BotAction::BLOCK => Result::block(
-					$this->code_for_category($def->category),
-					"Bot blocked: {$def->name}",
-					$package,
-					[
-						'bot_id'       => $bot_id,
-						'bot_name'     => $def->name,
-						'bot_category' => $def->category->value,
-						'bot_verified' => $verified,
-					]
-				),
-			};
 		}
 
 		return null;
@@ -230,25 +264,36 @@ class BotDetector
 	 */
 	private function is_cloud_infrastructure_ip(string $ip): bool
 	{
-		static $cloud_ranges = null;
-		if ($cloud_ranges === null) {
-			$cloud_ranges = [];
-			foreach ($this->registry->cloud_infrastructure() as $bot) {
-				$cloud_ranges = array_merge($cloud_ranges, $bot->ip_ranges);
-			}
-			// Optional: append dynamic ranges if enabled
-			if ($this->cloud_provider && $this->config->dynamic_ip_ranges_enabled) {
-				foreach ($this->config->dynamic_ip_ranges_feeds as $provider) {
-					$cloud_ranges = array_merge($cloud_ranges, $this->cloud_provider->ranges($provider));
+		try {
+			static $cloud_ranges = null;
+			if ($cloud_ranges === null) {
+				$cloud_ranges = [];
+				foreach ($this->registry->cloud_infrastructure() as $bot) {
+					$cloud_ranges = array_merge($cloud_ranges, $bot->ip_ranges);
+				}
+				// Optional: append dynamic ranges if enabled
+				if ($this->cloud_provider && $this->config->dynamic_ip_ranges_enabled) {
+					foreach ($this->config->dynamic_ip_ranges_feeds as $provider) {
+						try {
+							$cloud_ranges = array_merge($cloud_ranges, $this->cloud_provider->ranges($provider));
+						} catch (\Throwable $e) {
+							// Skip this provider on error
+						}
+					}
 				}
 			}
-		}
 
-		if (empty($cloud_ranges)) {
+			if (empty($cloud_ranges)) {
+				return false;
+			}
+
+			return IpUtil::match_any($ip, $cloud_ranges);
+		} catch (\Throwable $e) {
+			// Cloud infrastructure check failure: err on the side of
+			// NOT blocking (better to let a probe through than to
+			// accidentally take your CDN offline).
 			return false;
 		}
-
-		return IpUtil::match_any($ip, $cloud_ranges);
 	}
 
 	/**
@@ -297,49 +342,68 @@ class BotDetector
 	 */
 	private function verify_dns(string $ip, string $suffix): bool
 	{
-		// === Kill switch ===
-		if (!$this->config->dns_verification_enabled) {
-			return false;
-		}
+		try {
+			// === Kill switch ===
+			if (!$this->config->dns_verification_enabled) {
+				return false;
+			}
 
-		$key = "{$ip}@{$suffix}";
+			$key = "{$ip}@{$suffix}";
 
-		// === Per-request instance cache (for this IP+suffix combo) ===
-		if (isset($this->dns_cache[$key])) {
-			return $this->dns_cache[$key];
-		}
+			// === Per-request instance cache (for this IP+suffix combo) ===
+			if (isset($this->dns_cache[$key])) {
+				return $this->dns_cache[$key];
+			}
 
-		// === Cross-process adapter cache (binary IP for IPv6 normalization) ===
-		$bin_ip = @inet_pton($ip);
-		if ($bin_ip === false) {
-			$this->dns_cache[$key] = false;
-			return false;
-		}
-		$cache_key = 'bb:dns_verify:' . bin2hex($bin_ip) . ':' . $suffix;
-		$cached = $this->adapter->get($cache_key);
-		if ($cached !== null) {
-			$result = (bool)$cached;
+			// === Cross-process adapter cache (binary IP for IPv6 normalization) ===
+			$bin_ip = @inet_pton($ip);
+			if ($bin_ip === false) {
+				$this->dns_cache[$key] = false;
+				return false;
+			}
+			$cache_key = 'bb:dns_verify:' . bin2hex($bin_ip) . ':' . $suffix;
+			try {
+				$cached = $this->adapter->get($cache_key);
+			} catch (\Throwable $e) {
+				$cached = null;
+			}
+			if ($cached !== null) {
+				$result = (bool)$cached;
+				$this->dns_cache[$key] = $result;
+				return $result;
+			}
+
+			// === Get reverse DNS (cached per IP, shared across suffixes) ===
+			$host = $this->get_reverse_dns_cached($ip, $bin_ip);
+			if ($host === false) {
+				$result = false;
+			} else {
+				// === Verify suffix match and optional forward confirmation ===
+				$result = $this->verify_hostname_suffixes($host, $suffix, $ip);
+			}
+
+			$ttl = $result
+				? $this->config->dns_verification_positive_ttl
+				: $this->config->dns_verification_negative_ttl;
+
+			try {
+				$this->adapter->set($cache_key, $result, $ttl);
+			} catch (\Throwable $e) {
+				// Cache write failed — non-fatal
+			}
 			$this->dns_cache[$key] = $result;
+
 			return $result;
+		} catch (\Throwable $e) {
+			// DNS verification failed: treat as unverified.
+			// Caller will fall through to next defense (challenge/block).
+			ErrorReporter::error($this->adapter, 'verify_dns failed', [
+				'ip' => $ip,
+				'suffix' => $suffix,
+				'error' => $e->getMessage(),
+			], 'dns_verify_' . md5($ip . $suffix));
+			return false;
 		}
-
-		// === Get reverse DNS (cached per IP, shared across suffixes) ===
-		$host = $this->get_reverse_dns_cached($ip, $bin_ip);
-		if ($host === false) {
-			$result = false;
-		} else {
-			// === Verify suffix match and optional forward confirmation ===
-			$result = $this->verify_hostname_suffixes($host, $suffix, $ip);
-		}
-
-		$ttl = $result
-			? $this->config->dns_verification_positive_ttl
-			: $this->config->dns_verification_negative_ttl;
-
-		$this->adapter->set($cache_key, $result, $ttl);
-		$this->dns_cache[$key] = $result;
-
-		return $result;
 	}
 
 	/**
@@ -347,36 +411,48 @@ class BotDetector
 	 */
 	private function get_reverse_dns_cached(string $ip, string $bin_ip): string|false
 	{
-		$reverse_cache_key = 'reverse@' . bin2hex($bin_ip);
+		try {
+			$reverse_cache_key = 'reverse@' . bin2hex($bin_ip);
 
-		// Instance cache check
-		if (isset($this->dns_cache[$reverse_cache_key])) {
-			return $this->dns_cache[$reverse_cache_key];
+			// Instance cache check
+			if (isset($this->dns_cache[$reverse_cache_key])) {
+				return $this->dns_cache[$reverse_cache_key];
+			}
+
+			// Adapter cache check
+			$adapter_key = 'bb:reverse_dns:' . bin2hex($bin_ip);
+			try {
+				$cached = $this->adapter->get($adapter_key);
+			} catch (\Throwable $e) {
+				$cached = null;
+			}
+			if ($cached !== null) {
+				$this->dns_cache[$reverse_cache_key] = $cached;
+				return $cached;
+			}
+
+			// Cold: do the PTR lookup
+			$reverse_resolver = $this->reverse_resolver;
+			$host = @$reverse_resolver($ip);
+
+			// Normalize: false/IP/empty → false (cacheable)
+			if ($host === false || $host === $ip || $host === '') {
+				$host = false;
+			}
+
+			// Cache the raw hostname (or false) for 7 days
+			$ttl = $this->config->dns_verification_positive_ttl;
+			try {
+				$this->adapter->set($adapter_key, $host, $ttl);
+			} catch (\Throwable $e) {
+				// non-fatal
+			}
+			$this->dns_cache[$reverse_cache_key] = $host;
+
+			return $host;
+		} catch (\Throwable $e) {
+			return false;
 		}
-
-		// Adapter cache check
-		$adapter_key = 'bb:reverse_dns:' . bin2hex($bin_ip);
-		$cached = $this->adapter->get($adapter_key);
-		if ($cached !== null) {
-			$this->dns_cache[$reverse_cache_key] = $cached;
-			return $cached;
-		}
-
-		// Cold: do the PTR lookup
-		$reverse_resolver = $this->reverse_resolver;
-		$host = @$reverse_resolver($ip);
-
-		// Normalize: false/IP/empty → false (cacheable)
-		if ($host === false || $host === $ip || $host === '') {
-			$host = false;
-		}
-
-		// Cache the raw hostname (or false) for 7 days
-		$ttl = $this->config->dns_verification_positive_ttl;
-		$this->adapter->set($adapter_key, $host, $ttl);
-		$this->dns_cache[$reverse_cache_key] = $host;
-
-		return $host;
 	}
 
 	/**
@@ -467,6 +543,14 @@ class BotDetector
 	 * after each forward-confirm attempt). If exceeded, returns false —
 	 * treated as "could not verify" by the caller (which falls through
 	 * to the next defense, typically CHALLENGE rather than BLOCK).
+	 *
+	 * === WHY THIS DUPLICATES verify_hostname_suffixes() ===
+	 *
+	 * This method exists as a standalone callable for test injection and
+	 * for direct use from external callers (e.g., admin tools) that need
+	 * a bounded DNS verify without going through the full detection
+	 * pipeline. The internal verify_hostname_suffixes() is the per-suffix
+	 * phase used by verify_dns().
 	 */
 	private function do_dns_verify_bounded(string $ip, string $suffix): bool
 	{
@@ -605,11 +689,15 @@ class BotDetector
 			$this->dynamic_ranges = [];
 			return [];
 		}
-		$cache_key = 'bb:ip_ranges:merged';
-		$cached = $this->adapter->get($cache_key);
-		if ($cached && isset($cached['data'], $cached['fetched'])) {
-			$this->dynamic_ranges = $cached['data'];
-			return $this->dynamic_ranges;
+		try {
+			$cache_key = 'bb:ip_ranges:merged';
+			$cached = $this->adapter->get($cache_key);
+			if ($cached && isset($cached['data'], $cached['fetched'])) {
+				$this->dynamic_ranges = $cached['data'];
+				return $this->dynamic_ranges;
+			}
+		} catch (\Throwable $e) {
+			// Cache read failed — treat as cold
 		}
 		if (!$this->dynamic_ranges_fetched) {
 			$this->dynamic_ranges_fetched = true;

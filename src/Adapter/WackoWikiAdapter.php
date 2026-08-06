@@ -7,6 +7,9 @@ use BadBehaviour\Core\Interfaces\CacheInterface;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
 use BadBehaviour\Configuration;
+use BadBehaviour\Util\ErrorReporter;
+use BadBehaviour\Util\SafeConfigLoader;
+use BadBehaviour\Util\SafeMode;
 
 if (!defined('CACHE_DIR')) {
 	define('CACHE_DIR', sys_get_temp_dir() . '/badbehaviour_cache');
@@ -16,12 +19,34 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 {
 	private $db;
 	private string $cache_dir;
+	private bool $safe_mode = false;
+	private bool $config_loaded = false;
 
 	public function __construct($db)
 	{
 		$this->db = $db;
 		$this->cache_dir = CACHE_DIR . '/bad_behaviour/';
 		@mkdir($this->cache_dir, 0755, true);
+	}
+
+	/**
+	 * Is the adapter running in safe-mode (config missing or invalid)?
+	 *
+	 * Safe-mode = monitor-only: still logs traffic, but disables all
+	 * active defenses (blocking, challenging, rate-limiting, etc.).
+	 * This prevents a misconfigured library from breaking the host app.
+	 */
+	public function is_safe_mode(): bool
+	{
+		return $this->safe_mode;
+	}
+
+	/**
+	 * Did the config load successfully (vs falling back to defaults)?
+	 */
+	public function is_config_loaded(): bool
+	{
+		return $this->config_loaded;
 	}
 
 	// =========================================================================
@@ -33,33 +58,55 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		// In WackoWiki context: CONFIG_DIR/bb_config.php
 		// In badbehaviour repo (tests): __DIR__/../../../config/bb_config.php
 		// Fallback: config/bb_config.php (relative to CWD)
-
 		$possible_paths = [
 			defined('CONFIG_DIR') ? CONFIG_DIR . '/bb_config.php' : null,
 			'config/bb_config.php',                           // Relative to CWD
 			__DIR__ . '/../../../config/bb_config.php',       // From badbehaviour repo
 		];
 
-		$file = null;
-		foreach ($possible_paths as $path) {
-			if ($path && file_exists($path)) {
-				$file = $path;
-				break;
+		$file = SafeConfigLoader::find_existing($possible_paths);
+
+		if ($file !== null) {
+			$config = SafeConfigLoader::load($file, $this, 'bb_config_load');
+			if ($config !== null) {
+				$this->safe_mode = false;
+				$this->config_loaded = true;
+
+				// INJECT adapter-specific setting that must NOT come from config
+				$prefix = $this->db->table_prefix ?? '';
+				$config['log_table'] = $prefix . 'bad_behaviour';
+
+				return $config;
 			}
+			// Load failed (parse error / bad return type / exception) — fall through
 		}
 
-		if (!$file) {
-			throw new \RuntimeException('BadBehaviour config file not found. Checked: ' . implode(', ', array_filter($possible_paths)));
-		}
+		// No usable config found — enter safe-mode
+		$this->safe_mode = true;
+		$this->config_loaded = false;
 
-		$settings = Configuration::from_file($file, $this)->to_array();
+		ErrorReporter::warning($this,
+			'BadBehaviour config not found — running in safe-mode (monitor only)',
+			[
+				'checked_paths' => array_values(array_filter($possible_paths)),
+				'hint' => 'Create config/bb_config.php from config/bb_config.sample.php to enable full protection',
+			],
+			'bb_config_missing'
+		);
 
-		// INJECT: log_table (not in config file - adapter-specific)
-		// WackoWiki uses table prefix from $this->db->table_prefix
+		return $this->safe_mode_settings();
+	}
+
+	/**
+	 * Safe-mode settings for WackoWiki.
+	 *
+	 * Returns the shared safe-mode baseline with the WackoWiki-specific
+	 * log_table (prefixed by the wiki's table prefix).
+	 */
+	private function safe_mode_settings(): array
+	{
 		$prefix = $this->db->table_prefix ?? '';
-		$settings['log_table'] = $prefix . 'bad_behaviour';
-
-		return $settings;
+		return SafeMode::settings($prefix . 'bad_behaviour');
 	}
 
 	// =========================================================================
@@ -81,7 +128,22 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		}
 
 		// Whitelist stays INI (flat, simple, human-editable)
-		return parse_ini_file($file, true, INI_SCANNER_TYPED) ?: [];
+		$parsed = @parse_ini_file($file, true, INI_SCANNER_TYPED);
+		if ($parsed === false) {
+			ErrorReporter::warning($this, 'BadBehaviour whitelist parse error', [
+				'path' => $file,
+				'hint' => 'Check bb_whitelist.conf for syntax errors',
+			], 'bb_whitelist_parse');
+			return [
+				'ip' => [],
+				'useragent' => [],
+				'url' => [],
+				'asn' => [],
+				'country' => [],
+			];
+		}
+
+		return $parsed;
 	}
 
 	// =========================================================================
@@ -90,7 +152,11 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 
 	public function get_email(): string
 	{
-		return $this->db->abuse_email;
+		try {
+			return $this->db->abuse_email ?? 'admin@example.com';
+		} catch (\Throwable $e) {
+			return 'admin@example.com';
+		}
 	}
 
 	public function get_relative_path(): string
@@ -204,68 +270,86 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 
 	public function log_request(RequestPackage $package, Result $result): void
 	{
-		if (!$this->get_settings()['logging']) {
-			return;
-		}
-
-		$table = $this->get_settings()['log_table'];
-
-		$q = $this->db->q(...);
-
-		$ip       = $q($package->ip);
-		$host     = $q(@gethostbyaddr($package->ip) ?: $package->ip);
-		$date     = $q(gmdate('Y-m-d H:i:s'));
-		$method   = $q($package->request_method);
-		$uri      = $q($package->request_uri);
-		$uri      = $q($package->request_uri);
-		// BB 3.0: hash shortened to 16 hex chars (half of SHA-256). Used only for
-		// grouping/filtering in the admin UI — not a cryptographic identifier.
-		// Collisions at 100k rows: ~0.0003% per row pair; acceptable for that use.
-		$uri_hash = $q(substr(hash('sha256', $package->request_uri), 0, 16));
-		$protocol = $q($package->server_protocol);
-		$ua       = $q($package->user_agent);
-		$ua_hash  = $q(substr(hash('sha256', $package->user_agent), 0, 16));
-		$protocol = $q($package->server_protocol);
-
-		// Build raw headers string WITHOUT individual quoting
-		$headers = "$method $uri $protocol\n";
-		foreach ($package->headers_mixed as $h => $v) {
-			$headers .= "$h: $v\n";
-		}
-		$headers = $q($headers);
-
-		$request_entity = '';
-		if (in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
-			foreach ($package->request_entity as $k => $v) {
-				$request_entity .= "$k: $v\n";
+		// CRITICAL: never let logging failures crash the request.
+		// Wrap the entire body in try/catch so the response always succeeds.
+		try {
+			$settings = $this->get_settings();
+			if (empty($settings['logging'])) {
+				return;
 			}
+
+			$table = $settings['log_table'] ?? (($this->db->table_prefix ?? '') . 'bad_behaviour');
+
+			$q = $this->db->q(...);
+
+			$ip       = $q($package->ip);
+			$host     = $q(@gethostbyaddr($package->ip) ?: $package->ip);
+			$date     = $q(gmdate('Y-m-d H:i:s'));
+			$method   = $q($package->request_method);
+			$uri      = $q($package->request_uri);
+			// BB 3.0: hash shortened to 16 hex chars (half of SHA-256). Used only for
+			// grouping/filtering in the admin UI — not a cryptographic identifier.
+			// Collisions at 100k rows: ~0.0003% per row pair; acceptable for that use.
+			$uri_hash = $q(substr(hash('sha256', $package->request_uri), 0, 16));
+			$protocol = $q($package->server_protocol);
+			$ua       = $q($package->user_agent);
+			$ua_hash  = $q(substr(hash('sha256', $package->user_agent), 0, 16));
+
+			// Build raw headers string WITHOUT individual quoting
+			$headers = "$method $uri $protocol\n";
+			foreach ($package->headers_mixed as $h => $v) {
+				$headers .= "$h: $v\n";
+			}
+			$headers = $q($headers);
+
+			$request_entity = '';
+			if (in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
+				foreach ($package->request_entity as $k => $v) {
+					$request_entity .= "$k: $v\n";
+				}
+			}
+			$request_entity = $q($request_entity);
+
+			$status_key = $result->code->value;
+			$status_message = $q($result->message);
+			$support_key = $q($result->support_key ?? '');
+			$bot_category = $q($result->metadata['bot_category'] ?? '');
+			$bot_verified = ($result->metadata['bot_verified'] ?? false) ? 1 : 0;
+			$ja3 = $q($package->ja3 ?? '');
+			// h2_hash and header_order_hash dropped — see schema comment.
+			$asn = $q($package->asn ?? '');
+			$country = $q($package->country ?? '');
+			$time_ms = (int)($package->request_time * 1000);
+
+			$sql = "INSERT INTO `$table`
+				(`ip`,`host`,`date`,`request_method`,`request_uri`,`request_uri_hash`,`server_protocol`,
+				 `http_headers`,`user_agent`,`user_agent_hash`,`request_entity`,`status_code`,`status_message`,
+				 `support_key`,`bot_category`,`bot_verified`,`ja3`,`asn`,`country`,`request_time_ms`)
+				VALUES ($ip,$host,$date,$method,$uri,$uri_hash,$protocol,$headers,$ua,$ua_hash,$request_entity,
+				        '$status_key',$status_message,$support_key,$bot_category,$bot_verified,$ja3,$asn,$country,$time_ms)";
+
+			$this->db->ll_query($sql);
+		} catch (\Throwable $e) {
+			// Never propagate — logging must not crash the user's response.
+			ErrorReporter::error($this, 'log_request failed', [
+				'error' => $e->getMessage(),
+				'exception_class' => get_class($e),
+				'hint' => 'Check DB connectivity and log table schema',
+			], 'log_request_failure');
 		}
-		$request_entity = $q($request_entity);
-
-		$status_key = $result->code->value;
-		$status_message = $q($result->message);
-		$support_key = $q($result->support_key ?? '');
-		$bot_category = $q($result->metadata['bot_category'] ?? '');
-		$bot_verified = ($result->metadata['bot_verified'] ?? false) ? 1 : 0;
-		$ja3 = $q($package->ja3 ?? '');
-		// h2_hash and header_order_hash dropped — see schema comment.
-		$asn = $q($package->asn ?? '');
-		$country = $q($package->country ?? '');
-		$time_ms = (int)($package->request_time * 1000);
-
-		$sql = "INSERT INTO `$table`
-			(`ip`,`host`,`date`,`request_method`,`request_uri`,`request_uri_hash`,`server_protocol`,
-			 `http_headers`,`user_agent`,`user_agent_hash`,`request_entity`,`status_code`,`status_message`,
-			 `support_key`,`bot_category`,`bot_verified`,`ja3`,`asn`,`country`,`request_time_ms`)
-			VALUES ($ip,$host,$date,$method,$uri,$uri_hash,$protocol,$headers,$ua,$ua_hash,$request_entity,
-			        '$status_key',$status_message,$support_key,$bot_category,$bot_verified,$ja3,$asn,$country,$time_ms)";
-
-		$this->db->ll_query($sql);
 	}
 
 	public function query(string $sql)
 	{
-		return $this->db->ll_query($sql);
+		try {
+			return $this->db->ll_query($sql);
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this, 'BadBehaviour query failed', [
+				'sql_preview' => substr($sql, 0, 200),
+				'error' => $e->getMessage(),
+			], 'query_failure');
+			return false;
+		}
 	}
 
 	// =========================================================================
@@ -279,87 +363,123 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 
 	public function get(string $key): mixed
 	{
-		$file = $this->cache_file($key);
-		if (!file_exists($file)) return null;
-		$data = json_decode(@file_get_contents($file), true);
-		return $data ?? null;
+		try {
+			$file = $this->cache_file($key);
+			if (!file_exists($file)) return null;
+			$data = json_decode(@file_get_contents($file), true);
+			return $data['value'] ?? null;
+		} catch (\Throwable $e) {
+			return null;
+		}
 	}
 
 	public function set(string $key, mixed $value, int $ttl): bool
 	{
-		$file = $this->cache_file($key);
-		$data = ['value' => $value, 'expires' => time() + $ttl];
-		return @file_put_contents($file, json_encode($data), LOCK_EX) !== false;
+		try {
+			$file = $this->cache_file($key);
+			$data = ['value' => $value, 'expires' => time() + $ttl];
+			return @file_put_contents($file, json_encode($data), LOCK_EX) !== false;
+		} catch (\Throwable $e) {
+			return false;
+		}
 	}
 
 	public function delete(string $key): bool
 	{
-		$file = $this->cache_file($key);
-		return @unlink($file);
+		try {
+			$file = $this->cache_file($key);
+			return @unlink($file);
+		} catch (\Throwable $e) {
+			return false;
+		}
 	}
 
 	public function increment_counter(string $key, int $window): int
 	{
-		$file = $this->cache_file("counter:$key");
-		$now = time();
-		$window_start = $now - $window;
+		try {
+			$file = $this->cache_file("counter:$key");
+			$now = time();
+			$window_start = $now - $window;
 
-		$data = ['count' => 0, 'window' => $window_start];
-		if (file_exists($file)) {
-			$json = @file_get_contents($file);
-			$decoded = $json ? json_decode($json, true) : null;
-			if ($decoded && ($decoded['window'] ?? 0) >= $window_start) {
-				$data = $decoded;
+			$data = ['count' => 0, 'window' => $window_start];
+			if (file_exists($file)) {
+				$json = @file_get_contents($file);
+				$decoded = $json ? json_decode($json, true) : null;
+				if ($decoded && ($decoded['window'] ?? 0) >= $window_start) {
+					$data = $decoded;
+				}
 			}
-		}
 
-		$data['count']++;
-		@file_put_contents($file, json_encode($data), LOCK_EX);
-		return $data['count'];
+			$data['count']++;
+			@file_put_contents($file, json_encode($data), LOCK_EX);
+			return $data['count'];
+		} catch (\Throwable $e) {
+			return 0;
+		}
 	}
 
 	public function get_counter(string $key): int
 	{
-		$file = $this->cache_file("counter:$key");
-		if (!file_exists($file)) return 0;
-		$data = json_decode(@file_get_contents($file), true);
-		return $data['count'] ?? 0;
+		try {
+			$file = $this->cache_file("counter:$key");
+			if (!file_exists($file)) return 0;
+			$data = json_decode(@file_get_contents($file), true);
+			return $data['count'] ?? 0;
+		} catch (\Throwable $e) {
+			return 0;
+		}
 	}
 
 	public function get_behavior_profile(string $session_id): ?array
 	{
-		$file = $this->cache_file("behavior:$session_id");
-		if (!file_exists($file)) return null;
-		return json_decode(@file_get_contents($file), true);
+		try {
+			$file = $this->cache_file("behavior:$session_id");
+			if (!file_exists($file)) return null;
+			return json_decode(@file_get_contents($file), true);
+		} catch (\Throwable $e) {
+			return null;
+		}
 	}
 
 	public function save_behavior_profile(string $session_id, array $profile, int $ttl): bool
 	{
-		$file = $this->cache_file("behavior:$session_id");
-		$profile['_expires'] = time() + $ttl;
-		return @file_put_contents($file, json_encode($profile), LOCK_EX) !== false;
+		try {
+			$file = $this->cache_file("behavior:$session_id");
+			$profile['_expires'] = time() + $ttl;
+			return @file_put_contents($file, json_encode($profile), LOCK_EX) !== false;
+		} catch (\Throwable $e) {
+			return false;
+		}
 	}
 
 	public function add_to_set(string $key, string $value, int $ttl): bool
 	{
-		$file = $this->cache_file("set:$key");
-		$set = [];
-		if (file_exists($file)) {
-			$set = json_decode(@file_get_contents($file), true) ?? [];
+		try {
+			$file = $this->cache_file("set:$key");
+			$set = [];
+			if (file_exists($file)) {
+				$set = json_decode(@file_get_contents($file), true) ?? [];
+			}
+			$set[$value] = time() + $ttl;
+			return @file_put_contents($file, json_encode($set), LOCK_EX) !== false;
+		} catch (\Throwable $e) {
+			return false;
 		}
-		$set[$value] = time() + $ttl;
-		return @file_put_contents($file, json_encode($set), LOCK_EX) !== false;
 	}
 
 	public function get_set(string $key): array
 	{
-		$file = $this->cache_file("set:$key");
-		if (!file_exists($file)) return [];
-		$set = json_decode(@file_get_contents($file), true) ?? [];
-		$now = time();
-		$set = array_filter($set, fn($exp) => $exp > $now);
-		@file_put_contents($file, json_encode($set), LOCK_EX);
-		return array_keys($set);
+		try {
+			$file = $this->cache_file("set:$key");
+			if (!file_exists($file)) return [];
+			$set = json_decode(@file_get_contents($file), true) ?? [];
+			$now = time();
+			$set = array_filter($set, fn($exp) => $exp > $now);
+			@file_put_contents($file, json_encode($set), LOCK_EX);
+			return array_keys($set);
+		} catch (\Throwable $e) {
+			return [];
+		}
 	}
 
 	// =========================================================================
@@ -378,6 +498,12 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 
 	public function log(string $level, string $message, array $context = []): void
 	{
-		error_log("[BadBehaviour] [$level] $message " . json_encode($context));
+		// Adapter logger contract — called by core / detectors / utilities.
+		// Never let logging throw.
+		try {
+			error_log("[BadBehaviour] [$level] $message " . json_encode($context));
+		} catch (\Throwable $e) {
+			// Last-resort: silent fail (we tried twice)
+		}
 	}
 }

@@ -403,7 +403,7 @@ return [
             'category' => 'monitoring',
             'ip_ranges' => ['10.0.0.0/8'],
             'verify_dns' => true,
-            'dns_suffix' => 'monitor.internal',
+            'dns_suffixes' => ['monitor.internal'],
             'default_action' => 'allow',
         ],
     ],
@@ -441,7 +441,7 @@ return [
     'host_patterns'       => ['bot.example.com'],         // optional
     'ip_ranges'           => ['10.0.0.0/8'],              // optional, CIDRs
     'verify_dns'          => true,                        // optional
-    'dns_suffix'          => 'example.com',               // optional, required if verify_dns=true
+    'dns_suffixes' 		=> ['example.com'],              // optional, required if verify_dns=true
     'robots_txt_token'    => 'MyBot',                     // optional
     'default_action'      => 'allow',                     // optional: allow|challenge|block|log_only
     'description'         => 'What this bot does',        // optional

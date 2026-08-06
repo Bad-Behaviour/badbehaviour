@@ -294,7 +294,7 @@ return [
             'host_patterns'       => ['monitor.internal'],
             'ip_ranges'           => ['10.0.0.0/8'],
             'verify_dns'          => true,
-            'dns_suffix'          => 'monitor.internal',
+            'dns_suffixes'        => ['monitor.internal'],
             'category'            => 'monitoring',
             'default_action'      => 'allow',
             'description'         => 'Our internal uptime checker',
@@ -304,7 +304,7 @@ return [
 ```
 
 Required keys: `name`, `user_agent_patterns` (≥1 entry), `category` (one of the 12 cases).
-Optional keys: `host_patterns`, `ip_ranges`, `verify_dns`, `dns_suffix`, `robots_txt_token`, `default_action` (`allow`/`challenge`/`block`/`log_only`), `description`.
+Optional keys: `host_patterns`, `ip_ranges`, `verify_dns`, `dns_suffixes`, `robots_txt_token`, `default_action` (`allow`/`challenge`/`block`/`log_only`), `description`.
 
 Invalid entries are logged via `error_log()` and skipped — they don't break the whole registry. Check `$registry->has_errors()` programmatically if you build registries in code.
 

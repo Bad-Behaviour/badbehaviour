@@ -188,7 +188,7 @@ Then:
 
 ### Adding a new Bot
 
-Bots live in `src/Bot/Registry.php` as `BotDefinition` objects:
+Bots live in `src/Bot/Registry/DefaultRegistry.php` as `BotDefinition` objects:
 
 ```php
 'yourbot' => new BotDefinition(
@@ -198,7 +198,7 @@ Bots live in `src/Bot/Registry.php` as `BotDefinition` objects:
     host_patterns: ['yourbot.example.com'],
     ip_ranges: ['203.0.113.0/24'],
     verify_dns: true,
-    dns_suffix: 'yourbot.example.com',
+    dns_suffixes: ['yourbot.example.com'],
     category: BotCategory::SEARCH_ENGINE,
     robots_txt_token: 'YourBot',
     default_action: BotAction::ALLOW,

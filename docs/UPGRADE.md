@@ -282,7 +282,7 @@ return [
             'host_patterns'       => ['monitor.internal'],
             'ip_ranges'           => ['10.0.0.0/8'],
             'verify_dns'          => true,
-            'dns_suffix'          => 'monitor.internal',
+            'dns_suffixes'        => ['monitor.internal'],
             'category'            => 'monitoring',
             'default_action'      => 'allow',
             'description'         => 'Our internal uptime checker',
@@ -673,7 +673,7 @@ Add to `lang/en.php`:
 
 See [PERFORMANCE.md](PERFORMANCE.md) for full benchmarks. Highlights:
 
-1. **DNS Verification**: Cached 7 days per `(IP, dns_suffix)` pair (was 1 hour in 2.x)
+1. **DNS Verification**: Cached 7 days per `(IP, dns_suffixes)` pair (was 1 hour in 2.x)
 2. **Cloud LB fast path**: 8 μs per request — covers ~30 static CIDR blocks
 3. **Result cache**: 5-minute TTL per `(IP, UA, config_fingerprint)` — expected 40–70% hit rate on busy sites
 4. **Rate Limiting**: Requires persistent adapter storage (Redis/DB) for production

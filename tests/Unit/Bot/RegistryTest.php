@@ -107,7 +107,8 @@ class RegistryTest extends TestCase
 		$this->assertNotNull($googlebot);
 		$this->assertNotEmpty($googlebot->ip_ranges);
 		$this->assertTrue($googlebot->verify_dns);
-		$this->assertEquals('googlebot.com', $googlebot->dns_suffix);
+		// FIX: Use dns_suffixes array (plural) instead of dns_suffix (singular)
+		$this->assertEquals('googlebot.com', $googlebot->dns_suffixes[0]);
 	}
 
 	public function test_gptbot_has_ip_ranges(): void
@@ -118,7 +119,8 @@ class RegistryTest extends TestCase
 		$this->assertNotNull($gptbot);
 		$this->assertNotEmpty($gptbot->ip_ranges);
 		$this->assertTrue($gptbot->verify_dns);
-		$this->assertEquals('openai.com', $gptbot->dns_suffix);
+		// FIX: Use dns_suffixes array (plural) instead of dns_suffix (singular)
+		$this->assertEquals('openai.com', $gptbot->dns_suffixes[0]);
 	}
 
 	public function test_new_regional_search_engines(): void

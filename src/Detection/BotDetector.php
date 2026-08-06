@@ -23,6 +23,7 @@ class BotDetector
 	private RegistryInterface $registry;
 
 	private array $dns_cache = [];
+	private array $dns_reverse_cache = [];
 
 	/**
 	 * DNS resolver hooks for testability. Defaults to PHP built-ins.
@@ -47,7 +48,19 @@ class BotDetector
 	 * with different configs get independent caches.
 	 *
 	 * NOTE: $dns_cache above is a separate, smaller cache for DNS verification
-	 * only. See follow-up note in verify_dns().
+	 * only. It is NOT a candidate for merging with $result_cache — the two
+	 * serve different purposes:
+	 *
+	 *   - $dns_cache: keyed by "ip@suffix", stores bool, request-scoped.
+	 *     Avoids redundant DNS lookups within a single request.
+	 *
+	 *   - $result_cache: keyed by fingerprint+hash(ip|ua), stores Result,
+	 *     instance-scoped with 300s TTL. Memoizes full bot detection.
+	 *
+	 * The two caches operate at different levels of the detection pipeline
+	 * and have non-overlapping key spaces. Merging them would couple
+	 * concerns without measurable benefit. Out of scope for any current
+	 * refactor.
 	 */
 	private array $result_cache = [];
 	private int $result_cache_max = 5000;
@@ -158,9 +171,18 @@ class BotDetector
 
 			$ip_match = !empty($all_ranges) && IpUtil::match_any($ip, $all_ranges);
 
+			// === CHANGED: Iterate over dns_suffixes array ===
+			// Previously: single $def->dns_suffix check
+			// Now: try each suffix until one matches (or all fail)
+			// Short-circuits on first match; each suffix has its own cache entry
 			$dns_verified = false;
-			if ($def->verify_dns && $def->dns_suffix) {
-				$dns_verified = $this->verify_dns($ip, $def->dns_suffix);
+			if ($def->verify_dns) {
+				foreach ($def->dns_suffixes as $suffix) {
+					if ($this->verify_dns($ip, $suffix)) {
+						$dns_verified = true;
+						break;
+					}
+				}
 			}
 
 			$verified = $ip_match || $dns_verified;
@@ -240,8 +262,8 @@ class BotDetector
 	 *      within the same request.
 	 *   3. Cross-request adapter cache: warm lookups skip DNS entirely.
 	 *   4. Cold cache: synchronously runs DNS with a bounded timeout.
-	 *      The latency cost (40-300ms) is paid ONCE per (IP, suffix) tuple,
-	 *      then cached.
+	 *      The latency cost (40-300ms) is paid ONCE per IP (for PTR) +
+	 *      per (IP, suffix) for forward confirmation.
 	 *
 	 * === WHY SYNCHRONOUS ===
 	 *
@@ -254,27 +276,24 @@ class BotDetector
 	 * do not retry, resulting in permanent blocks for legitimate bots.
 	 *
 	 * The synchronous path eliminates this window at the cost of a one-time
-	 * DNS latency hit per (IP, suffix). For a real bot visiting your site,
+	 * DNS latency hit per IP. For a real bot visiting your site,
 	 * that's 1 slow request followed by N fast ones.
 	 *
 	 * === CACHE KEY SHAPE ===
 	 *
-	 * `bb:dns_verify:{bin2hex(inet_pton($ip))}:{suffix}`
+	 * - Reverse DNS: `bb:reverse_dns:{bin2hex(inet_pton($ip))}` (per IP)
+	 * - Forward confirm: `bb:dns_verify:{bin2hex(inet_pton($ip))}:{suffix}` (per IP+suffix)
 	 *
-	 * Binary IP form ensures IPv6 normalization (e.g., "2a03:2880::1" and
-	 * "2a03:2880:0:0:0:0:0:1" produce the same key). Stable across adapter
+	 * Binary IP form ensures IPv6 normalization. Stable across adapter
 	 * backends (no escaping issues with colons in IPv6 text form).
 	 *
-	 * === FOLLOW-UP NOTE ===
+	 * === MULTI-SUFFIX OPTIMIZATION ===
 	 *
-	 *   - $dns_cache: keyed by "ip@suffix", stores bool, request-scoped.
-	 *     Avoids redundant DNS lookups within a single request.
-	 *
-	 *   - $result_cache: keyed by fingerprint+hash(ip|ua), stores Result,
-	 *     instance-scoped with 300s TTL. Memoizes full bot detection.
-	 *
-	 * The two caches operate at different levels of the detection pipeline
-	 * and have non-overlapping key spaces.
+	 * Multiple bots sharing suffixes (e.g., meta_ai and facebook_catalog both
+	 * use 'facebook.com') share the same reverse DNS cache entry for the IP.
+	 * The PTR lookup happens ONCE per IP, then each suffix is checked
+	 * against the cached hostname. Forward confirmation (if enabled) is
+	 * still per-suffix since it involves different queries.
 	 */
 	private function verify_dns(string $ip, string $suffix): bool
 	{
@@ -285,7 +304,7 @@ class BotDetector
 
 		$key = "{$ip}@{$suffix}";
 
-		// === Per-request instance cache ===
+		// === Per-request instance cache (for this IP+suffix combo) ===
 		if (isset($this->dns_cache[$key])) {
 			return $this->dns_cache[$key];
 		}
@@ -304,8 +323,14 @@ class BotDetector
 			return $result;
 		}
 
-		// === Cold cache — synchronous verification with bounded timeout ===
-		$result = $this->do_dns_verify_bounded($ip, $suffix);
+		// === Get reverse DNS (cached per IP, shared across suffixes) ===
+		$host = $this->get_reverse_dns_cached($ip, $bin_ip);
+		if ($host === false) {
+			$result = false;
+		} else {
+			// === Verify suffix match and optional forward confirmation ===
+			$result = $this->verify_hostname_suffixes($host, $suffix, $ip);
+		}
 
 		$ttl = $result
 			? $this->config->dns_verification_positive_ttl
@@ -315,6 +340,105 @@ class BotDetector
 		$this->dns_cache[$key] = $result;
 
 		return $result;
+	}
+
+	/**
+	 * Get reverse DNS for an IP, with caching (per IP, shared across suffixes).
+	 */
+	private function get_reverse_dns_cached(string $ip, string $bin_ip): string|false
+	{
+		$reverse_cache_key = 'reverse@' . bin2hex($bin_ip);
+
+		// Instance cache check
+		if (isset($this->dns_cache[$reverse_cache_key])) {
+			return $this->dns_cache[$reverse_cache_key];
+		}
+
+		// Adapter cache check
+		$adapter_key = 'bb:reverse_dns:' . bin2hex($bin_ip);
+		$cached = $this->adapter->get($adapter_key);
+		if ($cached !== null) {
+			$this->dns_cache[$reverse_cache_key] = $cached;
+			return $cached;
+		}
+
+		// Cold: do the PTR lookup
+		$reverse_resolver = $this->reverse_resolver;
+		$host = @$reverse_resolver($ip);
+
+		// Normalize: false/IP/empty → false (cacheable)
+		if ($host === false || $host === $ip || $host === '') {
+			$host = false;
+		}
+
+		// Cache the raw hostname (or false) for 7 days
+		$ttl = $this->config->dns_verification_positive_ttl;
+		$this->adapter->set($adapter_key, $host, $ttl);
+		$this->dns_cache[$reverse_cache_key] = $host;
+
+		return $host;
+	}
+
+	/**
+	 * Verify a resolved hostname against a specific DNS suffix.
+	 * Performs forward confirmation if required by config.
+	 */
+	private function verify_hostname_suffixes(string $host, string $suffix, string $ip): bool
+	{
+		$start = microtime(true);
+		$deadline_ms = $this->config->dns_verification_timeout_ms;
+
+		// === Phase 1: Suffix check ===
+		$host_lower = strtolower($host);
+		$suffix_lower = strtolower($suffix);
+
+		// Match either ".suffix" (FQDN) or "suffix" (host may lack trailing dot)
+		if (!str_ends_with($host_lower, '.' . $suffix_lower)
+			&& !str_ends_with($host_lower, $suffix_lower)) {
+			return false;
+		}
+
+		// === Phase 2: Forward confirmation (optional) ===
+		if (!$this->config->dns_verification_require_forward_confirm) {
+			return true;
+		}
+
+		// Budget check before forward lookup
+		if ((microtime(true) - $start) * 1000 > $deadline_ms) {
+			return false;
+		}
+
+		$forward_resolver = $this->forward_resolver;
+		$is_ipv6 = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+
+		// Try A records (IPv4 forward confirm)
+		$a_records = @$forward_resolver($host, DNS_A);
+		if (is_array($a_records)) {
+			foreach ($a_records as $r) {
+				if (($r['ip'] ?? null) === $ip) {
+					return true;
+				}
+			}
+		}
+
+		// Budget check after A lookup
+		if ((microtime(true) - $start) * 1000 > $deadline_ms) {
+			return false;
+		}
+
+		// Try AAAA records (IPv6 forward confirm)
+		if ($is_ipv6) {
+			$aaaa_records = @$forward_resolver($host, DNS_AAAA);
+			if (is_array($aaaa_records)) {
+				foreach ($aaaa_records as $r) {
+					if (($r['ipv6'] ?? null) === $ip) {
+						return true;
+					}
+				}
+			}
+		}
+
+		return false;
 	}
 
 	/**

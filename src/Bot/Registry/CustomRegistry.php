@@ -27,7 +27,10 @@ use BadBehaviour\Bot\RegistryTokens;
  *         'host_patterns'       => ['bot.example.com'],        // optional
  *         'ip_ranges'           => ['10.0.0.0/8'],              // optional, CIDRs
  *         'verify_dns'          => true,                        // optional
- *         'dns_suffix'          => 'example.com',               // optional
+ *         'dns_suffixes'        => [                            // optional
+ *             'bot.example.com',
+ *             'cdn.example.net',
+ *         ],
  *         'robots_txt_token'    => 'MyBot',                     // optional
  *         'default_action'      => 'allow',                     // optional: allow|challenge|block|log_only
  *         'description'         => 'What this bot does',        // optional
@@ -345,11 +348,21 @@ class CustomRegistry implements RegistryInterface
 		// === Optional: verify_dns (boolean) ===
 		$verify_dns = (bool)($def['verify_dns'] ?? false);
 
-		// === Optional: dns_suffix (string|null) ===
-		$dns_suffix = $def['dns_suffix'] ?? null;
-		if ($dns_suffix !== null && !is_string($dns_suffix)) {
-			$this->record_error($bot_id, "'dns_suffix' must be a string");
+		// === Optional: dns_suffixes (array of strings) ===
+		$dns_suffixes = $def['dns_suffixes'] ?? [];
+		if (!is_array($dns_suffixes)) {
+			$this->record_error($bot_id, "'dns_suffixes' must be an array");
 			return null;
+		}
+		foreach ($dns_suffixes as $i => $suffix) {
+			if (!is_string($suffix)) {
+				$this->record_error($bot_id, "dns_suffixes[{$i}] is not a string");
+				return null;
+			}
+			if ($suffix === '') {
+				$this->record_error($bot_id, "dns_suffixes[{$i}] is empty");
+				return null;
+			}
 		}
 
 		// === Optional: robots_txt_token (string|null) ===
@@ -385,7 +398,7 @@ class CustomRegistry implements RegistryInterface
 			host_patterns: array_values($host_patterns),
 			ip_ranges: array_values($ip_ranges),
 			verify_dns: $verify_dns,
-			dns_suffix: $dns_suffix,
+			dns_suffixes: array_values($dns_suffixes),
 			category: $category,
 			robots_txt_token: $robots_txt_token,
 			default_action: $action,

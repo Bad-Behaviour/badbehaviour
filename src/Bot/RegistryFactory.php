@@ -18,16 +18,39 @@ use BadBehaviour\Util\ErrorReporter;
  * Builds RegistryInterface instances from config arrays, config files,
  * or programmatic definitions.
  *
- * === FAIL-SAFE BEHAVIOR ===
+ * === THREE ENTRY POINTS ===
  *
- * Registry loading can fail (missing file, syntax error, invalid structure).
- * Such failures MUST NOT propagate — they would cause the host application
- * (WackoWiki, MediaWiki, generic) to crash on every request.
+ *   - from_file()  — Load from bb_registry.php
+ *   - from_array() — Build from a config array
+ *   - default()    — Get the unmodified DefaultRegistry
  *
- * Instead:
- *   - `from_array()` returns an EmptyRegistry on invalid input
- *   - `from_file()` returns DefaultRegistry on missing/invalid file
- *   - All errors are logged via ErrorReporter for diagnostics
+ * === CONFIG ARRAY SHAPE ===
+ *
+ * ```php
+ * [
+ *     'preset'             => 'minimal',                 // see Presets::AVAILABLE
+ *     'exclude_categories' => ['seo_crawler'],           // optional
+ *     'include_categories' => ['cloud_infrastructure'],  // optional
+ *     'exclude_bots'       => ['petal'],                 // optional
+ *     'additions'          => [                          // optional
+ *         'my_bot' => [/* BotDefinition schema *\/],
+ *     ],
+ *     'bots'               => [/* ... *\/],               // only when preset='custom'
+ * ]
+ * ```
+ *
+ * === FILTER EXECUTION ORDER ===
+ *
+ *   1. Load preset (or empty for 'human-only' / 'custom')
+ *   2. Apply exclude_categories (remove whole categories)
+ *   3. Apply include_categories (re-add, overrides exclude)
+ *   4. Apply exclude_bots (remove specific bots)
+ *   5. Merge additions (custom bots on top)
+ *
+ * === BACKWARD COMPATIBILITY ===
+ *
+ * If no bb_registry.php exists, RegistryFactory::default() is used.
+ * No global state — each call returns a fresh tree of registries.
  */
 class RegistryFactory
 {

@@ -1,5 +1,6 @@
 <?php
 // src/Detection/BlacklistDetector.php - REFINED FIVE-TIER VERSION
+// (updated to gate ua_is_bot short-circuit behind monitor-only mode)
 
 namespace BadBehaviour\Detection;
 
@@ -11,6 +12,18 @@ use BadBehaviour\Core\ResultCode;
 class BlacklistDetector
 {
     private Configuration $config;
+
+    /**
+     * Callable returning bool: true when the library is effectively in
+     * monitor-only mode (config-driven OR all-defenses-off fallback OR
+     * safe-mode). Injected by BadBehaviour so this detector stays
+     * stateless and easily testable.
+     *
+     * Signature: () => bool
+     *
+     * @var callable(): bool
+     */
+    private $is_monitor_only;
 
     /**
      * Tier 0.5: Raw URI attack patterns.
@@ -327,9 +340,20 @@ class BlacklistDetector
         '/(union|select|insert|update|delete|drop|create|alter)\s+/i',
     ];
 
-    public function __construct(Configuration $config)
-    {
+    /**
+     * @param Configuration $config
+     * @param (callable(): bool)|null $is_monitor_only Optional injection point
+     *        for monitor-only detection. BadBehaviour passes a closure bound
+     *        to its own state; tests can pass any callable returning bool.
+     *        Defaults to a static `false` (i.e., "never monitor-only") so
+     *        existing call sites and unit tests don't need to change.
+     */
+    public function __construct(
+        Configuration $config,
+        ?callable $is_monitor_only = null
+    ) {
         $this->config = $config;
+        $this->is_monitor_only = $is_monitor_only ?? static fn(): bool => false;
     }
 
     public function detect(RequestPackage $package): ?Result
@@ -340,15 +364,40 @@ class BlacklistDetector
         $ua_lower = strtolower($ua);
         $headers = $package->headers_mixed;
 
+        // === Empty/invalid UA — ALWAYS ENFORCE ===
+        // No UA = never a legitimate browser, mobile app, or HTTP client.
+        // This is an "obvious attack" that we enforce even in monitor-only
+        // mode (see BadBehaviour::maybe_demote_to_monitored for the policy).
         if (empty($ua) || $ua === '-' || strlen(trim($ua)) < 5) {
             return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'Empty or invalid User-Agent', $package);
         }
 
-        if ($package->ua_is_bot) {
-            return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'Bot detected by UA parser', $package, [
-                'device_type' => $package->ua_device,
-                'browser' => $package->ua_browser,
-            ]);
+        // === ua_is_bot short-circuit — GATED by monitor-only ===
+        //
+        // In monitor-only mode, BotDetector is the single source of truth
+        // for bot classification. It already applies correct per-category
+        // actions (verified search engines → ALLOW, AI crawlers → CHALLENGE,
+        // residential proxies → BLOCK). BlacklistDetector does NOT also fire
+        // here, because:
+        //
+        //   1. BotDetector runs FIRST in the pipeline and returns early on
+        //      a match, so we never reach this code path for known bots.
+        //   2. The only bots that reach BlacklistDetector are ones the
+        //      registry did NOT recognize (and thus were left to fall through).
+        //   3. For those unknown bots, "ua_is_bot = true" is too broad a
+        //      signal — it triggers on any UA matching /bot|crawler|spider|.../i,
+        //      which fires for legitimate regional search engines (Baidu, Sogou,
+        //      Applebot) that the 'minimal' preset doesn't include.
+        //
+        // Gating this check behind is_monitor_only() prevents monitor-only
+        // mode from accidentally blocking legitimate search-engine traffic.
+        if (!$this->is_monitor_only()) {
+            if ($package->ua_is_bot) {
+                return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'Bot detected by UA parser', $package, [
+                    'device_type' => $package->ua_device,
+                    'browser' => $package->ua_browser,
+                ]);
+            }
         }
 
         $is_http_tool = $package->is_http_tool();
@@ -376,6 +425,9 @@ class BlacklistDetector
 
         // === TIER 0.5: Raw URI attack patterns ===
         // Fail-fast on unencoded attack payloads in raw URI.
+        // Marked with metadata['tier'] = 'raw_uri' so BadBehaviour knows
+        // to enforce this even in monitor-only mode (no legitimate browser
+        // produces unencoded <script> or javascript: in the URI).
         if (@preg_match(self::RAW_URI_ATTACK_REGEX, $uri)) {
             $matched_pattern = $this->extract_matched_pattern(self::RAW_URI_ATTACK_REGEX, $uri);
             return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Raw attack payload in URI", $package, [

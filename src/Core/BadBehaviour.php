@@ -92,7 +92,15 @@ class BadBehaviour
 
 		// Pass registry to BotDetector (others don't need it directly)
 		$this->bot_detector = new BotDetector($this->config, $this->adapter, $this->registry);
-		$this->blacklist_detector = new BlacklistDetector($this->config);
+
+		// === NEW: BlacklistDetector receives a closure bound to this
+		// instance's monitor-only state, so it can gate the ua_is_bot
+		// short-circuit when the library is effectively in monitor-only mode.
+		$this->blacklist_detector = new BlacklistDetector(
+			$this->config,
+			is_monitor_only: fn(): bool => $this->is_monitor_only_effective(),
+		);
+
 		$this->behavioral_detector = new BehavioralDetector($this->config, $this->adapter);
 		$this->fingerprint_detector = new FingerprintDetector($this->config, $this->adapter);
 		$this->rate_limit_detector = new RateLimitDetector($this->config, $this->adapter);
@@ -130,8 +138,8 @@ class BadBehaviour
 	 *
 	 * Safe-mode is set automatically when the adapter's config file is
 	 * missing or malformed. The library runs in monitor-only mode:
-	 * logs traffic but does not block. Use is_monitor_only() to also
-	 * detect intentionally monitor-only configurations.
+	 * logs traffic but does not block. Use is_monitor_only_effective() to
+	 * also detect intentionally monitor-only configurations.
 	 */
 	public function is_in_safe_mode(): bool
 	{
@@ -146,11 +154,14 @@ class BadBehaviour
 	}
 
 	/**
-	 * Is the library in monitor-only mode?
+	 * Is the library in monitor-only mode BY CONFIGURATION?
 	 *
 	 * True when:
 	 *   - Configured strictness is 'monitor-only', OR
 	 *   - All active defenses are disabled (defensive FP-prevention)
+	 *
+	 * Does NOT include safe-mode (use is_monitor_only_effective() for that).
+	 * Kept as-is for backward compatibility.
 	 */
 	public function is_monitor_only(): bool
 	{
@@ -166,11 +177,33 @@ class BadBehaviour
 	}
 
 	/**
+	 * Is the library EFFECTIVELY in monitor-only mode (for demotion decisions)?
+	 *
+	 * True when ANY of:
+	 *   - Safe-mode is active (config missing/invalid)
+	 *   - Configured strictness is 'monitor-only'
+	 *   - All active defenses are disabled
+	 *
+	 * Used by:
+	 *   - maybe_demote_to_monitored() in run_internal()
+	 *   - BlacklistDetector (via closure) to skip the ua_is_bot short-circuit
+	 *   - diagnostics() to surface the effective policy to operators
+	 */
+	public function is_monitor_only_effective(): bool
+	{
+		if ($this->is_in_safe_mode()) {
+			return true;
+		}
+		return $this->is_monitor_only();
+	}
+
+	/**
 	 * Return diagnostic information for admin dashboards / health checks.
 	 *
 	 * @return array{
 	 *     safe_mode: bool,
 	 *     monitor_only: bool,
+	 *     monitor_only_effective: bool,
 	 *     strictness: string,
 	 *     preset: string,
 	 *     logging_enabled: bool,
@@ -183,11 +216,12 @@ class BadBehaviour
 	{
 		$safe_mode = $this->is_in_safe_mode();
 		$monitor_only = $this->is_monitor_only();
+		$monitor_only_effective = $this->is_monitor_only_effective();
 		$strictness = $this->config->get_strictness();
 
 		$detectors = [
-			'blacklist'    => true, // always-on
-			'bot'          => true, // always-on
+			'blacklist'    => true, // always-on (except in safe-mode)
+			'bot'          => true, // always-on (except in safe-mode)
 			'dns_verify'   => $this->config->dns_verification_enabled,
 			'dyn_ranges'   => $this->config->dynamic_ip_ranges_enabled,
 			'rate_limit'   => $this->config->rate_limit_enabled,
@@ -217,22 +251,24 @@ class BadBehaviour
 		} elseif ($strictness === 'monitor-only') {
 			$hint = 'BadBehaviour is in monitor-only mode by configuration. '
 				  . 'Traffic is logged but not blocked. Change strictness to \'normal\' '
-				  . 'or \'strict\' when you\'re ready to enforce.';
-		} elseif ($monitor_only) {
+				  . 'or \'strict\' when you\'re ready to enforce. '
+				  . 'Only obvious attacks (empty UA, raw XSS in URI) are still enforced.';
+		} elseif ($monitor_only_effective && !$safe_mode) {
 			// All defenses off but not by user choice
 			$hint = 'All active defenses are disabled. Set strictness to \'normal\' '
 				  . 'or \'strict\' in your config to enable bot protection.';
 		}
 
 		return [
-			'safe_mode'        => $safe_mode,
-			'monitor_only'     => $monitor_only,
-			'strictness'       => $strictness,
-			'preset'           => $this->config->get_preset(),
-			'config_loaded'    => $config_loaded,
-			'logging_enabled'  => $this->config->logging,
-			'detectors_active' => $detectors,
-			'hint'             => $hint,
+			'safe_mode'              => $safe_mode,
+			'monitor_only'           => $monitor_only,
+			'monitor_only_effective' => $monitor_only_effective,
+			'strictness'             => $strictness,
+			'preset'                 => $this->config->get_preset(),
+			'config_loaded'          => $config_loaded,
+			'logging_enabled'        => $this->config->logging,
+			'detectors_active'       => $detectors,
+			'hint'                   => $hint,
 		];
 	}
 
@@ -287,18 +323,24 @@ class BadBehaviour
 			? RequestPackage::from_server_globals($proxy_settings, $server)
 			: RequestPackage::from_globals($proxy_settings);
 
-		// FAST PATH 2: Empty UA → immediate block (no DNS, no detection)
+		// FAST PATH 2: Empty UA → immediate block. NEVER demoted in
+		// monitor-only mode — no UA = never a legitimate request.
+		// (See maybe_demote_to_monitored() for the exception list.)
 		if (empty($package->user_agent) || strlen(trim($package->user_agent)) < 5) {
-			return Result::block(
+			$result = Result::block(
 				ResultCode::BLOCKED_MALICIOUS_UA,
 				'Empty or invalid User-Agent',
 				$package
 			);
+			$this->log_and_return($package, $result);
+			return $result;
 		}
 
 		// FAST PATH 3: Whitelisted IP → immediate allow (skip all detectors)
 		if ($this->is_whitelisted($package)) {
-			return Result::allow($package);
+			$result = Result::allow($package);
+			$this->log_and_return($package, $result);
+			return $result;
 		}
 
 		// Enrich with GeoIP (only if available — avoid cost when not configured)
@@ -329,23 +371,12 @@ class BadBehaviour
 		// Run detection pipeline (each detector is wrapped in try/catch internally)
 		$result = $this->detect($package);
 
-		// Logging: blocked/challenged always, allowed only when verbose
-		if ($this->config->logging) {
-			$should_log = !$result->is_allowed() || $this->config->verbose;
-			if ($should_log) {
-				// CRITICAL: logging failures must never crash the request
-				try {
-					$this->adapter->log_request($package, $result);
-				} catch (\Throwable $e) {
-					ErrorReporter::error($this->adapter,
-						'log_request failed (further errors suppressed)', [
-							'error' => $e->getMessage(),
-							'exception_class' => get_class($e),
-						], 'log_request_failure'
-					);
-				}
-			}
-		}
+		// === NEW: monitor-only demotion ===
+		// After detection, if monitor-only mode is active and the result is
+		// a block/challenge, decide whether to enforce or demote to "monitored".
+		$result = $this->maybe_demote_to_monitored($result);
+
+		$this->log_and_return($package, $result);
 
 		return $result;
 	}
@@ -366,10 +397,13 @@ class BadBehaviour
 			}
 
 			$result = $this->detect($package);
+			$result = $this->maybe_demote_to_monitored($result);
 
 			// Same logging logic as run()
 			if ($this->config->logging) {
-				$should_log = !$result->is_allowed() || $this->config->verbose;
+				$should_log = $result->is_enforced_block()
+					|| $result->is_monitored()
+					|| ($result->code === ResultCode::ALLOWED && $this->config->verbose);
 				if ($should_log) {
 					try {
 						$this->adapter->log_request($package, $result);
@@ -388,8 +422,25 @@ class BadBehaviour
 
 	public function handle_result(Result $result): never
 	{
-		if ($result->is_allowed()) {
-			throw new \LogicException('handle_result() called with allowed result');
+		// === NEW: refuse to serve a block page for non-enforced results ===
+		//
+		// If the host application calls handle_result() on a MONITORED result
+		// (would-have-blocked in monitor-only mode) or an ALLOWED result,
+		// throw a clear LogicException so the bug is caught immediately.
+		//
+		// Previously, handle_result() assumed any non-allowed result should
+		// produce a 403. That meant monitor-only mode could accidentally
+		// enforce a block just by calling handle_result() — silently
+		// breaking the safety guarantee.
+		if ($result->is_allowed_or_monitored()) {
+			throw new \LogicException(sprintf(
+				'handle_result() called with non-block result '
+				. '(code=%s, enforcement=%s). '
+				. 'Use Result::is_enforced_block() to check before calling. '
+				. 'Monitored and allowed results must be passed through to the application.',
+				$result->code->value,
+				$result->enforcement->value
+			));
 		}
 
 		if ($result->requires_challenge()) {
@@ -447,6 +498,9 @@ class BadBehaviour
 		}
 
 		// 5. Blacklist (attacks, malicious UA) (always-on — basic attack patterns)
+		// NOTE: BlacklistDetector internally gates its `ua_is_bot` short-circuit
+		// behind is_monitor_only_effective(). Other tiers (raw URI, technical
+		// anomalies, contextual patterns, credential leaks, etc.) still run.
 		try {
 			if ($result = $this->blacklist_detector->detect($package)) return $result;
 		} catch (\Throwable $e) {
@@ -522,6 +576,107 @@ class BadBehaviour
 		}
 
 		return Result::allow($package);
+	}
+
+	/**
+	 * If monitor-only mode is active, convert would-be blocks into "monitored"
+	 * results — the detection still runs (and is logged with full context),
+	 * but no block page is served and the request flows through to the app.
+	 *
+	 * === "OBVIOUS ATTACK" EXCEPTIONS (still enforced even in monitor-only) ===
+	 *
+	 *   1. Empty/invalid User-Agent
+	 *      No UA = never a legitimate browser, mobile app, or HTTP client.
+	 *      Identified by stable message 'Empty or invalid User-Agent'.
+	 *
+	 *   2. Raw, unencoded attack payload in URI (Tier 0.5 of BlacklistDetector)
+	 *      Unencoded <script>, javascript:, data:text/html in the URI means
+	 *      a non-browser client (scanner, modified proxy, custom script,
+	 *      manual cURL). Browsers always percent-encode per RFC 3986.
+	 *      Identified by metadata['tier'] === 'raw_uri'.
+	 *
+	 * These are technical anomalies with zero FP risk — no legitimate
+	 * client triggers them. Letting them through in monitor-only would
+	 * defeat the purpose of running the library, so we enforce them
+	 * regardless of strictness.
+	 *
+	 * === EVERYTHING ELSE ===
+	 *
+	 * Demoted to MONITORED. The detection still runs (and is logged with
+	 * full context — bot name, category, IP, etc.), but no 403 page is
+	 * served. The request flows through to the host application normally.
+	 */
+	private function maybe_demote_to_monitored(Result $result): Result
+	{
+		if ($result->code === ResultCode::ALLOWED) {
+			return $result;
+		}
+
+		if (!$this->is_monitor_only_effective()) {
+			return $result;
+		}
+
+		// === Exception 1: Empty/invalid UA ===
+		// The fast-path empty-UA check in run_internal() already creates a
+		// BLOCKED_MALICIOUS_UA with message 'Empty or invalid User-Agent'.
+		// Keep it enforced even in monitor-only.
+		if ($result->code === ResultCode::BLOCKED_MALICIOUS_UA
+			&& $result->message === 'Empty or invalid User-Agent') {
+			return $result;
+		}
+
+		// === Exception 2: Raw unencoded attack payload in URI ===
+		// Identified by metadata['tier'] === 'raw_uri' (set by BlacklistDetector
+		// Tier 0.5). Browsers never produce raw <script>, javascript:, etc.
+		// in the URI — they always percent-encode.
+		if (isset($result->metadata['tier']) && $result->metadata['tier'] === 'raw_uri') {
+			return $result;
+		}
+
+		// === Everything else: demote to monitored ===
+		return Result::monitored_from($result);
+	}
+
+	/**
+	 * Log the result to the bad_behaviour table (if logging is enabled
+	 * and the result passes the logging filter).
+	 *
+	 * Extracted from run_internal() and run_test_package() so both paths
+	 * share identical logging semantics.
+	 *
+	 * Logging filter:
+	 *   - ENFORCED blocks/challenges → always logged
+	 *   - MONITORED blocks/challenges → always logged (this is the point
+	 *     of monitor-only mode: record what *would* have happened)
+	 *   - ALLOWED requests → logged only when verbose=true
+	 *
+	 * Failures inside log_request() are swallowed by the adapter itself
+	 * (never throw); we still wrap here as a belt-and-suspenders defense.
+	 */
+	private function log_and_return(RequestPackage $package, Result $result): void
+	{
+		if (!$this->config->logging) {
+			return;
+		}
+
+		$should_log = $result->is_enforced_block()
+			|| $result->is_monitored()
+			|| ($result->code === ResultCode::ALLOWED && $this->config->verbose);
+
+		if (!$should_log) {
+			return;
+		}
+
+		try {
+			$this->adapter->log_request($package, $result);
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter,
+				'log_request failed (further errors suppressed)', [
+					'error' => $e->getMessage(),
+					'exception_class' => get_class($e),
+				], 'log_request_failure'
+			);
+		}
 	}
 
 	// === Static Resource Skip Logic ===

@@ -132,11 +132,14 @@ CREATE TABLE IF NOT EXISTS `$name` (
 	`asn` VARCHAR(32),
 	`country` CHAR(2),
 	`request_time_ms` INT UNSIGNED,
+	`enforcement_action` VARCHAR(16) NOT NULL DEFAULT 'enforced',
+	`original_code` VARCHAR(50) NULL,
 	PRIMARY KEY (`id`),
 	KEY `idx_ip` (`ip`),
 	KEY `idx_status` (`status_code`),
 	KEY `idx_date` (`date`),
-	KEY `idx_bot` (`bot_category`, `bot_verified`)
+	KEY `idx_bot` (`bot_category`, `bot_verified`),
+	KEY `idx_enforcement` (`enforcement_action`, `date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 SQL;
 	}

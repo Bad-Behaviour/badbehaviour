@@ -207,6 +207,8 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					\"asn\" VARCHAR(32),
 					\"country\" CHAR(2),
 					\"request_time_ms\" INTEGER UNSIGNED,
+					\"enforcement_action\" VARCHAR(16) NOT NULL DEFAULT 'enforced',
+					\"original_code\" VARCHAR(50) DEFAULT NULL,
 					\"resolved_at\" DATETIME NULL DEFAULT NULL
 				);",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_ip\" ON \"{$name}\" (\"ip\");",
@@ -216,6 +218,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_ua_hash\" ON \"{$name}\" (\"user_agent_hash\");",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_uri_hash\" ON \"{$name}\" (\"request_uri_hash\");",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_method\" ON \"{$name}\" (\"request_method\");",
+				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_enforcement\" ON \"{$name}\" (\"enforcement_action\", \"date\");",
 				];
 		}
 		else {
@@ -253,8 +256,10 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					`ja3` CHAR(32),
 					`asn` VARCHAR(32),
 					`country` CHAR(2),
-					`request_time_ms` INT UNSIGNED,
-					`resolved_at` DATETIME NULL DEFAULT NULL,
+				`request_time_ms` INT UNSIGNED,
+				`enforcement_action` VARCHAR(16) NOT NULL DEFAULT 'enforced',
+				`original_code` VARCHAR(50) NULL,
+				`resolved_at` DATETIME NULL DEFAULT NULL,
 				PRIMARY KEY (`log_id`),
 				KEY `idx_ip` (`ip`),
 				KEY `idx_status` (`status_code`),
@@ -262,7 +267,8 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 				KEY `idx_bot` (`bot_category`, `bot_verified`),
 				KEY `idx_user_agent_hash` (`user_agent_hash`),
 				KEY `idx_request_uri_hash` (`request_uri_hash`),
-				KEY `idx_request_method` (`request_method`)
+				KEY `idx_request_method` (`request_method`),
+				KEY `idx_enforcement` (`enforcement_action`, `date`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
 			];
 		}
@@ -320,13 +326,17 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 			$asn = $q($package->asn ?? '');
 			$country = $q($package->country ?? '');
 			$time_ms = (int)($package->request_time * 1000);
+			$enforcement = $q($result->enforcement->value);
+			$original_code = $q($result->metadata['original_code'] ?? '');
 
 			$sql = "INSERT INTO `$table`
 				(`ip`,`host`,`date`,`request_method`,`request_uri`,`request_uri_hash`,`server_protocol`,
 				 `http_headers`,`user_agent`,`user_agent_hash`,`request_entity`,`status_code`,`status_message`,
-				 `support_key`,`bot_category`,`bot_verified`,`ja3`,`asn`,`country`,`request_time_ms`)
+				 `support_key`,`bot_category`,`bot_verified`,`ja3`,`asn`,`country`,`request_time_ms`,
+				 `enforcement_action`,`original_code`)
 				VALUES ($ip,$host,$date,$method,$uri,$uri_hash,$protocol,$headers,$ua,$ua_hash,$request_entity,
-				        '$status_key',$status_message,$support_key,$bot_category,$bot_verified,$ja3,$asn,$country,$time_ms)";
+				        '$status_key',$status_message,$support_key,$bot_category,$bot_verified,$ja3,$asn,$country,$time_ms,
+				        $enforcement,$original_code)";
 
 			$this->db->ll_query($sql);
 		} catch (\Throwable $e) {

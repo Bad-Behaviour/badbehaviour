@@ -711,15 +711,41 @@ class BotDetector
 	{
 		$cat = $def->category->value;
 
-		// === HARD BLOCK: category explicitly blocked ===
-		if (in_array($cat, $this->config->blocked_bot_categories, true)) {
-			return BotAction::BLOCK;
-		}
-
-		// === CLOUD INFRASTRUCTURE: never block ===
+		// === 1. SAFETY OVERRIDE: CLOUD_INFRASTRUCTURE always allowed ===
+		// Cannot be moved to blocked[] or challenge[] — blocking these
+		// takes your origin offline (CDN/LB marks origin unhealthy → downtime).
+		// Hard-coded safety; runs BEFORE user category overrides so even an
+		// accidental `'blocked' => ['cloud_infrastructure']` in bb_config.php
+		// cannot break the host application.
 		if ($cat === BotCategory::CLOUD_INFRASTRUCTURE->value) {
 			return BotAction::ALLOW;
 		}
+
+		// === 2. USER CATEGORY OVERRIDES ===
+		// Operators can pin a category to a specific action regardless of
+		// its default category-specific logic. Evaluated in priority order
+		// (most severe action wins on collision):
+		//
+		//   blocked[]   >  challenge[]  >  log_only[]  >  allowed[]
+		//
+		// All four lists default to empty — see Configuration::get_defaults()
+		// and STRICTNESS.md → Bot Category Overrides.
+		if (in_array($cat, $this->config->blocked_bot_categories, true)) {
+			return BotAction::BLOCK;
+		}
+		if (in_array($cat, $this->config->challenge_bot_categories, true)) {
+			return BotAction::CHALLENGE;
+		}
+		if (in_array($cat, $this->config->log_only_bot_categories, true)) {
+			return BotAction::LOG_ONLY;
+		}
+		if (in_array($cat, $this->config->allowed_bot_categories, true)) {
+			return BotAction::ALLOW;
+		}
+
+		// === 3. DEFAULT CATEGORY-SPECIFIC LOGIC (unchanged from 3.0) ===
+		// Runs only when no user override matched. Preserves existing
+		// behavior for operators who don't customize bot_categories.
 
 		// === FEED READERS / SHOPPING / MONITORING / ARCHIVE: allow verified ===
 		if (in_array($cat, [

@@ -47,10 +47,33 @@ return [
         'strict'           => false,
     ],
 
-    // ===== BOT CATEGORIES =====
-    'bot_categories'             => [
-        'blocked' => ['malicious'],
-    ],
+	// ===== BOT CATEGORIES =====
+	// Pin categories to a specific action regardless of their default
+	// category-specific logic. Evaluated in priority order (most severe
+	// wins on collision):
+	//
+	//   blocked[]   >  challenge[]  >  log_only[]  >  allowed[]
+	//
+	// All four default to empty; opt in as needed. CLOUD_INFRASTRUCTURE
+	// is ALWAYS allowed (hard-coded safety override — blocking CDN/LB
+	// health probes takes your origin offline).
+	'bot_categories'             => [
+		'blocked'   => [
+			// 'malicious',
+			// 'residential_proxy',  // Bright Data, Oxylabs, etc.
+		],
+		'challenge' => [
+			// 'social_crawler',     // force CAPTCHA on social scrapers
+			// 'ai_crawler',         // challenge ALL AI crawlers
+		],
+		'log_only'  => [
+			// 'security_scanner',   // log Qualys/Shodan/Censys without blocking
+		],
+		'allowed'   => [
+			// 'feed_reader',        // explicitly allow RSS aggregators
+			// 'archive_crawler',    // explicitly allow Internet Archive etc.
+		],
+	],
 
     // ===== RATE LIMITS =====
     'rate_limits'                => [

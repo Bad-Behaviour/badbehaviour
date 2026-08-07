@@ -46,7 +46,18 @@ readonly class Configuration
         public bool $strict_search_engines = false,
 
         // === Bot categories ===
+        // Operators can pin a category to a specific action regardless of
+        // its default category-specific logic. Evaluated in priority order
+        // (most severe action wins on collision):
+        //   blocked[]   >  challenge[]  >  log_only[]  >  allowed[]
+        //
+        // All four lists default to empty — see BotDetector::determine_action()
+        // for the safety override (CLOUD_INFRASTRUCTURE always wins) and the
+        // default category-specific logic that runs when no override matches.
         public array $blocked_bot_categories = [],
+        public array $challenge_bot_categories = [],
+        public array $log_only_bot_categories = [],
+        public array $allowed_bot_categories = [],
 
         // === Rate limiting ===
         public bool $rate_limit_enabled = false,
@@ -246,7 +257,13 @@ readonly class Configuration
     		strict_ai: (bool)($ai_crawlers['strict'] ?? false),
     		strict_search_engines: (bool)($merged['strict_search_engines'] ?? false),
 
+    		// === NEW: read all four bot_categories sub-keys ===
+    		// Priority order: blocked[] > challenge[] > log_only[] > allowed[]
+    		// (All four default to empty — preserves existing behavior.)
     		blocked_bot_categories: self::ensure_array($bot_categories['blocked'] ?? []),
+    		challenge_bot_categories: self::ensure_array($bot_categories['challenge'] ?? []),
+    		log_only_bot_categories: self::ensure_array($bot_categories['log_only'] ?? []),
+    		allowed_bot_categories: self::ensure_array($bot_categories['allowed'] ?? []),
 
     		rate_limit_enabled: (bool)($rate_limits['enabled'] ?? false),
     		rate_limits: self::normalize_rate_limits($rate_limits),
@@ -464,7 +481,22 @@ readonly class Configuration
             ],
 
             // === Bot categories ===
-            'bot_categories' => ['blocked' => []],
+            // All four sub-keys default to empty. Operators opt in to override
+            // category-specific defaults. See BotDetector::determine_action() for
+            // priority ordering and the CLOUD_INFRASTRUCTURE safety override.
+            //
+            //   blocked[]   — hard block by category (replaces category-specific logic)
+            //   challenge[] — force CAPTCHA on category
+            //   log_only[]  — log but never block
+            //   allowed[]   — allow verified-by-default categories
+            //
+            // Priority: blocked > challenge > log_only > allowed (most severe wins).
+            'bot_categories' => [
+                'blocked'   => [],
+                'challenge' => [],
+                'log_only'  => [],
+                'allowed'   => [],
+            ],
 
             // === Rate limits (conservative defaults; rate_limit_enabled=false) ===
             'rate_limits' => [
@@ -594,8 +626,12 @@ readonly class Configuration
     			'block_unverified' => $this->block_unverified_ai,
                 'strict' => $this->strict_ai,
             ],
+            // === NEW: round-trip all four sub-keys ===
             'bot_categories' => [
-                'blocked' => $this->blocked_bot_categories,
+                'blocked'   => $this->blocked_bot_categories,
+                'challenge' => $this->challenge_bot_categories,
+                'log_only'  => $this->log_only_bot_categories,
+                'allowed'   => $this->allowed_bot_categories,
             ],
             'rate_limits' => array_merge(['enabled' => $this->rate_limit_enabled], $this->rate_limits),
             'custom_rules' => $this->custom_rules,

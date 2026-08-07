@@ -180,21 +180,44 @@ return [
 	'strict_search_engines' => false,
 
 	/**
-	 * Bot categories to block unconditionally (default: none).
+	 * Bot categories to override with a specific action.
 	 *
-	 * What this prevents: entire classes of bots by category.
-	 *   - 'malicious': known bad bots
-	 *   - 'seo_crawler': SEMrush, Ahrefs, etc.
-	 *   - 'residential_proxy': Bright Data, etc.
-	 *   - 'security_scanner': Qualys, Shodan (logged, not blocked)
+	 * Pin a category to a specific action regardless of its default
+	 * category-specific logic. Evaluated in priority order (most severe
+	 * action wins on collision):
 	 *
-	 * FP risk: depends on category. 'residential_proxy' is safest to
-	 * block; 'security_scanner' blocks legitimate security research.
+	 *   blocked[]   >  challenge[]  >  log_only[]  >  allowed[]
 	 *
-	 * Default: empty (nothing blocked by category)
+	 * What this prevents: lets you customize bot handling without
+	 * forking the library or writing custom_rules for every bot.
+	 *   - 'blocked': hard block by category (replaces category-specific logic)
+	 *   - 'challenge': force CAPTCHA on category (e.g., social scrapers)
+	 *   - 'log_only': log but never block (e.g., security scanners)
+	 *   - 'allowed': explicitly allow a category that would otherwise
+	 *     be verified-only (e.g., feed readers, archives)
+	 *
+	 * FP risk: depends on category. 'residential_proxy' in blocked[] is
+	 * safest; 'social_crawler' in blocked[] will block legitimate link
+	 * previews from Facebook/Twitter/LinkedIn and break social sharing.
+	 *
+	 * SAFETY OVERRIDE: CLOUD_INFRASTRUCTURE is ALWAYS allowed (hard-coded
+	 * in BotDetector). Even if you add it to blocked[], it cannot be moved.
+	 * Blocking CDN/LB health probes takes your origin offline.
+	 *
+	 * Default: all four lists empty — operators opt in to overrides.
 	 */
 	'bot_categories' => [
-		'blocked' => [],   // e.g., ['residential_proxy']
+		// Hard-block by category (replaces category-specific default)
+		'blocked'   => [],   // e.g., ['residential_proxy', 'malicious']
+
+		// Force CAPTCHA on category
+		'challenge' => [],   // e.g., ['social_crawler']
+
+		// Log but never block
+		'log_only'  => [],   // e.g., ['security_scanner']
+
+		// Allow verified-by-default categories
+		'allowed'   => [],   // e.g., ['feed_reader', 'archive_crawler']
 	],
 
 	// =========================================================================

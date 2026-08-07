@@ -47,7 +47,19 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 
 	public function get_settings(): array
 	{
-		$file = __DIR__ . '/../../../config/bb_config.php';
+		$candidates = [
+			__DIR__ . '/../../config/bb_config.php',     // package root layout (your repo)
+			__DIR__ . '/../../../config/bb_config.php',  // nested layout (legacy / test fixtures)
+			'config/bb_config.php',                     // CWD-relative (CLI tools)
+		];
+
+		$file = null;
+		foreach ($candidates as $candidate) {
+			if (file_exists($candidate)) {
+				$file = $candidate;
+				break;
+			}
+		}
 
 		if (file_exists($file)) {
 			$config = SafeConfigLoader::load($file, $this, 'bb_config_load');

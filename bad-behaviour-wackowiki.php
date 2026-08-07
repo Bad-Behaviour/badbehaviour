@@ -21,7 +21,7 @@ $config = Configuration::from_array($raw, $adapter);
 $bb = new \BadBehaviour\Core\BadBehaviour($config);
 $result = $bb->run();
 
-if (!$result->is_allowed()) {
+if ($result->is_actionable()) {
 	$bb->handle_result($result);
 }
 

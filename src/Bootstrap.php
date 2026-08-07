@@ -43,19 +43,26 @@ function run(array $config_overrides = []): Result
 	$bb = new BadBehaviour($config);
 	$result = $bb->run();
 
-	// Handle blocked/challenge
-	if (!$result->is_allowed()) {
-		$bb->handle_result($result);
-	}
+    // is_actionable() is the correct gate:
+    //   - TRUE  → ENFORCED block/challenge; handle_result() serves 403
+    //   - FALSE → ALLOWED or MONITORED; let application serve normally
+    // Handle blocked/challenge
+    if ($result->is_actionable()) {
+        $bb->handle_result($result);
+    }
 
-	return $result;
+    return $result;
 }
 
 /**
  * Quick check for middleware usage - returns true if blocked
+ *
+ * Returns TRUE only for ENFORCED blocks/challenges. MONITORED results
+ * return FALSE (the request reached the application, so from the host's
+ * perspective it was "not blocked").
  */
 function check(array $config_overrides = []): bool
 {
-	$result = run($config_overrides);
-	return !$result->is_allowed();
+    $result = run($config_overrides);
+    return $result->is_actionable();
 }

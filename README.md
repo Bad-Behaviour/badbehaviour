@@ -290,7 +290,7 @@ $config = Configuration::from_array([], $adapter);   // safe defaults
 $bb = new BadBehaviour($config);                    // uses RegistryFactory::default()
 
 $result = $bb->run();
-if (!$result->is_allowed()) {
+if ($result->is_actionable()) {
     $bb->handle_result($result);
 }
 ```
@@ -327,7 +327,7 @@ $adapter = new WackoWikiAdapter($db);
 $bb = BadBehaviour::withAdapter($adapter);
 
 $result = $bb->run();
-if (!$result->is_allowed()) {
+if ($result->is_actionable()) {
     $bb->handle_result($result);
 }
 ```

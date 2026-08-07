@@ -420,31 +420,79 @@ class BadBehaviour
 		}
 	}
 
-	public function handle_result(Result $result): never
+	/**
+	 * Handle a Result by serving the appropriate response (block page
+	 * or challenge).
+	 *
+	 * === CALLING CONTRACT ===
+	 *
+	 *   ALLOWED      → don't call; let the request reach your app
+	 *   MONITORED    → don't call; let the request reach your app
+	 *   ENFORCED     → call this method; serves 403 (block page or challenge)
+	 *
+	 * Use Result::is_actionable() (or the equivalent is_enforced_block())
+	 * as the gate:
+	 *
+	 *   $result = $bb->run();
+	 *   if ($result->is_actionable()) {
+	 *       $bb->handle_result($result);
+	 *   }
+	 *   // otherwise continue serving the request normally
+	 *
+	 * === DEFENSIVE BEHAVIOR ===
+	 *
+	 * If called with a non-actionable result (ALLOWED or MONITORED),
+	 * this method logs a one-shot warning and returns NORMALLY rather
+	 * than throwing. The previous implementation threw LogicException,
+	 * which crashed production if any host integration forgot the gate.
+	 *
+	 * Why the change:
+	 *
+	 *   1. Crashing production for a misuse is too harsh — the request
+	 *      was ALLOWED or MONITORED anyway, so the right outcome is
+	 *      "let it through to the app".
+	 *
+	 *   2. The warning is logged (via ErrorReporter with a once-tag)
+	 *      so operators can find and fix the misbehaving integration
+	 *      without the site going down in the meantime.
+	 *
+	 *   3. Returning normally (instead of exiting) is safe because:
+	 *      - For ALLOWED/MONITORED, the host's code will continue and
+	 *        serve the request (which is what should happen).
+	 *      - For ENFORCED, the existing challenge/block paths still
+	 *        call exit() internally.
+	 *
+	 * @param Result $result
+	 * @return void Returns normally on misuse; never returns (exits via
+	 *              challenge or block page) for actionable results.
+	 */
+	public function handle_result(Result $result): void
 	{
-		// === NEW: refuse to serve a block page for non-enforced results ===
+		// === Defensive guard: non-actionable result = misuse ===
 		//
-		// If the host application calls handle_result() on a MONITORED result
-		// (would-have-blocked in monitor-only mode) or an ALLOWED result,
-		// throw a clear LogicException so the bug is caught immediately.
-		//
-		// Previously, handle_result() assumed any non-allowed result should
-		// produce a 403. That meant monitor-only mode could accidentally
-		// enforce a block just by calling handle_result() — silently
-		// breaking the safety guarantee.
-		if ($result->is_allowed_or_monitored()) {
-			throw new \LogicException(sprintf(
-				'handle_result() called with non-block result '
-				. '(code=%s, enforcement=%s). '
-				. 'Use Result::is_enforced_block() to check before calling. '
-				. 'Monitored and allowed results must be passed through to the application.',
-				$result->code->value,
-				$result->enforcement->value
-			));
+		// The host should have checked is_actionable() before calling.
+		// If they didn't, log a warning and return normally so the
+		// application can serve the request (which is the correct
+		// outcome for ALLOWED and MONITORED results).
+		if (!$result->is_actionable()) {
+			ErrorReporter::warning(
+				$this->adapter,
+				'handle_result() called on non-actionable result; passing through to application',
+				[
+					'code'        => $result->code->value,
+					'enforcement' => $result->enforcement->value,
+					'hint'        => 'Check Result::is_actionable() (or is_enforced_block()) '
+					. 'before calling handle_result(). ALLOWED and MONITORED '
+					. 'results must reach the application, not handle_result().',
+				],
+				'handle_result_misuse'  // once-tag: logged at most once per process
+				);
+			return;
 		}
 
 		if ($result->requires_challenge()) {
 			$this->serve_challenge($result);
+			return;
 		}
 
 		$this->serve_block_page($result);

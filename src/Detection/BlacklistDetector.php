@@ -1,6 +1,6 @@
 <?php
-// src/Detection/BlacklistDetector.php - REFINED FIVE-TIER VERSION
-// (updated to gate ua_is_bot short-circuit behind monitor-only mode)
+
+declare(strict_types=1);
 
 namespace BadBehaviour\Detection;
 
@@ -8,34 +8,62 @@ use BadBehaviour\Configuration;
 use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
+use BadBehaviour\Util\ErrorReporter;
+use Closure;
+use Throwable;
 
-class BlacklistDetector
+/**
+ * Five-tier blacklist detector.
+ *
+ * Detects attack patterns (raw XSS, SQL injection, command injection, etc.)
+ * and applies a configurable `ua_is_bot` short-circuit.
+ *
+ * === MONITOR-ONLY MODE ===
+ *
+ * The `ua_is_bot` short-circuit is suppressed in monitor-only mode because
+ * BotDetector is the sole arbiter of bot classification in that mode. The
+ * short-circuit is too broad — it matches legitimate regional search engines
+ * (Baiduspider, Sogou, Applebot, etc.) that BotDetector handles correctly.
+ *
+ * The monitor-only predicate is injected as a Closure via the constructor.
+ * It is invoked safely via check_monitor_only() with full error suppression
+ * so detection always completes — even when our own state is broken.
+ *
+ * === PHP 8.3 INVARIANTS ===
+ *
+ *   - readonly Closure property: can never be reassigned after construction
+ *   - Closure (not callable) type: strict typing, no string/array ambiguity
+ *   - Closure::fromCallable(): normalizes any callable input to Closure
+ *   - final class: prevents subclassing that could break invariants
+ *   - check_monitor_only() wraps invocation in try/catch with one-shot log
+ */
+final class BlacklistDetector
 {
-    private Configuration $config;
-
     /**
-     * Callable returning bool: true when the library is effectively in
-     * monitor-only mode (config-driven OR all-defenses-off fallback OR
-     * safe-mode). Injected by BadBehaviour so this detector stays
-     * stateless and easily testable.
+     * Monitor-only predicate.
      *
-     * Signature: () => bool
+     * Returns true when the library is in effective monitor-only mode.
+     * Invoked once per detect() call via check_monitor_only().
      *
-     * @var callable(): bool
+     * Invariants (enforced by the constructor and `readonly`):
+     *   - Always a Closure (never null, never a string/array callable)
+     *   - Cannot be reassigned after construction
+     *   - Invocation is wrapped in try/catch — never throws out of detect()
+     *
+     * @var Closure(): bool
      */
-    private $is_monitor_only;
+    private readonly Closure $is_monitor_only;
 
-    /**
-     * Tier 0.5: Raw URI attack patterns.
-     *
-     * Single combined regex, fail-fast BEFORE urldecode(). Fires only
-     * when attack payload appears UNENCODED in the raw URI — standard
-     * browsers always percent-encode <, >, ", ' per RFC 3986.
-     *
-     * Raw payload = non-browser client (scanner, modified proxy,
-     * custom script, manual cURL). Encoded payload from legitimate
-     * browser passes through to Tier 2 for contextual analysis.
-     */
+    private readonly Configuration $config;
+
+    // ── Tier 0.5: Raw URI attack patterns ─────────────────────────────────────
+    // Single combined regex, fail-fast BEFORE urldecode(). Fires only
+    // when attack payload appears UNENCODED in the raw URI — standard
+    // browsers always percent-encode <, >, ", ' per RFC 3986.
+    //
+    // Raw payload = non-browser client (scanner, modified proxy,
+    // custom script, manual cURL). Encoded payload from legitimate
+    // browser passes through to Tier 2 for contextual analysis.
     private const RAW_URI_ATTACK_REGEX = '/'
         . '<' . '(?:script|iframe|svg|img|body|input|object|embed|form|select|button|style|link|meta|base|frame|frameset|applet|video|audio|source|track|area)\b'
         . '|<\/script>'
@@ -43,72 +71,37 @@ class BlacklistDetector
         . '|vbscript\s*:'
         . '|data\s*:\s*text\/html'
         . '|data\s*:\s*application\/javascript'
-        . '|\bon\w+\s*=\s*[a-z]'   // event handler
-        . '|\bon[a-z]+\s*='           // compact form: onclick=
+        . '|\bon\w+\s*=\s*[a-z]'
+        . '|\bon[a-z]+\s*='
         . '/i';
 
-    /**
-     * Tier 1: "Must Block" — technical anomalies that NEVER occur
-     * in legitimate browser traffic. Blocked unconditionally.
-     */
+    // ── Tier 1: "Must Block" — technical anomalies that NEVER occur ─────────
+    // in legitimate browser traffic. Blocked unconditionally.
     private const ALWAYS_BLOCK_PATTERNS = [
         // === Null byte injection ===
-        '/%00/',
-        '/%2500/i',
-        '/\x00/',
-        '/%c0%80/i',                // UTF-8 overlong null byte
-        '/%e0%80%80/i',
-        '/%f0%80%80%80/i',
-
+        '/%00/', '/%2500/i', '/\x00/',
+        '/%c0%80/i', '/%e0%80%80/i', '/%f0%80%80%80/i',
         // === Double-encoding attacks ===
-        '/%252e/i',                  // ..
-        '/%252f/i',                  // /
-        '/%255c/i',                  // \
-        '/%2525/i',                  // %
-
+        '/%252e/i', '/%252f/i', '/%255c/i', '/%2525/i',
         // === Triple+ encoding ===
-        '/%25252e/i',
-        '/%25252f/i',
-
+        '/%25252e/i', '/%25252f/i',
         // === UTF-8 overlong encoding (RFC violation) ===
-        '/%c0%ae/i',                 // overlong .
-        '/%c0%af/i',                 // overlong /
-        '/%e0%80%af/i',
-
+        '/%c0%ae/i', '/%c0%af/i', '/%e0%80%af/i',
         // === Absolute system paths (Linux/Unix) ===
-        '#^/etc/passwd#i',
-        '#^/etc/shadow#i',
-        '#^/etc/hosts#i',
-        '#^/etc/sudoers#i',
-        '#^/etc/crontab#i',
-        '#^/etc/inetd\.conf#i',
-        '#^/proc/self#i',
-        '#^/proc/[0-9]+/#i',
-        '#^/sys/#i',
-        '#^/var/log/#i',
-        '#^/var/lib/#i',
-        '#^/var/run/#i',
-        '#^/var/spool/cron/#i',
-        '#^/dev/random#i',
-        '#^/dev/urandom#i',
-        '#^/tmp/\.#i',               // hidden temp files
-
+        '#^/etc/passwd#i', '#^/etc/shadow#i', '#^/etc/hosts#i',
+        '#^/etc/sudoers#i', '#^/etc/crontab#i', '#^/etc/inetd\.conf#i',
+        '#^/proc/self#i', '#^/proc/[0-9]+/#i', '#^/sys/#i',
+        '#^/var/log/#i', '#^/var/lib/#i', '#^/var/run/#i',
+        '#^/var/spool/cron/#i', '#^/dev/random#i', '#^/dev/urandom#i',
+        '#^/tmp/\.#i',
         // === Absolute system paths (Windows) ===
-        '#^/boot\.ini#i',
-        '#^/win\.ini#i',
-        '#^/system32/#i',
-        '#^/windows/#i',
-        '#^/winnt/#i',
-        '#c:\\windows#i',
-        '#c:/windows#i',
-        '#c:\\winnt#i',
-        '#c:\\boot\.ini#i',
+        '#^/boot\.ini#i', '#^/win\.ini#i', '#^/system32/#i',
+        '#^/windows/#i', '#^/winnt/#i',
+        '#c:\\windows#i', '#c:/windows#i', '#c:\\winnt#i', '#c:\\boot\.ini#i',
     ];
 
-    /**
-     * Tier 2: Contextual patterns — only block when COMBINED with
-     * suspicious context (score >= 2).
-     */
+    // ── Tier 2: Contextual patterns — only block when COMBINED with ──────────
+    // suspicious context (score >= 2).
     private const CONTEXTUAL_PATTERNS = [
         // === SQL Injection ===
         '/\b\d+\s+union\s+(?:all\s+)?select\b/i',
@@ -137,128 +130,65 @@ class BlacklistDetector
         '/\bextractvalue\s*\(\s*1\s*,/i',
         '/\bupdatexml\s*\(\s*1\s*,/i',
         '/\bfloor\s*\(\s*rand\s*\(\s*0\s*\)\s*\*\s*2\s*\)\)/i',
-
         // === XSS ===
-        '/<script\b[^>]*>/i',
-        '/<\/script>/i',
-        '/<iframe\b[^>]*>/i',
-        '/javascript\s*:\s*[a-z]/i',
-        '/\bon\w+\s*=\s*[\'"]?\s*[a-z]/i',
-        '/<svg\b[^>]*on\w+/i',
-        '/<img\b[^>]*on\w+/i',
-        '/<body\b[^>]*on\w+/i',
-        '/<input\b[^>]*on\w+/i',
-        '/<select\b[^>]*on\w+/i',
-        '/<button\b[^>]*on\w+/i',
+        '/<script\b[^>]*>/i', '/<\/script>/i', '/<iframe\b[^>]*>/i',
+        '/javascript\s*:\s*[a-z]/i', '/\bon\w+\s*=\s*[\'"]?\s*[a-z]/i',
+        '/<svg\b[^>]*on\w+/i', '/<img\b[^>]*on\w+/i',
+        '/<body\b[^>]*on\w+/i', '/<input\b[^>]*on\w+/i',
+        '/<select\b[^>]*on\w+/i', '/<button\b[^>]*on\w+/i',
         '/<form\b[^>]*on\w+/i',
-        '/\beval\s*\(\s*[a-z\$]/i',
-        '/\bexpression\s*\(\s*[a-z]/i',
-        '/vbscript\s*:/i',
-        '/data\s*:\s*text\/html/i',
+        '/\beval\s*\(\s*[a-z\$]/i', '/\bexpression\s*\(\s*[a-z]/i',
+        '/vbscript\s*:/i', '/data\s*:\s*text\/html/i',
         '/data\s*:\s*application\/javascript/i',
-
         // === Path Traversal ===
-        '#\.\./#',
-        '#\.\.\\\\#',
-        '/%2e%2e%2f/i',
-        '/%2e%2e%5c/i',
-        '/\.%2e/i',
-
+        '#\.\./#', '#\.\.\\\\#',
+        '/%2e%2e%2f/i', '/%2e%2e%5c/i', '/\.%2e/i',
         // === Command Injection ===
         '/;\s*(cat|ls|id|whoami|pwd|uname|wget|curl|nc|netcat|bash|sh|python|perl|ruby|php)\b/i',
         '/\|\s*(cat|ls|id|whoami|pwd|uname|wget|curl|nc|netcat|bash|sh|python|perl|ruby|php)\b/i',
         '/`(cat|ls|id|whoami|pwd|uname|wget|curl|nc|netcat|bash|sh|python|perl|ruby|php)`/i',
         '/\$\((cat|ls|id|whoami|pwd|uname|wget|curl|nc|netcat|bash|sh|python|perl|ruby|php)\b/i',
-
         // === Log4Shell / JNDI ===
-        '/\$\{jndi\s*:\s*ldap/i',
-        '/\$\{jndi\s*:\s*rmi/i',
-        '/\$\{jndi\s*:\s*dns/i',
-        '/\$\{lower\s*:/i',
-        '/\$\{upper\s*:/i',
-        '/\$\{::-/i',
-        '/\$\{env\s*:/i',
-        '/\$\{sys\s*:/i',
-        '/\$\{date\s*:/i',
-        '/\$\{main\s*:/i',
-        '/\$\{ctx\s*:/i',
-        '/class\.module\.classloader/i',
-
+        '/\$\{jndi\s*:\s*ldap/i', '/\$\{jndi\s*:\s*rmi/i',
+        '/\$\{jndi\s*:\s*dns/i', '/\$\{lower\s*:/i',
+        '/\$\{upper\s*:/i', '/\$\{::-/i', '/\$\{env\s*:/i',
+        '/\$\{sys\s*:/i', '/\$\{date\s*:/i', '/\$\{main\s*:/i',
+        '/\$\{ctx\s*:/i', '/class\.module\.classloader/i',
         // === Shellshock ===
         '/\(\)\s*\{[^}]*;\s*\}\s*;/',
-
         // === PHP injection ===
         '/\b(include|require|include_once|require_once)\s*\(\s*[\'"]?\s*(https?|ftp|php|data|zip|phar|expect|input|glob):/i',
-        '/\bfile\s*:\s*\/\/\s*[\w]/i',
-        '/\bphp\s*:\s*\/\//i',
-        '/\bzip\s*:\s*\/\//i',
-        '/\bphar\s*:\s*\/\//i',
-
+        '/\bfile\s*:\s*\/\/\s*[\w]/i', '/\bphp\s*:\s*\/\//i',
+        '/\bzip\s*:\s*\/\//i', '/\bphar\s*:\s*\/\//i',
         // === XXE ===
-        '/<\!entity\s+/i',
-        '/<\!doctype\s+[\w-]+\s+system\s+/i',
-
+        '/<\!entity\s+/i', '/<\!doctype\s+[\w-]+\s+system\s+/i',
         // === SSRF / Cloud Metadata ===
-        '/169\.254\.169\.254/i',
-        '/metadata\.google\.internal/i',
-        '/metadata\.azure\.com/i',
-        '/100\.100\.100\.200/i',
+        '/169\.254\.169\.254/i', '/metadata\.google\.internal/i',
+        '/metadata\.azure\.com/i', '/100\.100\.100\.200/i',
         '/fd00:ec2::254/i',
-        '/http:\/\/127\.0\.0\.1/i',
-        '/http:\/\/localhost/i',
-        '/http:\/\/\[::1\]/i',
-        '/http:\/\/0\.0\.0\.0/i',
+        '/http:\/\/127\.0\.0\.1/i', '/http:\/\/localhost/i',
+        '/http:\/\/\[::1\]/i', '/http:\/\/0\.0\.0\.0/i',
     ];
 
-    /**
-     * Tier 3: Path-only patterns — sensitive endpoint probes.
-     * Always checked (low FP risk for these specific endpoints).
-     */
+    // ── Tier 3: Path-only patterns — sensitive endpoint probes ──────────────
     private const PATH_ONLY_PATTERNS = [
-        // === CMS probing ===
-        '/\/wp-admin\/admin-ajax\.php/i',
-        '/\/xmlrpc\.php/i',
-        '/\/wp-login\.php/i',
-        '/\/administrator\/index\.php/i',
+        '/\/wp-admin\/admin-ajax\.php/i', '/\/xmlrpc\.php/i',
+        '/\/wp-login\.php/i', '/\/administrator\/index\.php/i',
         '/\/manager\/html/i',
-
-        // === Actuator / API docs ===
         '/\/actuator\/(health|env|info|metrics|trace|heapdump|threaddump|configprops|beans|mappings)\b/i',
-        '/\/swagger[\/\-]?/i',
-        '/\/api-docs/i',
-        '/\/openapi\.json/i',
+        '/\/swagger[\/\-]?/i', '/\/api-docs/i', '/\/openapi\.json/i',
         '/\/graphql\b/i',
-
-        // === Source control / secrets exposure ===
         '/\/\.git\/(config|HEAD|index|packed-refs|objects)/i',
         '/\/\.svn\/(entries|wc-db|format)/i',
-        '/\/\.env(\.|$)/i',
-        '/\/\.htaccess/i',
-        '/\/web\.config/i',
-        '/\/composer\.json/i',
-        '/\/package\.json/i',
-        '/\/yarn\.lock/i',
-        '/\/pnpm-lock\.yaml/i',
-        '/\/dockerfile/i',
-        '/\/docker-compose\.yml/i',
-        '/\/kubeconfig/i',
-        '/\/\.kube\/config/i',
-        '/\/id_rsa/i',
-        '/\/id_dsa/i',
-        '/\/id_ecdsa/i',
-        '/\/id_ed25519/i',
-        '/\/authorized_keys/i',
-        '/\/known_hosts/i',
+        '/\/\.env(\.|$)/i', '/\/\.htaccess/i', '/\/web\.config/i',
+        '/\/composer\.json/i', '/\/package\.json/i', '/\/yarn\.lock/i',
+        '/\/pnpm-lock\.yaml/i', '/\/dockerfile/i', '/\/docker-compose\.yml/i',
+        '/\/kubeconfig/i', '/\/\.kube\/config/i',
+        '/\/id_rsa/i', '/\/id_dsa/i', '/\/id_ecdsa/i', '/\/id_ed25519/i',
+        '/\/authorized_keys/i', '/\/known_hosts/i',
     ];
 
-    /**
-     * Tier 3b: Dynamic source-file extensions.
-     * Block direct access to backup/log/source files based on extension.
-     * Per your refinement: only fires when file doesn't exist (404) —
-     * but we can't check that here. Compromise: block suspicious
-     * extensions unconditionally (very low FP — these should never
-     * be served by a properly configured web server).
-     */
+    // ── Tier 3b: Sensitive file extensions ──────────────────────────────────
     private const SENSITIVE_FILE_EXTENSIONS = [
         'sql', 'bak', 'old', 'swp', 'log', 'tmp', 'orig', 'save',
         'dump', 'backup', 'copy', 'tar', 'gz', 'zip', 'rar',
@@ -266,28 +196,28 @@ class BlacklistDetector
     ];
 
     private const MALICIOUS_PREFIXES = [
-        'sqlmap', 'nmap', 'nikto', 'nessus', 'openvas', 'acunetix', 'w3af', 'skipfish',
-        'havij', 'pangolin', 'safe3', 'bsqlbf', 'sqlninja', 'thesqlinjector',
-        'dirbuster', 'gobuster', 'ffuf', 'feroxbuster', 'dirsearch', 'wfuzz',
-        'masscan', 'zmap', 'zgrab', 'httpx', 'nuclei', 'jaeles', 'dalfox',
-        'xsser', 'xsstrike', 'brutespray', 'hydra', 'medusa', 'ncrack',
-        'metasploit', 'msfconsole', 'meterpreter', 'cobaltstrike', 'bruteratel',
-        'sliver', 'mythic', 'havoc', 'silenttrinity', 'poshc2',
-        'sentry mba', 'snip', 'openbullet', 'silverbullet', 'stellar', 'woxy',
-        'account hitman', 'checker', 'config', 'combo', 'credential',
-        'scrapy', 'pyspider', 'portia', 'webmagic', 'crawlee', 'playwright',
-        'puppeteer', 'selenium', 'phantomjs', 'casperjs', 'nightmare',
-        'headless', 'chrome-headless', 'firefox-headless',
-        'emailcollector', 'emailsiphon', 'emailwolf', 'extractorpro', 'harvest',
-        'mass mail', 'mailbot', 'spambot', 'surfbot', 'webbandit',
-        'xrumer', 'zenno', 'zenoposter', 'ubot', 'autoposter', 'spam poster',
-        'comment bot', 'forum bot', 'profile bot', 'register bot',
-        'appscan', 'webinspect', 'burp', 'burpsuite', 'qualys', 'rapid7',
-        'retina', 'corer', 'secunia', 'f-secure',
-        'cobalt strike', 'sliver implant', 'mythic agent', 'havoc demon',
-        'bruteratel badge', 'poshc2 implant', 'silenttrinity stager',
-        'shodan', 'censys', 'binaryedge', 'fofa', 'zoomeye', 'hunter',
-        'onyphe', 'spyse', 'criminalip',
+        'sqlmap', 'nmap', 'nikto', 'nessus', 'openvas', 'acunetix', 'w3af',
+        'skipfish', 'havij', 'pangolin', 'safe3', 'bsqlbf', 'sqlninja',
+        'thesqlinjector', 'dirbuster', 'gobuster', 'ffuf', 'feroxbuster',
+        'dirsearch', 'wfuzz', 'masscan', 'zmap', 'zgrab', 'httpx', 'nuclei',
+        'jaeles', 'dalfox', 'xsser', 'xsstrike', 'brutespray', 'hydra',
+        'medusa', 'ncrack', 'metasploit', 'msfconsole', 'meterpreter',
+        'cobaltstrike', 'bruteratel', 'sliver', 'mythic', 'havoc',
+        'silenttrinity', 'poshc2', 'sentry mba', 'snip', 'openbullet',
+        'silverbullet', 'stellar', 'woxy', 'account hitman', 'checker',
+        'config', 'combo', 'credential', 'scrapy', 'pyspider', 'portia',
+        'webmagic', 'crawlee', 'playwright', 'puppeteer', 'selenium',
+        'phantomjs', 'casperjs', 'nightmare', 'headless', 'chrome-headless',
+        'firefox-headless', 'emailcollector', 'emailsiphon', 'emailwolf',
+        'extractorpro', 'harvest', 'mass mail', 'mailbot', 'spambot',
+        'surfbot', 'webbandit', 'xrumer', 'zenno', 'zenoposter', 'ubot',
+        'autoposter', 'spam poster', 'comment bot', 'forum bot',
+        'profile bot', 'register bot', 'appscan', 'webinspect', 'burp',
+        'burpsuite', 'qualys', 'rapid7', 'retina', 'corer', 'secunia',
+        'f-secure', 'cobalt strike', 'sliver implant', 'mythic agent',
+        'havoc demon', 'bruteratel badge', 'poshc2 implant',
+        'silenttrinity stager', 'shodan', 'censys', 'binaryedge',
+        'fofa', 'zoomeye', 'hunter', 'onyphe', 'spyse', 'criminalip',
     ];
 
     private const MALICIOUS_SUBSTRINGS = [
@@ -306,11 +236,7 @@ class BlacklistDetector
         'dridex', 'zeus', 'gozi', 'ramnit', 'ursnif', 'dana bot',
     ];
 
-    /**
-     * Tier 4: Credential leak patterns — entropy-based detection.
-     * Only flags when value has high character-class diversity AND
-     * sufficient length. Fast O(n) check, no full Shannon entropy.
-     */
+    // ── Tier 4: Credential leak patterns ─────────────────────────────────────
     private const CREDENTIAL_PARAM_PATTERNS = [
         '/[\?&\/](password|passwd|pwd)\s*=\s*([^&\s]{20,})/i',
         '/[\?&\/](api[_\-]?key|access[_\-]?token|secret[_\-]?key|private[_\-]?key)\s*=\s*([^&\s]{32,})/i',
@@ -318,10 +244,6 @@ class BlacklistDetector
         '/[\?&\/](bearer|authorization)\s*=\s*([^&\s]{40,})/i',
     ];
 
-    /**
-     * Whitelist common URL parameters that look like keys but aren't.
-     * Even high-entropy values in these params are allowed.
-     */
     private const CREDENTIAL_WHITELIST_PARAMS = [
         'redirect', 'return', 'next', 'back', 'url', 'uri',
         'return_url', 'return_to', 'redirect_url', 'callback',
@@ -340,36 +262,140 @@ class BlacklistDetector
         '/(union|select|insert|update|delete|drop|create|alter)\s+/i',
     ];
 
+    // ── Failure-mode flags ───────────────────────────────────────────────────
+    // Guarded by ErrorReporter's once-tag mechanism — at most one entry per
+    // process for each unique failure mode.
+    private static bool $failure_logged = false;
+
     /**
      * @param Configuration $config
-     * @param (callable(): bool)|null $is_monitor_only Optional injection point
-     *        for monitor-only detection. BadBehaviour passes a closure bound
-     *        to its own state; tests can pass any callable returning bool.
-     *        Defaults to a static `false` (i.e., "never monitor-only") so
-     *        existing call sites and unit tests don't need to change.
+     * @param (callable(): bool)|null $is_monitor_only Optional predicate
+     *        returning true when the library is in effective monitor-only
+     *        mode. When true, the `ua_is_bot` short-circuit in detect()
+     *        is suppressed.
+     *
+     *        BadBehaviour passes:
+     *            is_monitor_only: fn(): bool => $this->is_monitor_only_effective()
+     *
+     *        Tests can pass any callable returning bool.
+     *        Default: a closure that always returns false (i.e., "never
+     *        monitor-only"), preserving the original behavior before
+     *        monitor-only mode existed.
      */
     public function __construct(
         Configuration $config,
-        ?callable $is_monitor_only = null
+        ?callable $is_monitor_only = null,
     ) {
         $this->config = $config;
-        $this->is_monitor_only = $is_monitor_only ?? static fn(): bool => false;
+
+        // Closure::fromCallable() normalizes ANY callable type into a Closure:
+        //   - Closures (identity)
+        //   - Strings  (function names)
+        //   - Arrays   ([$obj, 'method'] or ['Class', 'method'])
+        //   - Invokable objects
+        //
+        // The result is *always* a Closure — never null, never a string.
+        // Combined with the `readonly` modifier, this guarantees the
+        // property cannot be null/uninitialized at any point after construction.
+        //
+        // If the caller passes a non-callable (e.g., a malformed array),
+        // Closure::fromCallable() throws TypeError immediately — a loud
+        // failure at construction time rather than a silent "undefined method"
+        // at detection time.
+        $this->is_monitor_only = $is_monitor_only !== null
+            ? Closure::fromCallable($is_monitor_only)
+            : static fn(): bool => false;
+    }
+
+    /**
+     * Safely invoke the monitor-only predicate.
+     *
+     * This is the ONLY place the predicate is invoked. All error paths are
+     * handled here so detect() never has to deal with Throwable from the
+     * predicate itself.
+     *
+     * === FAILURE SEMANTICS ===
+     *
+     *   - Normal return (bool): used as-is.
+     *   - Non-bool return: coerced to bool via (bool) cast, logged once.
+     *   - Throws Throwable: returns TRUE (assume monitor-only).
+     *
+     * Returning TRUE on failure is the safe choice:
+     *
+     *   - TRUE means "suppress the ua_is_bot short-circuit" — i.e., let
+     *     the request through to other detectors instead of blocking here.
+     *   - If the predicate is broken, we'd rather MISS a few bots than
+     *     BLOCK real users. Missing a bot = a request that reaches
+     *     BotDetector / RateLimit / DNSBL and still gets caught there.
+     *     Blocking a real user = a 403 for a legitimate browser.
+     *
+     * The error is logged via ErrorReporter with a one-shot tag so we
+     * don't spam the log on every request when the predicate is broken.
+     *
+     * @return bool true = monitor-only mode (suppress short-circuit)
+     */
+    private function check_monitor_only(): bool
+    {
+        $predicate = $this->is_monitor_only;
+
+        try {
+            $result = $predicate();
+
+            // Coerce non-bool returns to bool. A predicate returning
+            // int|string|null would otherwise silently misbehave.
+            if (!is_bool($result)) {
+                if (!self::$failure_logged) {
+                    self::$failure_logged = true;
+                    ErrorReporter::error(
+                        null,
+                        'BlacklistDetector: monitor-only predicate returned non-bool',
+                        [
+                            'actual_type' => get_debug_type($result),
+                            'hint'        => 'Predicate must return bool; coerced via (bool) cast',
+                        ],
+                        'blacklist_predicate_non_bool'
+                    );
+                }
+                return (bool) $result;
+            }
+
+            return $result;
+        } catch (Throwable $e) {
+            // Predicate threw. Fail OPEN (assume monitor-only = don't block
+            // via ua_is_bot short-circuit). Log once per process.
+            if (!self::$failure_logged) {
+                self::$failure_logged = true;
+                ErrorReporter::error(
+                    null,
+                    'BlacklistDetector: monitor-only predicate threw',
+                    [
+                        'exception_class' => $e::class,
+                        'error'           => $e->getMessage(),
+                        'hint'            => 'Failing OPEN: assume monitor-only mode to avoid FPs',
+                    ],
+                    'blacklist_predicate_threw'
+                );
+            }
+            return true;
+        }
     }
 
     public function detect(RequestPackage $package): ?Result
     {
-        $ua = $package->user_agent;
-        $uri = $package->request_uri;
-        $method = $package->request_method;
+        $ua      = $package->user_agent;
+        $uri     = $package->request_uri;
+        $method  = $package->request_method;
         $ua_lower = strtolower($ua);
         $headers = $package->headers_mixed;
 
         // === Empty/invalid UA — ALWAYS ENFORCE ===
         // No UA = never a legitimate browser, mobile app, or HTTP client.
-        // This is an "obvious attack" that we enforce even in monitor-only
-        // mode (see BadBehaviour::maybe_demote_to_monitored for the policy).
         if (empty($ua) || $ua === '-' || strlen(trim($ua)) < 5) {
-            return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'Empty or invalid User-Agent', $package);
+            return Result::block(
+                ResultCode::BLOCKED_MALICIOUS_UA,
+                'Empty or invalid User-Agent',
+                $package
+            );
         }
 
         // === ua_is_bot short-circuit — GATED by monitor-only ===
@@ -389,14 +415,20 @@ class BlacklistDetector
         //      which fires for legitimate regional search engines (Baidu, Sogou,
         //      Applebot) that the 'minimal' preset doesn't include.
         //
-        // Gating this check behind is_monitor_only() prevents monitor-only
-        // mode from accidentally blocking legitimate search-engine traffic.
-        if (!$this->is_monitor_only()) {
+        // check_monitor_only() handles all error cases (closure throws,
+        // returns non-bool, etc.) by returning TRUE (assume monitor-only).
+        // See that method's docblock for the failure-semantics rationale.
+        if (!$this->check_monitor_only()) {
             if ($package->ua_is_bot) {
-                return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, 'Bot detected by UA parser', $package, [
-                    'device_type' => $package->ua_device,
-                    'browser' => $package->ua_browser,
-                ]);
+                return Result::block(
+                    ResultCode::BLOCKED_MALICIOUS_UA,
+                    'Bot detected by UA parser',
+                    $package,
+                    [
+                        'device_type' => $package->ua_device,
+                        'browser'     => $package->ua_browser,
+                    ]
+                );
             }
         }
 
@@ -404,22 +436,34 @@ class BlacklistDetector
 
         if (!$is_http_tool) {
             foreach (self::MALICIOUS_PREFIXES as $prefix) {
-                if (str_starts_with($ua_lower, $prefix) ||
-                    preg_match('/\b' . preg_quote($prefix, '/') . '\b/i', $ua)) {
-                    return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, "Malicious UA prefix: $prefix", $package);
+                if (str_starts_with($ua_lower, $prefix)
+                    || preg_match('/\b' . preg_quote($prefix, '/') . '\b/i', $ua)) {
+                    return Result::block(
+                        ResultCode::BLOCKED_MALICIOUS_UA,
+                        "Malicious UA prefix: $prefix",
+                        $package
+                    );
                 }
             }
 
             foreach (self::MALICIOUS_SUBSTRINGS as $substr) {
                 if (stripos($ua, $substr) !== false) {
-                    return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, "Malicious UA substring: $substr", $package);
+                    return Result::block(
+                        ResultCode::BLOCKED_MALICIOUS_UA,
+                        "Malicious UA substring: $substr",
+                        $package
+                    );
                 }
             }
         }
 
         foreach (self::UA_REGEX as $pattern) {
             if (@preg_match($pattern, $ua)) {
-                return Result::block(ResultCode::BLOCKED_MALICIOUS_UA, "Malicious UA pattern", $package);
+                return Result::block(
+                    ResultCode::BLOCKED_MALICIOUS_UA,
+                    'Malicious UA pattern',
+                    $package
+                );
             }
         }
 
@@ -430,10 +474,15 @@ class BlacklistDetector
         // produces unencoded <script> or javascript: in the URI).
         if (@preg_match(self::RAW_URI_ATTACK_REGEX, $uri)) {
             $matched_pattern = $this->extract_matched_pattern(self::RAW_URI_ATTACK_REGEX, $uri);
-            return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Raw attack payload in URI", $package, [
-                'tier'         => 'raw_uri',
-                'matched'      => $matched_pattern,
-            ]);
+            return Result::block(
+                ResultCode::BLOCKED_ATTACK_PATTERN,
+                'Raw attack payload in URI',
+                $package,
+                [
+                    'tier'    => 'raw_uri',
+                    'matched' => $matched_pattern,
+                ]
+            );
         }
 
         $normalized_uri = urldecode($uri);
@@ -442,10 +491,15 @@ class BlacklistDetector
         foreach (self::ALWAYS_BLOCK_PATTERNS as $pattern) {
             if (@preg_match($pattern, $normalized_uri)) {
                 $matched_pattern = $this->extract_matched_pattern($pattern, $normalized_uri);
-                return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Technical anomaly in URL", $package, [
-                    'tier'    => 'always_block',
-                    'matched' => $matched_pattern,
-                ]);
+                return Result::block(
+                    ResultCode::BLOCKED_ATTACK_PATTERN,
+                    'Technical anomaly in URL',
+                    $package,
+                    [
+                        'tier'    => 'always_block',
+                        'matched' => $matched_pattern,
+                    ]
+                );
             }
         }
 
@@ -457,11 +511,16 @@ class BlacklistDetector
             foreach (self::CONTEXTUAL_PATTERNS as $pattern) {
                 if (@preg_match($pattern, $normalized_uri)) {
                     $matched_pattern = $this->extract_matched_pattern($pattern, $normalized_uri);
-                    return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Contextual attack pattern", $package, [
-                        'tier'          => 'contextual',
-                        'context_score' => $context_score,
-                        'matched'       => $matched_pattern,
-                    ]);
+                    return Result::block(
+                        ResultCode::BLOCKED_ATTACK_PATTERN,
+                        'Contextual attack pattern',
+                        $package,
+                        [
+                            'tier'          => 'contextual',
+                            'context_score' => $context_score,
+                            'matched'       => $matched_pattern,
+                        ]
+                    );
                 }
             }
         }
@@ -471,44 +530,54 @@ class BlacklistDetector
         foreach (self::PATH_ONLY_PATTERNS as $pattern) {
             if (@preg_match($pattern, $path)) {
                 $matched_pattern = $this->extract_matched_pattern($pattern, $path);
-                return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Sensitive path probe", $package, [
-                    'tier'    => 'path_only',
-                    'matched' => $matched_pattern,
-                ]);
+                return Result::block(
+                    ResultCode::BLOCKED_ATTACK_PATTERN,
+                    'Sensitive path probe',
+                    $package,
+                    [
+                        'tier'    => 'path_only',
+                        'matched' => $matched_pattern,
+                    ]
+                );
             }
         }
 
         // Tier 3b: sensitive file extensions
         $path_ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
         if ($path_ext !== '' && in_array($path_ext, self::SENSITIVE_FILE_EXTENSIONS, true)) {
-            // Only block if path doesn't contain safe segments
-            // (e.g. /css/style.css is fine but /style.sql is not)
-            // We use a simple heuristic: if the extension is in the
-            // sensitive list AND the path doesn't include common asset dirs
             if (!$this->is_asset_path($path)) {
-                return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Sensitive file extension access", $package, [
-                    'tier' => 'path_only',
-                    'matched' => "ext:$path_ext",
-                ]);
+                return Result::block(
+                    ResultCode::BLOCKED_ATTACK_PATTERN,
+                    'Sensitive file extension access',
+                    $package,
+                    [
+                        'tier'    => 'path_only',
+                        'matched' => "ext:$path_ext",
+                    ]
+                );
             }
         }
 
         // Tier 4: credential leak (with whitelist)
-        foreach (self::CREDENTIAL_PARAM_PATTERNS as $idx => $pattern) {
+        foreach (self::CREDENTIAL_PARAM_PATTERNS as $pattern) {
             if (@preg_match($pattern, $normalized_uri, $m)) {
                 $param_name = $this->extract_param_name($pattern);
-                // Check whitelist
                 if ($this->is_whitelisted_param($param_name, $headers)) {
                     continue;
                 }
                 $value = $m[2] ?? '';
                 if ($this->has_high_entropy($value)) {
                     $matched_pattern = $this->extract_matched_pattern($pattern, $normalized_uri);
-                    return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "High-entropy credential in URL", $package, [
-                        'tier'    => 'credential_leak',
-                        'param'   => $param_name,
-                        'matched' => $matched_pattern,
-                    ]);
+                    return Result::block(
+                        ResultCode::BLOCKED_ATTACK_PATTERN,
+                        'High-entropy credential in URL',
+                        $package,
+                        [
+                            'tier'    => 'credential_leak',
+                            'param'   => $param_name,
+                            'matched' => $matched_pattern,
+                        ]
+                    );
                 }
             }
         }
@@ -518,43 +587,58 @@ class BlacklistDetector
             $content_type = $headers['Content-Type'] ?? '';
             $content_type_lower = strtolower($content_type);
 
-            $is_json = str_contains($content_type_lower, 'application/json');
             $is_multipart = str_starts_with($content_type_lower, 'multipart/form-data');
             $is_form = str_contains($content_type_lower, 'application/x-www-form-urlencoded');
 
             if ($is_form) {
                 $entity = $package->request_entity;
 
-                if (isset($entity['title']) && isset($entity['url']) && isset($entity['blog_name'])) {
+                if (isset($entity['title'], $entity['url'], $entity['blog_name'])) {
                     if ($this->is_suspicious_trackback($headers, $entity)) {
-                        return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, 'Suspicious trackback', $package);
+                        return Result::block(
+                            ResultCode::BLOCKED_ATTACK_PATTERN,
+                            'Suspicious trackback',
+                            $package
+                        );
                     }
                 }
 
                 if (!$this->config->offsite_forms && isset($headers['Referer'])) {
                     if ($this->is_offsite_form($headers, $package)) {
-                        return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, 'Offsite form submission', $package);
+                        return Result::block(
+                            ResultCode::BLOCKED_ATTACK_PATTERN,
+                            'Offsite form submission',
+                            $package
+                        );
                     }
                 }
 
                 foreach ($entity as $key => $value) {
-                    if ($this->is_safe_content_field($key)) {
+                    if ($this->is_safe_content_field((string) $key)) {
                         continue;
                     }
 
-                    $key_str = (string)$key;
+                    $key_str = (string) $key;
                     $value_str = is_string($value) ? $value : (is_array($value) ? json_encode($value) : '');
 
                     if (stripos($key_str, 'document.write') !== false
                         || stripos($value_str, 'document.write') !== false) {
-                        return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, 'Malicious document.write', $package);
+                        return Result::block(
+                            ResultCode::BLOCKED_ATTACK_PATTERN,
+                            'Malicious document.write',
+                            $package
+                        );
                     }
 
                     $normalized_value = urldecode($value_str);
 
                     foreach (self::ALWAYS_BLOCK_PATTERNS as $pattern) {
                         if (@preg_match($pattern, $normalized_value)) {
-                            return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Attack pattern in body", $package);
+                            return Result::block(
+                                ResultCode::BLOCKED_ATTACK_PATTERN,
+                                'Attack pattern in body',
+                                $package
+                            );
                         }
                     }
 
@@ -562,10 +646,15 @@ class BlacklistDetector
                         foreach (self::CONTEXTUAL_PATTERNS as $pattern) {
                             if (@preg_match($pattern, $normalized_value)) {
                                 $matched_pattern = $this->extract_matched_pattern($pattern, $normalized_value);
-                                return Result::block(ResultCode::BLOCKED_ATTACK_PATTERN, "Contextual attack in body", $package, [
-                                    'tier'    => 'contextual',
-                                    'matched' => $matched_pattern,
-                                ]);
+                                return Result::block(
+                                    ResultCode::BLOCKED_ATTACK_PATTERN,
+                                    'Contextual attack in body',
+                                    $package,
+                                    [
+                                        'tier'    => 'contextual',
+                                        'matched' => $matched_pattern,
+                                    ]
+                                );
                             }
                         }
                     }
@@ -576,23 +665,16 @@ class BlacklistDetector
         return null;
     }
 
-    /**
-     * Extract the matched pattern portion from URI (for audit logging).
-     * Returns a sanitized snippet of what triggered the block.
-     */
+    // ── Helper methods (unchanged from original) ──────────────────────────────
+
     private function extract_matched_pattern(string $pattern, string $subject): ?string
     {
         if (@preg_match($pattern, $subject, $m)) {
-            $matched = $m[0] ?? '';
-            // Truncate for log safety
-            return substr($matched, 0, 100);
+            return substr($m[0] ?? '', 0, 100);
         }
         return null;
     }
 
-    /**
-     * Extract parameter name from a credential pattern.
-     */
     private function extract_param_name(string $pattern): string
     {
         if (preg_match('/\(\?:(.*?)\)/', $pattern, $m)) {
@@ -601,9 +683,6 @@ class BlacklistDetector
         return 'unknown';
     }
 
-    /**
-     * Check if a credential parameter is whitelisted.
-     */
     private function is_whitelisted_param(string $param_name, array $headers): bool
     {
         $lower = strtolower($param_name);
@@ -615,29 +694,19 @@ class BlacklistDetector
         return false;
     }
 
-    /**
-     * Fast entropy check — character-class diversity + length.
-     * Returns true if value has at least 3 of 4 char classes
-     * (lower, upper, digit, special) AND length >= 20.
-     *
-     * O(n) — much faster than full Shannon entropy calculation.
-     */
     private function has_high_entropy(string $value): bool
     {
         if (strlen($value) < 20) {
             return false;
         }
         $classes = 0;
-        if (preg_match('/[a-z]/', $value)) $classes++;
-        if (preg_match('/[A-Z]/', $value)) $classes++;
-        if (preg_match('/[0-9]/', $value)) $classes++;
+        if (preg_match('/[a-z]/', $value))  $classes++;
+        if (preg_match('/[A-Z]/', $value))  $classes++;
+        if (preg_match('/[0-9]/', $value))  $classes++;
         if (preg_match('/[^a-zA-Z0-9]/', $value)) $classes++;
         return $classes >= 3;
     }
 
-    /**
-     * Check if path is in a safe asset directory.
-     */
     private function is_asset_path(string $path): bool
     {
         $safe_prefixes = [
@@ -653,9 +722,6 @@ class BlacklistDetector
         return false;
     }
 
-    /**
-     * Compute suspicion score. TRUST signals subtract, SUSPICION signals add.
-     */
     private function compute_context_score(
         RequestPackage $package,
         string $ua,
@@ -664,44 +730,36 @@ class BlacklistDetector
     ): int {
         $score = 0;
 
-        // === TRUST SIGNALS ===
-
         if ($this->is_trusted_browser($package, $headers)) {
             $score -= 3;
         }
-
         if ($this->has_valid_same_origin_referer($headers)) {
             $score -= 2;
         }
-
         if (!empty($headers['Sec-Ch-Ua'])) {
             $score -= 2;
         }
 
-        // === SUSPICION SIGNALS ===
-
         if ($is_http_tool) {
             $score += 3;
         }
-
         if (preg_match('/^Mozilla\/5\.0(\s*\()?/i', $ua) && $package->ua_browser === 'Unknown') {
             $score += 3;
         }
-
         if (strlen($ua) < 10 || preg_match('/^[a-z0-9_\-\.]{5,20}$/i', $ua)) {
             $score += 2;
         }
-
-        $method = $package->request_method;
-        if ($method === 'GET' && empty($headers['Accept']) && empty($headers['Accept-Language'])) {
+        if ($package->request_method === 'GET'
+            && empty($headers['Accept'])
+            && empty($headers['Accept-Language'])) {
             $score += 2;
         }
-
-        if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true) && empty($headers['Referer'])) {
+        if (in_array($package->request_method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+            && empty($headers['Referer'])) {
             $score += 1;
         }
-
-        if ($package->ua_major !== null && $package->ua_major > 0 && $package->ua_major < 90
+        if ($package->ua_major !== null && $package->ua_major > 0
+            && $package->ua_major < 90
             && !in_array($package->ua_browser, ['Internet Explorer', 'Unknown'], true)) {
             $score += 1;
         }
@@ -718,7 +776,9 @@ class BlacklistDetector
         if (!$package->claims_modern_browser()) {
             return false;
         }
-        if (empty($headers['Accept']) || empty($headers['Accept-Encoding']) || empty($headers['Accept-Language'])) {
+        if (empty($headers['Accept'])
+            || empty($headers['Accept-Encoding'])
+            || empty($headers['Accept-Language'])) {
             return false;
         }
         return true;
@@ -802,19 +862,16 @@ class BlacklistDetector
         if ($this->looks_like_browser($this->parse_browser($ua))) {
             return true;
         }
-
-        if (isset($headers['Via']) || isset($headers['Max-Forwards'])
-            || isset($headers['X-Forwarded-For']) || isset($headers['Client-Ip'])) {
+        if (isset($headers['Via'], $headers['Max-Forwards'])
+            || isset($headers['X-Forwarded-For'], $headers['Client-Ip'])) {
             return true;
         }
-
         if (stripos($ua, 'WordPress/') !== false) {
             $ct = $headers['Content-Type'] ?? '';
             if (!str_contains($ct, 'charset=')) {
                 return true;
             }
         }
-
         return false;
     }
 
@@ -822,7 +879,6 @@ class BlacklistDetector
     {
         $referer = $headers['Referer'] ?? '';
         $host = $headers['Host'] ?? '';
-
         if (empty($referer) || empty($host)) return false;
 
         $url = parse_url($referer);

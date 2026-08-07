@@ -1,992 +1,658 @@
 <?php
 /**
- * Bad Behaviour 3.0 — Example Configuration
+ * BadBehaviour 3.0 — Configuration Reference
  *
  * Copy this file to config/bb_config.php and customize.
- * This file is loaded by BadBehaviour::withAdapter() and Configuration::from_file().
+ * Any setting you omit will use the default (safe, FP-prevention baseline).
  *
- * --- QUICK START ---
+ * ============================================================================
+ * HOW TO USE
+ * ============================================================================
  *
- * The shipped defaults match Bad Behaviour 2.x behavior exactly.
- *   1. cp config/bb_config.example.php config/bb_config.php
- *   2. (Optional) Edit config/bb_config.php to enable features
- *   3. Deploy — no other steps required for a drop-in upgrade
+ *   1. The ONLY settings most operators need are at the top of this file:
+ *        preset, strictness, logging, behind_proxy
+ *   2. Everything else is documented below for fine-tuning
+ *   3. You can omit this file entirely; defaults will be used
  *
- * --- CONFIGURATION PROFILES ---
+ * ============================================================================
+ * PRESETS
+ * ============================================================================
  *
- * Three reference profiles cover ~95% of deployments:
+ *   minimal          ~30 most common bots. Default. Fastest matching.
+ *   full             All ~100 shipped bots. Slower but most thorough.
+ *   verified-only    Only bots with DNS verification or IP ranges.
+ *   no-ai            Everything except AI crawlers.
+ *   no-seo           Everything except SEO crawlers.
+ *   eu-only          European search engines + EU-relevant bots.
+ *   human-only       No bots recognized (combine with custom registry).
+ *   custom           Only your custom bots from bb_registry.php.
  *
- *   DEFAULT  — 2.x-compatible, no FP risk, AJAX / uploads / HTTP tools all work
- *   MEDIUM   — Production-grade, adds Client Hints + agentic detection (roll out per week)
- *   STRICT   — High-security / API-only, may break AJAX / JSON / old browsers
+ * ============================================================================
+ * STRICTNESS LEVELS
+ * ============================================================================
  *
- * See docs/CONFIGURATION.md for full profile configs and per-setting rationale.
+ *   monitor-only     Log everything, block only obvious attacks.
+ *                    Use when: evaluating the library, or blocking real
+ *                    users is worse than letting bots through.
  *
- * --- ENVIRONMENT EXAMPLES ---
+ *   normal           (Default) Sync DNS verification ON. Unverified
+ *                    bots logged but NOT blocked. Rate limiting ON
+ *                    with conservative thresholds. Experimental
+ *                    detectors OFF.
  *
- *   Shared hosting / no monitoring / AJAX is critical?  → DEFAULT
- *   Public CMS with modern browser traffic?             → MEDIUM
- *   Internal API / B2B / paid content?                 → STRICT
+ *   strict           All detectors ON. Unverified AI blocked. Forward
+ *                    DNS confirmation enabled. Tighter rate limits.
+ *                    Use only when: actively seeing spoofing/scraping.
  *
- * @see docs/CONFIGURATION.md
- * @see docs/MIGRATION.md      (2.x → 3.0 upgrade guide)
- * @see docs/CHANGELOG.md
+ * ============================================================================
+ * FALSE POSITIVE PHILOSOPHY
+ * ============================================================================
+ *
+ * Every detection feature carries a tradeoff between catching bots and
+ * blocking real users. The comments below describe what each setting
+ * prevents AND what false-positive risk it introduces, so you can make
+ * informed decisions about whether to deviate from defaults.
  */
 
 return [
 
-    // ============================================================
-    // CORE
-    // ============================================================
-
-    /**
-     * Master switch for request logging.
-     * When false, blocked requests are not written to the database.
-     * Disabling logging degrades some behavioral detection (rotating UA,
-     * rapid request detection rely on history).
-     *
-     * @var bool Default: true
-     */
-    'logging' => true,
-
-    /**
-     * When true, EVERY request is logged (not just blocked).
-     * Useful for debugging; expensive on high-traffic sites.
-     *
-     * @var bool Default: false
-     */
-    'verbose' => false,
-
-    /**
-     * Strict mode — additional header validation (Accept-Encoding required).
-     * Breaks old browsers, privacy-focused browsers (some Brave configs),
-     * and any non-browser client that doesn't send Accept-Encoding.
-     *
-     * Recommended: enable only on internal APIs or after FP audit.
-     *
-     * @var bool Default: false
-     */
-    'strict' => false,
-
-    /**
-     * When true, reject form POSTs whose Referer header doesn't match Host.
-     * Breaks legitimate external form submissions (e.g., payment processors
-     * posting back to your site).
-     *
-     * @var bool Default: false
-     */
-    'offsite_forms' => false,
-
-    /**
-     * When true, the admin email is shown on the block page.
-     * Combine with show_detailed_block_page for full user support.
-     *
-     * @var bool Default: false
-     */
-    'show_contact_info' => false,
-
-    /**
-     * When true, the block page shows the request URI, reason, and support key.
-     * When false, only "Reference #abc-1234" is shown (terse).
-     *
-     * @var bool Default: false
-     */
-    'show_detailed_block_page' => false,
-
-    // ============================================================
-    // REVERSE PROXY
-    // ============================================================
-
-    /**
-     * REQUIRED if behind Cloudflare, AWS ALB, nginx reverse proxy, etc.
-     * Without this, Bad Behaviour sees the proxy's IP instead of the real client.
-     *
-     * ⚠️  CRITICAL: Never enable 'enabled' => true without 'addresses' populated.
-     *     Otherwise attackers can spoof their IP via the proxy header.
-     */
-    'reverse_proxy' => [
-        /**
-         * Master switch.
-         *
-         * @var bool Default: false
-         */
-        'enabled' => false,
-
-        /**
-         * HTTP header carrying the real client IP.
-         * Cloudflare: CF-Connecting-IP
-         * AWS ALB:    X-Forwarded-For
-         * nginx:      X-Real-IP (if configured)
-         *
-         * @var string Default: 'X-Forwarded-For'
-         */
-        'header' => 'X-Forwarded-For',
-
-        /**
-         * CIDR ranges of trusted proxies.
-         * Must include ALL proxies in front of your app.
-         * For Cloudflare, see: https://www.cloudflare.com/ips/
-         *
-         * @var string[] Default: []
-         */
-        'addresses' => [
-            // '173.245.48.0/20',
-            // '103.21.244.0/22',
-            // '103.22.200.0/22',
-            // '103.31.4.0/22',
-            // '141.101.64.0/18',
-            // '108.162.192.0/18',
-            // '190.93.240.0/20',
-            // '188.114.96.0/20',
-            // '197.234.240.0/22',
-            // '198.41.128.0/17',
-            // '162.158.0.0/15',
-            // '104.16.0.0/13',
-            // '104.24.0.0/14',
-            // '172.64.0.0/13',
-            // '131.0.72.0/22',
-        ],
-    ],
-
-    // ============================================================
-    // AI CRAWLERS
-    // ============================================================
-
-    /**
-     * Tokens (matched against robots_txt_token in Registry) for AI crawlers
-     * that should bypass all checks. Verified by DNS (reverse lookup) and/or IP.
-     *
-     * Default allowed: GPTBot, ClaudeBot, Google-Extended
-     * To allow none: 'allowed' => []
-     */
-    'ai_crawlers' => [
-        /**
-         * Allowed AI crawler tokens (verified bots bypass everything).
-         *
-         * @var string[]
-         */
-        'allowed' => [
-            'GPTBot',           // OpenAI
-            'ClaudeBot',        // Anthropic
-            'Google-Extended',  // Google Vertex/Bard/Gemini
-            'PerplexityBot',    // Perplexity
-            'GrokBot',          // xAI
-            'MistralBot',       // Mistral AI
-            'YouBot',           // You.com
-            'Meta-ExternalAgent', // Meta AI
-        ],
-
-        /**
-         * When true, unverified AI crawlers (UA matches but DNS/IP doesn't)
-         * are blocked. Strongly recommended.
-         *
-         * @var bool Default: true
-         */
-        'block_unverified' => true,
-
-        /**
-         * When true, even verified AI crawlers NOT in 'allowed' are blocked.
-         * When false (default), they're challenged instead.
-         *
-         * @var bool Default: false
-         */
-        'strict' => false,
-    ],
-
-    // ============================================================
-    // BOT CATEGORIES
-    // ============================================================
-
-    /**
-     * Categories of known bots to handle in specific ways.
-     * Each entry configures the default behavior for that category.
-     *
-     * Categories:
-     *   search_engine        — Googlebot, Bingbot, Yandex, Baidu, regional SE
-     *   ai_crawler           — GPTBot, Claude, Gemini, etc.
-     *   social_crawler       — Facebook, Twitter, Kakao, LINE, WeChat
-     *   seo_crawler          — Ahrefs, Semrush, Siteimprove, etc.
-     *   archive_crawler      — Internet Archive, BnF, UKWA, etc.
-     *   monitoring           — UptimeRobot, Pingdom
-     *   feed_reader          — Feedly, Apple News, Google News   (NEW)
-     *   shopping_crawler     — Google Shopping, FB Catalog       (NEW)
-     *   cloud_infrastructure — Cloudflare/AWS/GCP/Azure/Fastly   (NEW — never block)
-     *   security_scanner     — Qualys, Shodan, Censys            (NEW — log only)
-     *   malicious            — Known-bad actors
-     *
-     * 'blocked' — block entirely
-     * 'challenge' — issue PoW/captcha
-     * 'allow' — bypass (verified only)
-     * 'log_only' — record, never block
-     */
-	'bot_categories' => [
-		/**
-		 * Categories to BLOCK entirely.
-		 * Default: ['malicious'] — block nothing else out-of-the-box.
-		 *
-		 * Add 'seo_crawler' to block Ahrefs, Semrush, etc.
-		 * Add 'social_crawler' to block FB/Twitter link previews (rare).
-		 *
-		 * @var string[]
-		 */
-		'blocked' => ['malicious'],
-
-		/**
-		 * Categories that LOG only without blocking.
-		 * Security scanners fit here — auditing YOU is not an attack.
-		 *
-		 * @var string[] Default: ['security_scanner']
-		 */
-		'log_only' => ['security_scanner'],
-
-		/**
-		 * Categories that should be CHALLENGED (PoW/captcha).
-		 * Default empty — by default new categories (feed/shopping/cloud)
-		 * are ALLOWED. Add 'ai_crawler' here to force challenge on ALL AI.
-		 *
-		 * @var string[]
-		 */
-		'challenge' => [],
-
-		/**
-		 * Categories that should be ALLOWED (verified only).
-		 * Default — feed/shopping/cloud/monitoring/archive.
-		 *
-		 * @var string[]
-		 */
-		'allowed' => [
-			'feed_reader',
-			'shopping_crawler',
-			'cloud_infrastructure',
-			'monitoring',
-			'archive_crawler',
-		],
-	],
-
-	// ============================================================
-	// DYNAMIC IP RANGE FEEDS
-	// ============================================================
+	// =========================================================================
+	// PRIMARY — the only section most operators ever edit
+	// =========================================================================
 
 	/**
-	 * Pull fresh IP ranges from official cloud provider feeds to avoid
-	 * hardcoded CIDR drift. Set true once you've confirmed the cron is
-	 * running (see bin/update-ip-ranges.php).
+	 * Which bot registry to load.
 	 *
-	 * Critical for: cloud_infrastructure category (Cloudflare, AWS, GCP,
-	 * Azure, Fastly). Without this, you'll get blocked-outage incidents
-	 * when providers rotate ranges.
+	 * Tradeoff: bigger registries catch more bots but slow down matching.
+	 *   - 'minimal': ~30 most common bots (Google, Bing, GPT, Claude,
+	 *     Cloudflare, AWS, social link previewers, monitoring). Matches
+	 *     in <1ms.
+	 *   - 'full': all ~100 shipped bots including regional search engines
+	 *     and lesser-known AI crawlers. Matches in ~3ms.
+	 *
+	 * Default: 'minimal'
 	 */
-	'dynamic_ip_ranges' => [
-		/**
-		 * Master switch for pulling from AWS/Azure/GCP/Cloudflare/Fastly feeds.
-		 * Requires cron: php bin/update-ip-ranges.php every 6-24 hours.
-		 *
-		 * @var bool Default: false
-		 */
-		'enabled' => false,
+	'preset'        => 'minimal',
 
-		/**
-		 * Cache TTL for the merged IP range data.
-		 * Lower = fresher (but more cron pressure). Higher = longer stale window.
-		 *
-		 * @var int Default: 86400 (24h)
-		 */
-		'ttl' => 86400,
+	/**
+	 * Bot-blocking posture.
+	 *
+	 * Tradeoff: stricter postures catch more attacks but block more
+	 * legitimate users on first visit.
+	 *   - 'monitor-only': log everything, block nothing ambiguous
+	 *   - 'normal': log unverified, block only verified spoofers
+	 *   - 'strict': block unverified aggressively, enable PTR spoof
+	 *     detection
+	 *
+	 * Default: 'normal'
+	 */
+	'strictness'    => 'normal',
 
-		/**
-		 * Specific feeds to enable. Disable a feed by removing it.
-		 * All are recommended for global deployments.
-		 *
-		 * @var string[]
-		 */
-		'feeds' => [
-			'aws',         // ip-ranges.amazonaws.com
-			'cloudflare',  // api.cloudflare.com/client/v4/ips
-			'fastly',      // api.fastly.com/public-ip-list
-			'gcp',         // gstatic.com/ipranges/cloud.json
+	/**
+	 * Write requests to the bad_behaviour database table.
+	 *
+	 * What this prevents: nothing — it's for forensics.
+	 * What it costs: one INSERT per blocked/challenged request.
+	 *
+	 * Set to false to disable logging entirely. The library still blocks
+	 * but you have no visibility into what was blocked.
+	 *
+	 * Default: true
+	 */
+	'logging'       => true,
+
+	/**
+	 * Block POST submissions with Referer from a different origin.
+	 *
+	 * What this prevents: cross-site form submission abuse (comment spam,
+	 * trackback spam).
+	 * FP risk: bookmarks/external links that POST to your site, API
+	 * clients that don't send Referer.
+	 *
+	 * Default: false
+	 */
+	'offsite_forms' => false,
+
+	// =========================================================================
+	// REVERSE PROXY — set true if behind Cloudflare, AWS, GCP, Fastly, etc.
+	// =========================================================================
+
+	/**
+	 * Reverse proxy configuration.
+	 *
+	 * What this prevents: rate-limit/ban your CDN IPs instead of real
+	 * client IPs (when behind a proxy).
+	 * What it does: reads the real client IP from the configured header,
+	 * trusting only requests from addresses in the trusted list.
+	 *
+	 * FP risk: misconfigured trusted_proxies allows IP spoofing via the
+	 * forwarded header. Only list IPs you actually control.
+	 *
+	 * Default: disabled
+	 */
+	'reverse_proxy' => [
+		'enabled'   => false,
+		'header'    => 'X-Forwarded-For',  // or 'CF-Connecting-IP' for Cloudflare
+		'addresses' => [],                 // CIDR list of trusted proxy IPs
+	],
+
+	// =========================================================================
+	// BOT DETECTION — most operators should leave these alone
+	// =========================================================================
+
+	/**
+	 * AI crawler configuration.
+	 *
+	 * What this prevents: AI training scrapers (GPTBot, ClaudeBot, etc.)
+	 * from consuming your content for model training.
+	 *
+	 * FP risk: regional/academic AI crawlers may have unresolvable DNS
+	 * initially and be incorrectly flagged as unverified.
+	 *
+	 *   - 'allowed': tokens (robots.txt identifiers) for AI bots you
+	 *     want to allow regardless of verification status
+	 *   - 'block_unverified': true blocks AI bots that can't pass DNS
+	 *     verification (HIGH FP risk for first-visit regional crawlers)
+	 *   - 'strict': true challenges ALL unverified AI bots
+	 *
+	 * Default: GPTBot/ClaudeBot/Google-Extended allowed, others logged
+	 * but not blocked.
+	 */
+	'ai_crawlers' => [
+		'allowed'         => ['GPTBot', 'ClaudeBot', 'Google-Extended'],
+		'block_unverified'=> false,
+		'strict'          => false,
+	],
+
+	/**
+	 * Strict search engine mode.
+	 *
+	 * What this prevents: bots claiming to be Google/Bing/etc. but not
+	 * passing DNS verification.
+	 * FP risk: HIGH. Search engines occasionally change IP ranges before
+	 * the static list is updated. Enabling this can drop your site from
+	 * search results until ranges are refreshed.
+	 *
+	 * Only enable if you're seeing fake search engine crawlers.
+	 *
+	 * Default: false
+	 */
+	'strict_search_engines' => false,
+
+	/**
+	 * Bot categories to block unconditionally (default: none).
+	 *
+	 * What this prevents: entire classes of bots by category.
+	 *   - 'malicious': known bad bots
+	 *   - 'seo_crawler': SEMrush, Ahrefs, etc.
+	 *   - 'residential_proxy': Bright Data, etc.
+	 *   - 'security_scanner': Qualys, Shodan (logged, not blocked)
+	 *
+	 * FP risk: depends on category. 'residential_proxy' is safest to
+	 * block; 'security_scanner' blocks legitimate security research.
+	 *
+	 * Default: empty (nothing blocked by category)
+	 */
+	'bot_categories' => [
+		'blocked' => [],   // e.g., ['residential_proxy']
+	],
+
+	// =========================================================================
+	// RATE LIMITING
+	// =========================================================================
+
+	/**
+	 * Rate limit configuration.
+	 *
+	 * What this prevents: volumetric scraping, credential stuffing,
+	 * comment spam floods.
+	 *
+	 * FP risk: shared NAT IPs (corporate networks, mobile carriers, VPN
+	 * exit nodes) can legitimately aggregate many users. Tighter
+	 * thresholds = more false positives.
+	 *
+	 *   - 'global': requests per IP across all paths
+	 *   - 'per_minute': burst protection
+	 *   - 'post': limits form submissions specifically
+	 *   - 'login': limits authentication attempts (credential stuffing)
+	 *
+	 * Default (in 'normal' strictness): 1000/hr global, 60/min burst
+	 */
+	'rate_limits' => [
+		'enabled'     => true,
+		'global'      => [
+			'requests' => 1000,
+			'window'   => 3600,           // per IP per hour
+		],
+		'per_minute'  => [
+			'requests' => 60,
+			'window'   => 60,             // per IP per minute
+		],
+		'post'        => [
+			'requests' => 30,
+			'window'   => 3600,           // POST per IP per hour
+		],
+		'login'       => [
+			'requests' => 10,
+			'window'   => 900,            // login attempts per IP per 15 min
 		],
 	],
 
-    // ============================================================
-    // RATE LIMITS
-    // ============================================================
+	// =========================================================================
+	// DNS VERIFICATION — verifies bots claiming to be Google/Bing/etc.
+	// =========================================================================
 
-    /**
-     * Multi-tier rate limiting. Per-IP, in-memory or adapter-backed.
-     * Tuned for typical public CMS — adjust for your traffic.
-     */
-    'rate_limits' => [
-        /**
-         * Master switch.
-         *
-         * @var bool Default: true
-         */
-        'enabled' => true,
-
-        /**
-         * Global per-IP cap (over the global.window).
-         * Resets every `window` seconds per IP.
-         */
-        'global' => [
-            'requests' => 1000,
-            'window'   => 3600,  // 1 hour
-        ],
-
-        /**
-         * Burst protection — per minute per IP.
-         */
-        'per_minute' => [
-            'requests' => 60,
-            'window'   => 60,
-        ],
-
-        /**
-         * Form spam protection — POSTs per IP per window.
-         */
-        'post' => [
-            'requests' => 30,
-            'window'   => 3600,
-        ],
-
-        /**
-         * Login brute force protection — triggered on URLs matching
-         * /(login|signin|auth|password)/i.
-         */
-        'login' => [
-            'requests' => 10,
-            'window'   => 900,  // 15 min
-        ],
-    ],
-
-    // ============================================================
-    // BODY SCAN
-    // ============================================================
-
-    /**
-     * Form field names to skip during SQL/XSS body inspection.
-     * Heuristics also skip fields ending with _body, _content, _text,
-     * _html, _markdown, _wiki or containing comment, description, code, source.
-     */
-    'body_scan_skip_fields' => [
-        'body', 'comment', 'content', 'text', 'message', 'description',
-        'code', 'source', 'snippet', 'markdown', 'html', 'wiki', 'post',
-        'article', 'page', 'entry', 'reply', 'review', 'feedback',
-    ],
-
-    // ============================================================
-    // CHALLENGE SYSTEM
-    // ============================================================
-
-    /**
-     * Issue a challenge (PoW or captcha) to suspicious requests instead of
-     * blocking outright. Useful for grey-area traffic.
-     */
-    'challenge' => [
-        /**
-         * Master switch.
-         *
-         * @var bool Default: false
-         */
-        'enabled' => false,
-
-        /**
-         * Provider: 'builtin' (PoW, no deps), 'hcaptcha', 'recaptcha', 'turnstile'.
-         */
-        'provider' => 'builtin',
-
-        /**
-         * Site key (public). Required for hcaptcha/recaptcha/turnstile.
-         */
-        'site_key' => '',
-
-        /**
-         * Secret key (private). Required for hcaptcha/recaptcha/turnstile.
-         * NEVER expose this — keep it server-side only.
-         */
-        'secret_key' => '',
-
-        /**
-         * reCAPTCHA v3 score threshold (0.0–1.0). Lower = stricter.
-         */
-        'recaptcha_min_score' => 0.5,
-    ],
-
-    // ============================================================
-    // PERFORMANCE — Static Asset Skipping
-    // ============================================================
-
-    /**
-     * Files matching these extensions or path prefixes bypass all detection.
-     * Critical for performance — never inspect CSS/JS/images.
-     */
-    'performance' => [
-        /**
-         * @var string[]
-         */
-        'skip_extensions' => [
-            'css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg',
-            'woff', 'woff2', 'ttf', 'eot', 'webp', 'avif', 'map', 'txt',
-        ],
-
-        /**
-         * @var string[] Path prefixes
-         */
-        'skip_paths' => [
-            '/static/', '/assets/', '/media/', '/images/', '/css/',
-            '/js/', '/fonts/', '/dist/', '/build/', '/vendor/',
-            '/node_modules/',
-        ],
-    ],
-
-    // ============================================================
-    // HTTP:BL (Project Honey Pot)
-    // ============================================================
-
-    /**
-     * Query Project Honey Pot's IP reputation database.
-     * Free API key required: https://www.projecthoneypot.org/
-     */
-    'httpbl' => [
-        /**
-         * API key from Project Honey Pot.
-         */
-        'key' => '',
-
-        /**
-         * Threat score threshold (0-255). IPs with score >= this are blocked.
-         * Lower = stricter.
-         */
-        'threat' => 25,
-
-        /**
-         * Max days since last activity. IPs inactive longer are ignored.
-         */
-        'maxage' => 30,
-    ],
-
-    // ============================================================
-    // DNSBL
-    // ============================================================
-
-    /**
-     * Additional DNS-based blocklists beyond http:BL.
-     * Each lookup adds ~100ms — use sparingly.
-     */
-    'dnsbl' => [
-        /**
-         * Master switch.
-         *
-         * @var bool Default: false
-         */
-        'enabled' => false,
-
-        /**
-         * DNSBL hostnames to query (in reverse-IP dotted notation).
-         *
-         * @var string[]
-         */
-        'lists' => [
-            'zen.spamhaus.org',
-            'bl.spamcop.net',
-        ],
-    ],
-
-    // ============================================================
-    // FINGERPRINTS — Opt-in, Config-Driven
-    // ============================================================
-
-    /**
-     * Known-bad TLS / H2 / header-order fingerprints.
-     * Only fingerprints EXPLICITLY listed here are blocked (zero FP by design).
-     * Curate from your own attack logs.
-     */
-    'fingerprints' => [
-        /**
-         * JA3 TLS fingerprints to block.
-         *
-         * @var string[] Each is a 32-char MD5 hash
-         */
-        'bad_ja3' => [
-            // Example: '771,4865-4867-4866-...,0-23-...,29-23-24,0',
-        ],
-
-        /**
-         * HTTP/2 settings hashes to block.
-         *
-         * @var string[] Each is a 16-char SHA-256 prefix
-         */
-        'bad_h2' => [
-            // Example: 'a1b2c3d4e5f67890',
-        ],
-
-        /**
-         * Bot header-order hashes to block.
-         *
-         * @var string[]
-         */
-        'bot_header_orders' => [
-            // Example: 'f9e8d7c6b5a43210',
-        ],
-
-        /**
-         * (Reserved) Trusted JA3 fingerprints for bypass.
-         *
-         * @var string[]
-         */
-        'expected_ja3' => [],
-    ],
-
-    // ============================================================
-    // GEOIP
-    // ============================================================
-
-    /**
-     * Country / ASN blocking via MaxMind GeoIP2 database.
-     * Requires GeoIP2 PHP API and a downloaded .mmdb file.
-     */
-    'geoip' => [
-        /**
-         * Master switch.
-         *
-         * @var bool Default: false
-         */
-        'enabled' => false,
-
-        /**
-         * Path to GeoLite2-Country.mmdb (or equivalent).
-         */
-        'database_path' => '/usr/share/GeoIP/GeoLite2-Country.mmdb',
-
-        /**
-         * ISO 3166-1 alpha-2 country codes to block.
-         *
-         * @var string[]
-         */
-        'blocked_countries' => [
-            // 'XL', 'ZZ',
-        ],
-
-        /**
-         * ASN numbers to block (e.g., 'AS15169' = Google).
-         *
-         * @var string[]
-         */
-        'blocked_asns' => [
-            // 'AS12345',
-        ],
-    ],
-
-    // ============================================================
-    // CUSTOM RULES
-    // ============================================================
-
-    /**
-     * User-defined rules evaluated BEFORE the detection pipeline.
-     * First match wins. Order matters.
-     *
-     * Rule types: ip, ua_regex, ua_contains, asn, country, header
-     * Actions:    allow, block, challenge, log  (log = record only, never blocks)
-     */
-    'custom_rules' => [
-        // Example 1: Audit every verified Googlebot
-        // [
-        //     'type'    => 'ua_regex',
-        //     'value'   => '/Googlebot/i',
-        //     'action'  => 'log',
-        //     'id'      => 'audit_googlebot',
-        // ],
-
-        // Example 2: Block a hostile network
-        // [
-        //     'type'    => 'ip',
-        //     'value'   => '192.0.2.0/24',
-        //     'action'  => 'block',
-        //     'id'      => 'test_network',
-        // ],
-
-        // Example 3: Challenge requests from a specific country
-        // [
-        //     'type'    => 'country',
-        //     'value'   => 'CN',
-        //     'action'  => 'challenge',
-        //     'id'      => 'china_challenge',
-        // ],
-
-        // Example 4: Log agentic UAs for policy decisions
-        // [
-        //     'type'    => 'header',
-        //     'header'  => 'Sec-CH-UA',
-        //     'value'   => 'Brave Leo',
-        //     'action'  => 'log',
-        //     'id'      => 'brave_leo_agentic',
-        // ],
-    ],
-
-    // ============================================================
-    // DETECTION FEATURES (All Opt-In)
-    // ============================================================
-    //
-    // All features below are OFF by default for 2.x compatibility.
-    // See docs/CONFIGURATION.md → Configuration Profiles for rollout order.
-
-    /**
-     * Enable JA3 / H2 / header-order fingerprint detection.
-     * Only blocks fingerprints EXPLICITLY listed in 'fingerprints'.* above.
-     * Zero FP risk if 'fingerprints.bad_ja3' etc. are empty.
-     *
-     * Risk: 🟡 MEDIUM (after you populate bad_*[])
-     *
-     * @var bool Default: false
-     */
-    'enable_fingerprinting' => false,
-
-    /**
-     * Inspect JSON request bodies for SQLi/XSS/command injection patterns.
-     *
-     * Risk: 🔴 HIGH — WILL break legitimate code snippets in JSON payloads
-     * (wiki editors, code-sharing sites, etc.). Never enable on AJAX/JSON APIs.
-     *
-     * @var bool Default: false
-     */
-    'inspect_json_body' => false,
-
-    /**
-     * Inspect multipart/form-data bodies for SQLi/XSS patterns.
-     *
-     * Risk: 🔴 HIGH — Almost never safe; breaks file uploads with code in
-     * metadata fields.
-     *
-     * @var bool Default: false
-     */
-    'inspect_multipart_body' => false,
-
-    /**
-     * Enable behavioral analysis: rate anomalies, rotating UA/IP, URL
-     * enumeration, think-time checks, header validation.
-     *
-     * Risk: 🟢 LOW — safe default; legacy-compatible.
-     *
-     * @var bool Default: true
-     */
-    'enable_behavioral_analysis' => true,
-
-    /**
-     * Enforce the AI crawlers allowlist (verified AI only).
-     *
-     * Risk: 🟢 LOW — safe default.
-     *
-     * @var bool Default: true
-     */
-    'enable_ai_crawler_control' => true,
-
-    /**
-     * NEW in 3.0: Cross-validate User-Agent against Sec-CH-UA headers from
-     * Chromium-based browsers (Chrome 89+, Edge, Brave, Vivaldi, Opera 75+).
-     * Catches most spoofed UAs.
-     *
-     * ⚠️  Firefox / Safari don't send Sec-CH-UA — they are NOT validated
-     *     (by design). Electron apps (Slack, VS Code, Discord) spoof Chrome
-     *     but don't send Sec-CH-UA and WILL be blocked — whitelist if needed.
-     *
-     * Risk: 🟡 MEDIUM — enable after 1–2 weeks of monitoring.
-     *
-     * @var bool Default: false
-     */
-    'enable_client_hints_validation' => false,
-
-    /**
-     * NEW in 3.0: Detect AI-agent patterns (Brave Leo, ChatGPT operator,
-     * Playwright scrapers mimicking humans):
-     *   - think-then-fetch (long pause + asset burst)
-     *   - non-linear navigation (5+ unrelated sections in 8 requests)
-     *   - precision targeting (high API ratio, no CSS/fonts/tracking)
-     *
-     * ⚠️  Requires session cookies — anonymous traffic is skipped.
-     *     False positives possible with single-page apps and power users.
-     *
-     * Risk: 🟡 MEDIUM — enable after auditing your power users.
-     *
-     * @var bool Default: false
-     */
-    'enable_agentic_detection' => false,
-
-    // ============================================================
-	// DNS VERIFICATION (synchronous, bounded)
-	// ============================================================
-	//
-	// Replaces the deferred register_shutdown_function() pattern from earlier
-	// versions. When a bot's BotDefinition has verify_dns=true, Bad Behaviour
-	// runs a synchronous DNS check on the first request from any IP claiming
-	// to be that bot. Subsequent requests use the cache.
-	//
-	// === LATENCY COST ===
-	//
-	//   - First request per (IP, suffix) tuple: 40–300ms
-	//   - Cached requests: zero overhead
-	//
-	// === WHY THIS IS DIFFERENT FROM PREVIOUS VERSIONS ===
-	//
-	// Earlier versions used register_shutdown_function() to defer DNS lookups
-	// to keep first-request latency low. That created a false-positive window:
-	// the FIRST request from any bot whose IP wasn't in static ranges was
-	// blocked because verification had not yet completed. Real search engines
-	// retry, so the cache warmed by the second request — but regional /
-	// academic / AI crawlers often do not retry, resulting in permanent blocks.
-	//
-	// The synchronous approach eliminates this window. The latency cost is
-	// bounded by `timeout_ms`; if DNS hangs, the request falls through to
-	// the next defense (CHALLENGE rather than BLOCK).
-	//
-	// === FORWARD-CONFIRM TRADEOFF ===
-	//
-	// With require_forward_confirm=false (default): reverse+suffix match is
-	// sufficient. Catches legitimate IPv6 bots whose forward-confirm fails
-	// due to inconsistent IPv6 resolver paths. Vulnerable to PTR spoofing
-	// (attacker sets PTR to a known bot's hostname).
-	//
-	// With require_forward_confirm=true: requires forward-confirm in addition
-	// to reverse+suffix. Catches PTR spoofing. May FPs IPv6-only bots.
-	//
-	// RECOMMENDATION: keep false unless you observe PTR spoofing. If you
-	// flip to true, add IPv6 bots (Meta-ExternalAgent, Meta-ExternalFetcher)
-	// to ai_crawlers.allowed to compensate.
-
+	/**
+	 * Synchronous DNS verification for bot UAs.
+	 *
+	 * What this prevents: malicious bots claiming to be Googlebot etc.
+	 * by performing reverse DNS lookup and checking the hostname suffix.
+	 *
+	 * How it works:
+	 *   1. Bot claims to be Googlebot (UA match)
+	 *   2. IP not in static Google ranges
+	 *   3. Library does gethostbyaddr($ip) → "crawl-X.googlebot.com"
+	 *   4. Checks suffix matches "googlebot.com"
+	 *   5. If yes → ALLOW. If no → CHALLENGE/BLOCK.
+	 *
+	 * Cost: 40-300ms latency on FIRST request per bot IP. Subsequent
+	 * requests hit the cache.
+	 *
+	 * FP risk: very low. Only flags bots whose IP doesn't resolve to
+	 * a matching hostname.
+	 *
+	 * Settings:
+	 *   - 'enabled': master switch
+	 *   - 'timeout_ms': soft timeout for the lookup (default 300ms)
+	 *   - 'require_forward_confirm': also verify A/AAAA record matches
+	 *     original IP (catches PTR spoofing; HIGH IPv6 FP risk)
+	 *   - 'positive_ttl': how long to cache "this IP is verified"
+	 *   - 'negative_ttl': how long to cache "this IP failed verification"
+	 *     (shorter = re-check failed IPs faster after transient DNS issues)
+	 *
+	 * Default: enabled, 300ms timeout, no forward confirm, 7d/1h TTLs
+	 */
 	'dns_verification' => [
-		/**
-		 * Master switch. When false, DNS verification is skipped entirely
-		 * and bots with verify_dns=true are treated as unverified (falling
-		 * through to the next defense — typically CHALLENGE rather than BLOCK).
-		 *
-		 * @var bool Default: true
-		 */
-		'enabled' => true,
-
-		/**
-		 * Maximum milliseconds to spend on a single DNS verification before
-		 * giving up and treating the result as "could not verify".
-		 *
-		 * @var int Default: 300
-		 */
-		'timeout_ms' => 300,
-
-		/**
-		 * Require forward-confirm (resolve PTR target, confirm original IP
-		 * appears in A/AAAA answer) in addition to reverse+suffix match.
-		 *
-		 * See the section header comment above for the full tradeoff analysis.
-		 *
-		 * @var bool Default: false
-		 */
-		'require_forward_confirm' => false,
-
-		/**
-		 * Cache TTL for VERIFIED results (bot's DNS confirmed).
-		 *
-		 * @var int Default: 604800 (7 days)
-		 */
-		'positive_ttl' => 604800,
-
-		/**
-		 * Cache TTL for FAILED results (bot's DNS did not confirm).
-		 * Shorter than positive — a bot that fixes its DNS shouldn't be
-		 * blocked for a week. Also bounds cache size for spoofed scanners.
-		 *
-		 * @var int Default: 86400 (1 day)
-		 */
-		'negative_ttl' => 86400,
+		'enabled'                  => true,
+		'timeout_ms'               => 300,
+		'require_forward_confirm'  => false,
+		'positive_ttl'             => 604800,     // cache verified IPs for 7 days
+		'negative_ttl'             => 3600,       // re-check failed IPs after 1 hour
 	],
 
-    // ============================================================
-    // DYNAMIC IP RANGE FEEDS
-    // ============================================================
+	// =========================================================================
+	// DYNAMIC IP RANGES — fetches cloud provider IP feeds (Cloudflare, AWS, etc.)
+	// =========================================================================
 
-    /**
-     * Pull fresh IP ranges from official cloud provider feeds to avoid
-     * hardcoded CIDR drift. Set true once you've confirmed the cron is
-     * running (see bin/update-ip-ranges.php) or enabled on-demand refresh
-     * elsewhere in this file.
-     *
-     * Critical for: cloud_infrastructure category (Cloudflare, AWS, GCP,
-     * Azure, Fastly). Without this, you'll get blocked-outage incidents
-     * when providers rotate ranges.
-     */
-    'dynamic_ip_ranges' => [
-        /**
-         * Master switch for pulling from AWS/Cloudflare/Fastly/GCP feeds.
-         *
-         * @var bool Default: false
-         */
-        'enabled' => false,
+	/**
+	 * Asynchronous IP range fetching from cloud providers.
+	 *
+	 * What this prevents: blocking cloud-hosted services that you actually
+	 * want to allow (e.g., Cloudflare's edge nodes if you ARE Cloudflare).
+	 *
+	 * How it works: after each request, a background task fetches the
+	 * latest IP ranges from Cloudflare/AWS/GCP/Fastly and caches them.
+	 * Next request sees warm cache.
+	 *
+	 * Cost: zero request-path latency. Fetch happens after response sent.
+	 *
+	 * FP risk: very low. Just adds "known cloud IPs" to your allow list.
+	 *
+	 * Settings:
+	 *   - 'enabled': master switch
+	 *   - 'ttl': how long fetched ranges are cached before re-fetching
+	 *   - 'feeds': which providers to fetch (trim to only what you use)
+	 *
+	 * Default: enabled, 24h TTL, all four providers
+	 */
+	'dynamic_ip_ranges' => [
+		'enabled' => true,
+		'ttl'     => 86400,   // re-fetch every 24 hours
+		'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
+	],
 
-        /**
-         * Cache TTL for the merged IP range data.
-         * Lower = fresher (but more cron pressure). Higher = longer stale window.
-         *
-         * @var int Default: 86400 (24h)
-         */
-        'ttl' => 86400,
+	// =========================================================================
+	// BLACKLIST — blocks obvious attacks (raw XSS, SQL injection, etc.)
+	// =========================================================================
 
-        /**
-         * Specific feeds to enable. Disable a feed by removing it.
-         * All are recommended for global deployments.
-         *
-         * @var string[]
-         */
-        'feeds' => [
-            'aws',         // ip-ranges.amazonaws.com
-            'cloudflare',  // api.cloudflare.com/client/v4/ips
-            'fastly',      // api.fastly.com/public-ip-list
-            'gcp',         // gstatic.com/ipranges/cloud.json
-        ],
-    ],
+	/**
+	 * Strict mode for blacklist detector.
+	 *
+	 * What this prevents: contextual attack patterns (suspect behavior +
+	 * suspect UA pattern = block).
+	 *
+	 * FP risk: moderate. Contextual scoring has false positives with
+	 * non-browser clients (curl, mobile apps, link previewers).
+	 *
+	 * Default: false
+	 */
+	'strict' => false,
 
-    // ============================================================
-    // HEAD REQUEST DETECTION (Enabled by Default — Low FP Risk)
-    // ============================================================
-    //
-    // Unlike the other 3.0 detectors above, this is ON by default because
-    // it targets clearly malicious behavior (site mapping / reconnaissance
-    // via HEAD) that legitimate clients don't exhibit.
+	// =========================================================================
+	// CUSTOM RULES — your own block/allow/challenge rules
+	// =========================================================================
 
-    /**
-     * Detect HEAD request abuse: site mapping, link-checking at scale,
-     * rapid reconnaissance. Three signals:
-     *   - HEAD without Referer (except /api/, /wp-json/, /health, /status)
-     *   - HEAD flood per session (>20 requests)
-     *   - HEAD probing per IP (>50 requests in 5 minutes)
-     *
-     * Legitimate HEAD usage (link checkers, monitoring, REST APIs) is
-     * allowed via the exempt paths configuration below.
-     *
-     * Risk: 🟢 LOW — link checkers send Referer naturally; REST clients
-     * hitting /api/ are exempt by default.
-     *
-     * @var bool Default: true
-     */
-    'enable_head_request_detection' => true,
+	/**
+	 * User-defined detection rules.
+	 *
+	 * What this prevents: whatever you explicitly target — specific IP
+	 * ranges, specific UAs, specific countries, specific headers.
+	 *
+	 * FP risk: depends entirely on how you write the rules. IP rules
+	 * are safest (specific scope). UA regex rules can over-match.
+	 *
+	 * Each rule has:
+	 *   - 'type': ip | ua_regex | ua_contains | asn | country | header
+	 *   - 'value': the pattern to match
+	 *   - 'action': block | challenge | allow | log
+	 *
+	 * Examples:
+	 *
+	 *   // Block a specific IP range
+	 *   [
+	 *       'id'     => 'block-bad-network',
+	 *       'type'   => 'ip',
+	 *       'value'  => ['203.0.113.0/24'],
+	 *       'action' => 'block',
+	 *   ],
+	 *
+	 *   // Challenge requests from a country
+	 *   [
+	 *       'id'     => 'challenge-tor-countries',
+	 *       'type'   => 'country',
+	 *       'value'  => 'XX',
+	 *       'action' => 'challenge',
+	 *   ],
+	 *
+	 *   // Log but allow specific UA pattern
+	 *   [
+	 *       'id'     => 'log-internal-crawler',
+	 *       'type'   => 'ua_contains',
+	 *       'value'  => 'MyCompanyBot',
+	 *       'action' => 'log',
+	 *   ],
+	 *
+	 * Default: empty (no custom rules)
+	 */
+	'custom_rules' => [],
 
-    /**
-     * When true, HEAD requests to non-exempt paths without a Referer header
-     * are blocked. Set false only if you have legitimate clients (rare HTTP
-     * libraries) that issue HEAD to non-API paths without Referer.
-     *
-     * Risk: 🟢 LOW.
-     *
-     * @var bool Default: true
-     */
-    'head_require_referer' => true,
+	// =========================================================================
+	// EXPERIMENTAL DETECTORS — FP risk; OFF by default
+	// =========================================================================
 
-    /**
-     * HEAD requests per session before flagging as flood.
-     * Lower = stricter. Real browsers rarely exceed this in a single session.
-     *
-     * Risk: 🟢 LOW.
-     *
-     * @var int Default: 20
-     */
-    'head_flood_threshold' => 20,
+	/**
+	 * Behavioral analysis: detects rapid requests, rotating UAs, etc.
+	 *
+	 * What this prevents: botnets that rotate User-Agents to evade
+	 * per-UA detection, scrapers that make many requests in a session.
+	 *
+	 * FP risk: HIGH. Shared NAT IPs (corporate networks, mobile
+	 * carriers, VPN exit nodes) legitimately aggregate many users with
+	 * different UAs. A single IP making requests for 50 users looks
+	 * identical to a botnet.
+	 *
+	 * Only enable if you observe actual UA rotation attacks against
+	 * your site.
+	 *
+	 * Default: false
+	 */
+	'enable_behavioral_analysis'    => false,
 
-    /**
-     * HEAD probes per IP per 5-minute window before flagging as
-     * reconnaissance. Lower = stricter.
-     *
-     * Risk: 🟢 LOW.
-     *
-     * @var int Default: 50
-     */
-    'head_probe_threshold' => 50,
+	/**
+	 * Client Hints validation: catches browsers with spoofed UA +
+	 * Client Hints mismatch.
+	 *
+	 * What this prevents: bots that fake a Chrome UA but don't send
+	 * Sec-CH-UA headers (or send inconsistent ones).
+	 *
+	 * FP risk: HIGH. Only Chromium browsers (Chrome, Edge, Brave, etc.)
+	 * send Client Hints. Firefox, Safari, Opera in some modes, mobile
+	 * browsers, and link previewers do NOT. Enabling this flags
+	 * legitimate non-Chromium users.
+	 *
+	 * Default: false
+	 */
+	'enable_client_hints_validation' => false,
 
-    /**
-     * Path prefixes exempt from the Referer requirement. REST clients and
-     * monitoring tools issue HEAD to these endpoints without a Referer.
-     * Defaults cover most CMS APIs (WordPress, WackoWiki) and common
-     * health-check endpoints.
-     *
-     * Add your own API prefixes here as needed.
-     *
-     * Risk: 🟢 LOW.
-     *
-     * @var string[] Default: ['/api/', '/wp-json/', '/health', '/status']
-     */
-    'head_referer_exempt_paths' => [
-        '/api/',
-        '/wp-json/',
-        '/health',
-        '/status',
-    ],
+	/**
+	 * Agentic detection: detects AI agent patterns (think-then-fetch,
+	 * non-linear navigation, precision targeting).
+	 *
+	 * What this prevents: AI agents (ChatGPT browsing, Claude computer
+	 * use, etc.) that load pages in unnatural patterns.
+	 *
+	 * FP risk: moderate. Experimental — known false positives with
+	 * single-page apps (which fetch assets in bursts), link previewers,
+	 * and screen readers.
+	 *
+	 * Default: false
+	 */
+	'enable_agentic_detection'      => false,
 
-    // ============================================================
-    // ASSET SCRAPING DETECTION (Enabled by Default — Low FP Risk)
-    // ============================================================
-    //
-    // Detects AI training crawlers and image harvesters that download
-    // assets in bulk without loading the HTML pages first. Legitimate
-    // browsers: load HTML → load referenced assets. Scrapers: directly
-    // request assets from a URL list.
+	/**
+	 * Head request detection: blocks HEAD flooding / enumeration.
+	 *
+	 * What this prevents: bots that map your site by sending HEAD
+	 * requests to thousands of URLs (faster than GET enumeration).
+	 *
+	 * FP risk: moderate. Legitimate monitoring (UptimeRobot, Pingdom,
+	 * StatusCake, Lighthouse, link checkers) and REST API clients
+	 * legitimately send HEAD.
+	 *
+	 *   - 'head_require_referer': set true to require Referer on HEAD
+	 *     requests to non-API paths (HIGH FP risk for REST clients)
+	 *
+	 * Default: false
+	 */
+	'enable_head_request_detection' => false,
+	'head_require_referer'          => false,
+	'head_flood_threshold'          => 20,
+	'head_probe_threshold'          => 50,
+	'head_referer_exempt_paths'     => ['/api/', '/wp-json/'],
 
-    /**
-     * Detect direct asset scraping. Three signals:
-     *   - Asset requests without Referer (>10/hr per IP)
-     *   - Asset-only session (>20 assets, zero HTML loads)
-     *   - Sequential asset pattern (>100 assets in 5 min per IP)
-     *
-     * Real browsers always load HTML before assets, so legitimate users
-     * never trigger signal 2.
-     *
-     * Risk: 🟢 LOW.
-     *
-     * @var bool Default: true
-     */
-    'enable_asset_scraping_detection' => true,
+	/**
+	 * Asset scraping detection: blocks direct asset scraping without
+	 * page loads.
+	 *
+	 * What this prevents: bots that download all your images/PDFs/
+	 * documents directly (AI training data collection, content theft).
+	 *
+	 * FP risk: moderate. Image proxies, link previewers (Slack, Twitter,
+	 * Facebook), PDF viewers, and RSS readers fetch assets directly
+	 * without loading the parent page.
+	 *
+	 * Settings:
+	 *   - 'asset_extensions': which file types to watch
+	 *   - 'asset_no_referer_threshold': requests without Referer before
+	 *     blocking
+	 *   - 'asset_only_session_threshold': assets without any HTML page
+	 *     loads in the session
+	 *
+	 * Default: false
+	 */
+	'enable_asset_scraping_detection' => false,
+	'asset_extensions'                => [
+		'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+		'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+	],
+	'asset_no_referer_threshold'     => 10,
+	'asset_only_session_threshold'   => 20,
+	'asset_pattern_threshold'        => 100,
 
-    /**
-     * File extensions treated as "assets" for scraping detection.
-     * Add extensions for content types you serve and want to protect
-     * (e.g., 'csv', 'json', 'xml', 'zip'). Remove extensions used by
-     * legitimate APIs that don't send Referer (rare).
-     *
-     * Risk: 🟡 MEDIUM — adding too many extensions increases false
-     * positives on legitimate API responses.
-     *
-     * @var string[] Default: image, document, audio, video formats
-     */
-    'asset_extensions' => [
-        // Images
-        'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
-        // Documents
-        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
-        // Audio / video
-        'mp3', 'mp4', 'wav', 'ogg', 'webm',
-    ],
+	/**
+	 * Fingerprinting: blocks known-bad TLS/HTTP2 fingerprints.
+	 *
+	 * What this prevents: requests with JA3/HTTP2 fingerprints known
+	 * to belong to scraper frameworks (Python-requests, Go-http-client,
+	 * headless Chrome variants used for abuse).
+	 *
+	 * FP risk: depends entirely on which fingerprints you list. Empty
+	 * list = no blocking. Listing common HTTP libraries = blocks
+	 * legitimate API clients.
+	 *
+	 * Default: false, empty fingerprint lists
+	 */
+	'enable_fingerprinting' => false,
 
-    /**
-     * Asset requests without Referer per IP per hour before flagging
-     * as scraping. Lower = stricter.
-     *
-     * Risk: 🟢 LOW.
-     *
-     * @var int Default: 10
-     */
-    'asset_no_referer_threshold' => 10,
+	// =========================================================================
+	// BLOCK PAGE — what the user sees when blocked
+	// =========================================================================
 
-    /**
-     * Asset requests within a single session (with zero HTML loads)
-     * before flagging as asset-only scraping. Real browsers always
-     * load HTML first, so this rarely fires for legitimate traffic.
-     *
-     * Risk: 🟢 LOW.
-     *
-     * @var int Default: 20
-     */
-    'asset_only_session_threshold' => 20,
+	/**
+	 * Show admin contact email on the block page.
+	 *
+	 * What this does: helps legitimate users who were accidentally
+	 * blocked contact you.
+	 * FP cost: exposes your email to actual attackers (minor).
+	 *
+	 * Default: false
+	 */
+	'show_contact_info'        => false,
 
-    /**
-     * Sequential asset URLs from a single IP per 5-minute window before
-     * flagging as enumeration. Lower = stricter.
-     *
-     * Risk: 🟢 LOW.
-     *
-     * @var int Default: 100
-     */
-    'asset_pattern_threshold' => 100,
+	/**
+	 * Show detailed block page (reason, support key, technical details).
+	 *
+	 * What this does: gives blocked users enough info to appeal.
+	 * FP cost: gives attackers information about why they were blocked
+	 * (helps them refine their approach).
+	 *
+	 * Default: false (minimal "Access Denied" page)
+	 */
+	'show_detailed_block_page' => false,
+
+	// =========================================================================
+	// GEOIP — country/ASN-based blocking (requires MaxMind or similar)
+	// =========================================================================
+
+	/**
+	 * GeoIP-based blocking.
+	 *
+	 * What this prevents: traffic from countries/ASNs you don't serve.
+	 *
+	 * FP risk: HIGH if used aggressively. Blocking countries is a blunt
+	 * instrument — VPN users appear to come from random countries,
+	 * legitimate users travel, and attackers use residential proxies
+	 * in "allowed" countries.
+	 *
+	 * Settings:
+	 *   - 'database_path': path to MaxMind GeoLite2-Country.mmdb or
+	 *     similar database
+	 *   - 'blocked_countries': ISO 3166-1 alpha-2 codes (['CN', 'RU'])
+	 *   - 'blocked_asns': ASN strings (['AS15169'] for Google)
+	 *
+	 * Default: disabled
+	 */
+	'geoip' => [
+		'enabled'           => false,
+		'database_path'     => '',         // path to MaxMind .mmdb file
+		'blocked_countries' => [],         // ISO codes: ['CN', 'RU']
+		'blocked_asns'      => [],         // ASN strings: ['AS15169']
+	],
+
+	// =========================================================================
+	// DNSBL — IP reputation lookups (network dependent, can be slow)
+	// =========================================================================
+
+	/**
+	 * DNS-based blocklist lookups (Spamhaus, etc.).
+	 *
+	 * What this prevents: requests from IPs known to send spam.
+	 *
+	 * FP risk: DNSBLs have known false positive rates (Spamhaus PBL
+	 * flags residential IPs as "should not send email" — fine for mail,
+	 * wrong for web). Listed IPs are often compromised devices, not
+	 * the attackers themselves.
+	 *
+	 * Cost: adds DNS queries to every request.
+	 *
+	 * Default: disabled
+	 */
+	'dnsbl' => [
+		'enabled' => false,
+		'lists'   => ['zen.spamhaus.org', 'bl.spamcop.net'],
+	],
+
+	// =========================================================================
+	// HTTP:BL — Project Honeypot (requires API key)
+	// =========================================================================
+
+	/**
+	 * Project Honeypot http:BL integration.
+	 *
+	 * What this prevents: requests from IPs known to Project Honeypot
+	 * as comment spammers, harvesters, or search engine junk.
+	 *
+	 * FP risk: low (Project Honeypot is well-curated) but real.
+	 *
+	 * Settings:
+	 *   - 'key': your Project Honeypot access key (get one at
+	 *     https://www.projecthoneypot.org/)
+	 *   - 'threat': minimum threat score to block (0-255; default 25)
+	 *   - 'maxage': max days since last activity (default 30)
+	 *
+	 * Default: disabled (no API key)
+	 */
+	'httpbl' => [
+		'key'     => '',    // your Project Honeypot access key
+		'threat'  => 25,    // minimum threat score to block (0-255)
+		'maxage'  => 30,    // max days since last activity
+	],
+
+	// =========================================================================
+	// CHALLENGE — captcha/JS-proof for suspicious requests
+	// =========================================================================
+
+	/**
+	 * Challenge (CAPTCHA) provider configuration.
+	 *
+	 * What this prevents: bots that can't solve CAPTCHAs from accessing
+	 * your site (uses your challenge provider's verification).
+	 *
+	 * FP risk: very low (provider does the verification). User
+	 * experience cost: real users see a CAPTCHA on first request.
+	 *
+	 * Settings:
+	 *   - 'provider': 'builtin' (JS timeproof), 'recaptcha', 'hcaptcha',
+	 *     or 'turnstile' (Cloudflare)
+	 *   - 'site_key'/'secret_key': from your provider's dashboard
+	 *   - 'recaptcha_min_score': 0.0-1.0 (reCAPTCHA v3 only)
+	 *
+	 * Default: disabled
+	 */
+	'challenge' => [
+		'enabled'             => false,
+		'provider'            => 'builtin',   // builtin | recaptcha | hcaptcha | turnstile
+		'site_key'            => '',
+		'secret_key'          => '',
+		'recaptcha_min_score' => 0.5,
+	],
+
+	// =========================================================================
+	// PERFORMANCE — skip detection for static resources
+	// =========================================================================
+
+	/**
+	 * Skip detection for static resources.
+	 *
+	 * What this does: skips ALL detection (DNS, behavioral, etc.) for
+	 * requests to these paths/extensions.
+	 *
+	 * Why: 95%+ of web traffic is CSS/JS/images/fonts. Running the full
+	 * detection pipeline on static assets wastes CPU and adds latency
+	 * with zero security benefit (you serve these from a CDN anyway).
+	 *
+	 * FP risk: none — these are already publicly served files.
+	 *
+	 * Default: sensible list of common static extensions and paths
+	 */
+	'performance' => [
+		'skip_extensions' => [
+			'css','js','png','jpg','jpeg','gif','ico','svg',
+			'woff','woff2','ttf','eot','webp','avif','map','txt',
+		],
+		'skip_paths' => [
+			'/static/','/assets/','/media/','/images/','/css/',
+			'/js/','/fonts/','/dist/','/build/','/vendor/',
+		],
+	],
 ];

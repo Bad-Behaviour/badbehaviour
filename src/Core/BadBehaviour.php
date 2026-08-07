@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BadBehaviour\Core;
 
+use BadBehaviour\Bot\Registry\Presets;
 use BadBehaviour\Bot\RegistryFactory;
 use BadBehaviour\Bot\RegistryInterface;
 use BadBehaviour\Configuration;
@@ -36,7 +37,7 @@ class BadBehaviour
 	private ?LoggerInterface $logger;
 	private ?CacheInterface $cache;
 	private ?GeoIpInterface $geoip;
-	private RegistryInterface $registry;  // ← NEW
+	private RegistryInterface $registry;
 
 	private BotDetector $bot_detector;
 	private BlacklistDetector $blacklist_detector;
@@ -52,7 +53,8 @@ class BadBehaviour
 	/**
 	 * @param Configuration $config
 	 * @param RegistryInterface|null $registry Optional bot registry override.
-	 *        If null, loads from config/bb_registry.php (or falls back to DefaultRegistry).
+	 *        If null, loads from config/bb_registry.php (or falls back to
+	 *        the configured preset's registry).
 	 */
 	public function __construct(Configuration $config, ?RegistryInterface $registry = null)
 	{
@@ -62,17 +64,30 @@ class BadBehaviour
 		$this->cache = $config->cache;
 		$this->geoip = $config->geoip;
 
-		// === Registry: explicit injection > config file > default ===
-		// Registry loading can fail (missing file, parse error). Always fall back
-		// to DefaultRegistry — never throw on missing registry config.
+		// === Registry: explicit injection > config file > preset default ===
+		// Registry loading can fail (missing file, parse error). Always fall
+		// back to the configured preset — never throw on missing registry.
 		try {
-			$this->registry = $registry ?? RegistryFactory::from_file();
+			if ($registry !== null) {
+				$this->registry = $registry;
+			} else {
+				try {
+					$this->registry = RegistryFactory::from_file();
+				} catch (\Throwable $e) {
+					// bb_registry.php missing or invalid — use the configured preset
+					$this->registry = Presets::load($config->get_preset());
+				}
+			}
 		} catch (\Throwable $e) {
-			ErrorReporter::error($this->adapter, 'BadBehaviour registry load failed; using defaults', [
-				'error' => $e->getMessage(),
-				'exception_class' => get_class($e),
-			], 'registry_load_failure');
-			$this->registry = RegistryFactory::default();
+			// Preset loading failed too — last-resort fallback
+			ErrorReporter::error($this->adapter,
+				'BadBehaviour registry load failed; using minimal default', [
+					'error' => $e->getMessage(),
+					'exception_class' => get_class($e),
+					'preset' => $config->get_preset(),
+				], 'registry_load_failure'
+			);
+			$this->registry = Presets::load('minimal');
 		}
 
 		// Pass registry to BotDetector (others don't need it directly)
@@ -111,15 +126,12 @@ class BadBehaviour
 	}
 
 	/**
-	 * Is the library running in safe-mode (monitor-only)?
+	 * Is the library running in safe-mode (config missing/invalid)?
 	 *
-	 * Safe-mode is set automatically when:
-	 *   - The adapter's config file is missing or malformed
-	 *   - The adapter reports `is_safe_mode() === true`
-	 *
-	 * In safe-mode, no blocking/challenging/rate-limiting is performed,
-	 * but request logging continues. This prevents misconfiguration from
-	 * taking down the host application.
+	 * Safe-mode is set automatically when the adapter's config file is
+	 * missing or malformed. The library runs in monitor-only mode:
+	 * logs traffic but does not block. Use is_monitor_only() to also
+	 * detect intentionally monitor-only configurations.
 	 */
 	public function is_in_safe_mode(): bool
 	{
@@ -134,10 +146,33 @@ class BadBehaviour
 	}
 
 	/**
+	 * Is the library in monitor-only mode?
+	 *
+	 * True when:
+	 *   - Configured strictness is 'monitor-only', OR
+	 *   - All active defenses are disabled (defensive FP-prevention)
+	 */
+	public function is_monitor_only(): bool
+	{
+		if ($this->config->get_strictness() === 'monitor-only') {
+			return true;
+		}
+		// Detect "all defenses off" as effectively monitor-only
+		return !$this->config->dns_verification_enabled
+			&& !$this->config->rate_limit_enabled
+			&& !$this->config->enable_behavioral_analysis
+			&& !$this->config->enable_fingerprinting
+			&& !$this->config->dnsbl_enabled;
+	}
+
+	/**
 	 * Return diagnostic information for admin dashboards / health checks.
 	 *
 	 * @return array{
 	 *     safe_mode: bool,
+	 *     monitor_only: bool,
+	 *     strictness: string,
+	 *     preset: string,
 	 *     logging_enabled: bool,
 	 *     detectors_active: array<string, bool>,
 	 *     config_loaded: bool,
@@ -147,18 +182,22 @@ class BadBehaviour
 	public function diagnostics(): array
 	{
 		$safe_mode = $this->is_in_safe_mode();
+		$monitor_only = $this->is_monitor_only();
+		$strictness = $this->config->get_strictness();
 
 		$detectors = [
-			'blacklist'   => true, // always-on
-			'bot'         => true, // always-on
-			'behavioral'  => $this->config->enable_behavioral_analysis,
-			'fingerprint' => $this->config->enable_fingerprinting,
-			'rate_limit'  => $this->config->rate_limit_enabled,
-			'dnsbl'       => $this->config->dnsbl_enabled,
-			'client_hints'=> $this->config->enable_client_hints_validation,
-			'agentic'     => $this->config->enable_agentic_detection,
-			'head'        => $this->config->enable_head_request_detection,
-			'asset'       => $this->config->enable_asset_scraping_detection,
+			'blacklist'    => true, // always-on
+			'bot'          => true, // always-on
+			'dns_verify'   => $this->config->dns_verification_enabled,
+			'dyn_ranges'   => $this->config->dynamic_ip_ranges_enabled,
+			'rate_limit'   => $this->config->rate_limit_enabled,
+			'dnsbl'        => $this->config->dnsbl_enabled,
+			'behavioral'   => $this->config->enable_behavioral_analysis,
+			'fingerprint'  => $this->config->enable_fingerprinting,
+			'client_hints' => $this->config->enable_client_hints_validation,
+			'agentic'      => $this->config->enable_agentic_detection,
+			'head'         => $this->config->enable_head_request_detection,
+			'asset'        => $this->config->enable_asset_scraping_detection,
 		];
 
 		$config_loaded = false;
@@ -172,17 +211,28 @@ class BadBehaviour
 
 		$hint = null;
 		if ($safe_mode) {
-			$hint = 'BadBehaviour is running in safe-mode (config missing or invalid). '
-				  . 'Create config/bb_config.php from the sample to enable full protection. '
-				  . 'Traffic is being logged but no requests are being blocked or challenged.';
+			$hint = 'BadBehaviour config is missing or invalid. '
+				  . 'Create config/bb_config.php from config/bb_config.example.php. '
+				  . 'Traffic is being logged but no requests are being blocked.';
+		} elseif ($strictness === 'monitor-only') {
+			$hint = 'BadBehaviour is in monitor-only mode by configuration. '
+				  . 'Traffic is logged but not blocked. Change strictness to \'normal\' '
+				  . 'or \'strict\' when you\'re ready to enforce.';
+		} elseif ($monitor_only) {
+			// All defenses off but not by user choice
+			$hint = 'All active defenses are disabled. Set strictness to \'normal\' '
+				  . 'or \'strict\' in your config to enable bot protection.';
 		}
 
 		return [
-			'safe_mode'         => $safe_mode,
-			'config_loaded'     => $config_loaded,
-			'logging_enabled'   => $this->config->logging,
-			'detectors_active'  => $detectors,
-			'hint'              => $hint,
+			'safe_mode'        => $safe_mode,
+			'monitor_only'     => $monitor_only,
+			'strictness'       => $strictness,
+			'preset'           => $this->config->get_preset(),
+			'config_loaded'    => $config_loaded,
+			'logging_enabled'  => $this->config->logging,
+			'detectors_active' => $detectors,
+			'hint'             => $hint,
 		];
 	}
 
@@ -288,12 +338,10 @@ class BadBehaviour
 					$this->adapter->log_request($package, $result);
 				} catch (\Throwable $e) {
 					ErrorReporter::error($this->adapter,
-						'log_request failed (further errors suppressed)',
-						[
+						'log_request failed (further errors suppressed)', [
 							'error' => $e->getMessage(),
 							'exception_class' => get_class($e),
-						],
-						'log_request_failure'
+						], 'log_request_failure'
 					);
 				}
 			}
@@ -353,10 +401,10 @@ class BadBehaviour
 
 	private function detect(RequestPackage $package): Result
 	{
-		// 1. Whitelist
+		// 1. Whitelist (always-on, immediate allow)
 		if ($this->is_whitelisted($package)) return Result::allow($package);
 
-		// 2. Custom Rules
+		// 2. Custom Rules (always-on, can block/challenge/allow/log)
 		try {
 			if ($result = $this->check_custom_rules($package)) return $result;
 		} catch (\Throwable $e) {
@@ -365,7 +413,7 @@ class BadBehaviour
 			], 'custom_rules_check_failure');
 		}
 
-		// 3. Known Bots (verified ALLOW)
+		// 3. Known Bots (always-on — BotDetector only blocks verified-spoof attempts)
 		try {
 			if ($result = $this->bot_detector->detect($package)) return $result;
 		} catch (\Throwable $e) {
@@ -373,6 +421,8 @@ class BadBehaviour
 				'error' => $e->getMessage(),
 			], 'bot_detector_failure');
 		}
+
+		// === Experimental / FP-risk detectors (gated by config) ===
 
 		// 3b. Head Request Detection (catches HEAD flooding)
 		if ($this->config->enable_head_request_detection) {
@@ -396,7 +446,7 @@ class BadBehaviour
 			}
 		}
 
-		// 5. Blacklist (attacks, malicious UA)
+		// 5. Blacklist (attacks, malicious UA) (always-on — basic attack patterns)
 		try {
 			if ($result = $this->blacklist_detector->detect($package)) return $result;
 		} catch (\Throwable $e) {
@@ -416,7 +466,7 @@ class BadBehaviour
 			}
 		}
 
-		// 6. Behavioral (rate, rotating UA, think time)
+		// 6. Behavioral (rate, rotating UA, think time) (FP risk — OFF in normal strictness)
 		if ($this->config->enable_behavioral_analysis) {
 			try {
 				if ($result = $this->behavioral_detector->detect($package)) return $result;
@@ -438,7 +488,7 @@ class BadBehaviour
 			}
 		}
 
-		// 8. Rate limiting
+		// 8. Rate limiting (ON in normal/strict strictness)
 		if ($this->config->rate_limit_enabled) {
 			try {
 				if ($result = $this->rate_limit_detector->detect($package)) return $result;
@@ -449,7 +499,7 @@ class BadBehaviour
 			}
 		}
 
-		// 9. DNSBL
+		// 9. DNSBL (network dependent — OFF by default)
 		if ($this->config->dnsbl_enabled) {
 			try {
 				if ($result = $this->dnsbl_detector->detect($package)) return $result;
@@ -592,9 +642,11 @@ class BadBehaviour
 
 			foreach ($statements as $sql) {
 				if (!$this->adapter->query($sql)) {
-					ErrorReporter::error($this->adapter, 'table creation query returned false', [
-						'sql_preview' => substr((string)$sql, 0, 200),
-					], 'install_query_failed');
+					ErrorReporter::error($this->adapter,
+						'table creation query returned false', [
+							'sql_preview' => substr((string)$sql, 0, 200),
+						], 'install_query_failed'
+					);
 				}
 			}
 		} catch (\Throwable $e) {

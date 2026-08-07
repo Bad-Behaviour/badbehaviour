@@ -12,105 +12,107 @@ use BadBehaviour\Util\SafeMode;
 readonly class Configuration
 {
     public function __construct(
-        // Core
+        // === Core ===
         public bool $logging = true,
         public bool $verbose = false,
         public bool $strict = false,
         public bool $offsite_forms = false,
     	public string $log_table = '',
+        public string $strictness = 'normal',
+        public string $preset = 'minimal',
 
-        // Block page settings
+        // === Block page ===
     	public bool $show_contact_info = false,
     	public bool $show_detailed_block_page = false,
 
-        // Reverse Proxy
+        // === Reverse proxy ===
         public bool $reverse_proxy = false,
         public string $reverse_proxy_header = 'X-Forwarded-For',
         public array $reverse_proxy_addresses = [],
 
-        // http:BL
+        // === http:BL ===
         public string $httpbl_key = '',
         public int $httpbl_threat = 25,
         public int $httpbl_maxage = 30,
 
-        // DNSBL
+        // === DNSBL ===
         public bool $dnsbl_enabled = false,
         public array $dnsbl_lists = [],
 
-        // AI Crawlers
+        // === AI crawlers ===
         public array $allowed_ai_crawlers = [],
-        public bool $block_unverified_ai = true,
+        public bool $block_unverified_ai = false,
         public bool $strict_ai = false,
         public bool $strict_search_engines = false,
 
-        // Bot Categories
+        // === Bot categories ===
         public array $blocked_bot_categories = [],
 
-        // Rate Limiting
-        public bool $rate_limit_enabled = true,
+        // === Rate limiting ===
+        public bool $rate_limit_enabled = false,
         public array $rate_limits = [],
 
-        // Custom Rules
+        // === Custom rules ===
         public array $custom_rules = [],
 
-        // Fingerprints
+        // === Fingerprints ===
         public array $bad_ja3_fingerprints = [],
         public array $bad_h2_fingerprints = [],
         public array $bot_header_orders = [],
         public array $expected_ja3 = [],
 
-        // GeoIP
+        // === GeoIP ===
         public bool $geoip_enabled = false,
         public string $geoip_database_path = '',
         public array $blocked_countries = [],
         public array $blocked_asns = [],
 
-        // Challenge
+        // === Challenge ===
         public bool $challenge_enabled = false,
         public string $challenge_provider = 'builtin',
         public string $challenge_site_key = '',
         public string $challenge_secret_key = '',
         public float $recaptcha_min_score = 0.5,
 
-        // Performance
+        // === Performance ===
         public array $skip_static_extensions = [],
         public array $skip_static_paths = [],
 
-        // 3.0 Features
+        // === 3.0 Features (FP-prevention: all experimental OFF by default) ===
         public bool $enable_fingerprinting = false,
         public bool $inspect_json_body = false,
         public bool $inspect_multipart_body = false,
-        public bool $enable_behavioral_analysis = true,
+        public bool $enable_behavioral_analysis = false,
         public bool $enable_ai_crawler_control = true,
-    	public bool $enable_client_hints_validation = true,
-    	public bool $enable_agentic_detection = true,
+    	public bool $enable_client_hints_validation = false,
+    	public bool $enable_agentic_detection = false,
 
-    	// === DNS verification (synchronous, bounded) ===
-    	// Replaces the deferred register_shutdown_function() pattern.
-    	// See CHANGELOG.md → Unreleased for rationale.
+    	// === DNS verification ===
     	public bool $dns_verification_enabled = true,
     	public int $dns_verification_timeout_ms = 300,
     	public bool $dns_verification_require_forward_confirm = false,
     	public int $dns_verification_positive_ttl = 604800,
-    	public int $dns_verification_negative_ttl = 86400,
+    	public int $dns_verification_negative_ttl = 3600,
 
-    	public bool $dynamic_ip_ranges_enabled = false,
+    	// === Dynamic IP ranges (async feed) ===
+    	public bool $dynamic_ip_ranges_enabled = true,
     	public int $dynamic_ip_ranges_ttl = 86400,
     	public array $dynamic_ip_ranges_feeds = ['aws', 'cloudflare', 'fastly', 'gcp'],
 
-    	public bool $enable_head_request_detection = true,
-    	public bool $head_require_referer = true,
+    	// === Head / asset detectors (experimental — OFF in normal strictness) ===
+    	public bool $enable_head_request_detection = false,
+    	public bool $head_require_referer = false,
     	public int $head_flood_threshold = 20,
     	public int $head_probe_threshold = 50,
     	public array $head_referer_exempt_paths = [],
 
-    	public bool $enable_asset_scraping_detection = true,
+    	public bool $enable_asset_scraping_detection = false,
     	public array $asset_extensions = [],
     	public int $asset_no_referer_threshold = 10,
     	public int $asset_only_session_threshold = 20,
     	public int $asset_pattern_threshold = 100,
 
-        // Dependencies (injected)
+        // === Dependencies (injected) ===
         public ?AdapterInterface $adapter = null,
         public ?LoggerInterface $logger = null,
         public ?CacheInterface $cache = null,
@@ -118,10 +120,15 @@ readonly class Configuration
     ) {}
 
     /**
-     * Create Configuration from PHP config file + optional overrides.
+     * Valid strictness levels.
      *
-     * Never throws on missing/invalid config — falls back to defaults
-     * via SafeConfigLoader (logs the failure to the adapter or error_log).
+     * Operators pick a level; the library picks the internal settings.
+     * See strictness_overrides() for what each level enables.
+     */
+    public const STRICTNESS_LEVELS = ['monitor-only', 'normal', 'strict'];
+
+    /**
+     * Create Configuration from PHP config file + optional overrides.
      *
      * @param string|array $config PHP config file path OR array
      * @param AdapterInterface|null $adapter
@@ -129,9 +136,6 @@ readonly class Configuration
      */
     public static function from_file(string $config_file, ?AdapterInterface $adapter = null): self
     {
-        // Use shared loader — handles missing file / ParseError / bad return type
-        // uniformly across the library. If load fails, fall back to safe-mode
-        // defaults so the host application never breaks.
         $config = SafeConfigLoader::load($config_file, $adapter, 'config_from_file');
 
         if ($config === null) {
@@ -142,12 +146,26 @@ readonly class Configuration
     }
 
     /**
-     * Create Configuration from array (for testing/runtime overrides)
+     * Create Configuration from array.
+     *
+     * Merge order: defaults → strictness overrides → user config.
+     * User-explicit values always win over strictness overrides.
      */
     public static function from_array(array $config, ?AdapterInterface $adapter = null): self
     {
     	$defaults = self::get_defaults();
-    	$merged = self::array_merge_recursive($defaults, $config);
+
+    	// === Step 1: Apply strictness layer ===
+    	$strictness = $config['strictness'] ?? $defaults['strictness'];
+    	if (!in_array($strictness, self::STRICTNESS_LEVELS, true)) {
+    		// Invalid value — fall back to default rather than throw
+    		$strictness = $defaults['strictness'];
+    	}
+    	$strictness_overrides = self::strictness_overrides($strictness);
+
+    	// === Step 2: Merge: defaults < strictness < user config ===
+    	$merged = self::array_merge_recursive($defaults, $strictness_overrides);
+    	$merged = self::array_merge_recursive($merged, $config);
 
     	// Extract nested sections
     	$reverse_proxy = $merged['reverse_proxy'] ?? [];
@@ -161,29 +179,29 @@ readonly class Configuration
     	$fingerprints = $merged['fingerprints'] ?? [];
     	$bot_categories = $merged['bot_categories'] ?? [];
 
-    	// NEW: DNS verification (top-level dns_verification.* block)
+    	// DNS verification
     	$dns_verification = $merged['dns_verification'] ?? [];
     	$dns_verification_enabled = (bool)($dns_verification['enabled'] ?? true);
     	$dns_verification_timeout_ms = max(50, min(2000, (int)($dns_verification['timeout_ms'] ?? 300)));
     	$dns_verification_require_forward_confirm = (bool)($dns_verification['require_forward_confirm'] ?? false);
     	$dns_verification_positive_ttl = max(3600, (int)($dns_verification['positive_ttl'] ?? 604800));
-    	$dns_verification_negative_ttl = max(60, (int)($dns_verification['negative_ttl'] ?? 86400));
+    	$dns_verification_negative_ttl = max(60, (int)($dns_verification['negative_ttl'] ?? 3600));
 
+    	// Dynamic IP ranges
     	$dynamic_ip_ranges = $merged['dynamic_ip_ranges'] ?? [];
-    	$dynamic_ip_ranges_enabled = (bool)($dynamic_ip_ranges['enabled'] ?? false);
+    	$dynamic_ip_ranges_enabled = (bool)($dynamic_ip_ranges['enabled'] ?? true);
     	$dynamic_ip_ranges_ttl = max(3600, (int)($dynamic_ip_ranges['ttl'] ?? 86400));
     	$dynamic_ip_ranges_feeds = self::ensure_array(
     		$dynamic_ip_ranges['feeds'] ?? ['aws', 'cloudflare', 'fastly', 'gcp']
     	);
 
-    	// FIX: Proper clamping for httpbl
+    	// http:BL clamping
     	$httpbl_threat = (int)($httpbl['threat'] ?? 25);
     	$httpbl_threat = max(0, min(255, $httpbl_threat));
-
     	$httpbl_maxage = (int)($httpbl['maxage'] ?? 30);
     	$httpbl_maxage = max(0, $httpbl_maxage);
 
-    	// NEW: Clamp rate limit values
+    	// Rate limit clamping
     	if (isset($rate_limits['global']['requests'])) {
     		$rate_limits['global']['requests'] = max(1, (int)$rate_limits['global']['requests']);
     	}
@@ -205,6 +223,9 @@ readonly class Configuration
     		verbose: $merged['verbose'] ?? false,
     		strict: $merged['strict'] ?? false,
     		offsite_forms: $merged['offsite_forms'] ?? false,
+    		log_table: $merged['log_table'] ?? '',
+    		strictness: $strictness,
+    		preset: $merged['preset'] ?? 'minimal',
 
     		show_contact_info: $show_contact_info,
     		show_detailed_block_page: $show_detailed_block_page,
@@ -221,13 +242,13 @@ readonly class Configuration
     		dnsbl_lists: self::ensure_array($dnsbl['lists'] ?? ['zen.spamhaus.org', 'bl.spamcop.net']),
 
     		allowed_ai_crawlers: self::ensure_array($ai_crawlers['allowed'] ?? ['GPTBot', 'ClaudeBot', 'Google-Extended']),
-    		block_unverified_ai: (bool)($ai_crawlers['block_unverified'] ?? true),
+    		block_unverified_ai: (bool)($ai_crawlers['block_unverified'] ?? false),
     		strict_ai: (bool)($ai_crawlers['strict'] ?? false),
     		strict_search_engines: (bool)($merged['strict_search_engines'] ?? false),
 
-    		blocked_bot_categories: self::ensure_array($bot_categories['blocked'] ?? ['malicious']),
+    		blocked_bot_categories: self::ensure_array($bot_categories['blocked'] ?? []),
 
-    		rate_limit_enabled: (bool)($rate_limits['enabled'] ?? true),
+    		rate_limit_enabled: (bool)($rate_limits['enabled'] ?? false),
     		rate_limits: self::normalize_rate_limits($rate_limits),
 
     		custom_rules: (array)($merged['custom_rules'] ?? []),
@@ -254,30 +275,28 @@ readonly class Configuration
     		enable_fingerprinting: (bool)($merged['enable_fingerprinting'] ?? false),
     		inspect_json_body: (bool)($merged['inspect_json_body'] ?? false),
     		inspect_multipart_body: (bool)($merged['inspect_multipart_body'] ?? false),
-    		enable_behavioral_analysis: (bool)($merged['enable_behavioral_analysis'] ?? true),
+    		enable_behavioral_analysis: (bool)($merged['enable_behavioral_analysis'] ?? false),
     		enable_ai_crawler_control: (bool)($merged['enable_ai_crawler_control'] ?? true),
-    		enable_client_hints_validation: (bool)($merged['enable_client_hints_validation'] ?? true),
-    		enable_agentic_detection: (bool)($merged['enable_agentic_detection'] ?? true),
+    		enable_client_hints_validation: (bool)($merged['enable_client_hints_validation'] ?? false),
+    		enable_agentic_detection: (bool)($merged['enable_agentic_detection'] ?? false),
 
-    		// NEW: dns_verification
     		dns_verification_enabled: $dns_verification_enabled,
     		dns_verification_timeout_ms: $dns_verification_timeout_ms,
     		dns_verification_require_forward_confirm: $dns_verification_require_forward_confirm,
     		dns_verification_positive_ttl: $dns_verification_positive_ttl,
     		dns_verification_negative_ttl: $dns_verification_negative_ttl,
 
-    		// CHANGED: dynamic_ip_ranges restructured
     		dynamic_ip_ranges_enabled: $dynamic_ip_ranges_enabled,
     		dynamic_ip_ranges_ttl: $dynamic_ip_ranges_ttl,
     		dynamic_ip_ranges_feeds: $dynamic_ip_ranges_feeds,
 
-    		enable_head_request_detection: (bool)($merged['enable_head_request_detection'] ?? true),
-    		head_require_referer: (bool)($merged['head_require_referer'] ?? true),
+    		enable_head_request_detection: (bool)($merged['enable_head_request_detection'] ?? false),
+    		head_require_referer: (bool)($merged['head_require_referer'] ?? false),
     		head_flood_threshold: max(1, (int)($merged['head_flood_threshold'] ?? 20)),
     		head_probe_threshold: max(1, (int)($merged['head_probe_threshold'] ?? 50)),
     		head_referer_exempt_paths: self::ensure_array($merged['head_referer_exempt_paths'] ?? ['/api/', '/wp-json/']),
 
-    		enable_asset_scraping_detection: (bool)($merged['enable_asset_scraping_detection'] ?? true),
+    		enable_asset_scraping_detection: (bool)($merged['enable_asset_scraping_detection'] ?? false),
     		asset_extensions: self::ensure_array($merged['asset_extensions'] ?? ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'pdf']),
     		asset_no_referer_threshold: max(1, (int)($merged['asset_no_referer_threshold'] ?? 10)),
     		asset_only_session_threshold: max(1, (int)($merged['asset_only_session_threshold'] ?? 20)),
@@ -287,71 +306,233 @@ readonly class Configuration
     		);
     }
 
+    /**
+     * Strictness-level override map.
+     *
+     * === STRICTNESS LEVELS ===
+     *
+     *   monitor-only
+     *     Most conservative. Log everything, block only obvious attacks.
+     *     No DNS verification, no behavioral, no rate limiting.
+     *     Use when: evaluating the library, or blocking real users is
+     *     worse than letting bots through.
+     *
+     *   normal
+     *     Default. Sync DNS verification ON, unverified bots logged
+     *     but NOT blocked. Rate limiting ON with conservative thresholds.
+     *     Experimental detectors remain OFF.
+     *     Use for: most production deployments.
+     *
+     *   strict
+     *     Maximum defense. All detectors ON. Unverified AI blocked.
+     *     Forward DNS confirmation enabled (catches PTR spoofing).
+     *     Use only when: actively seeing spoofing or scraping attacks.
+     *
+     * User-explicit values always win over strictness overrides.
+     *
+     * @return array<string, mixed>
+     */
+    public static function strictness_overrides(?string $strictness = null): array
+    {
+    	return match ($strictness ?? 'normal') {
+
+    		'monitor-only' => [
+                // All active defenses OFF
+                'dns_verification_enabled'            => false,
+                'dynamic_ip_ranges_enabled'           => false,
+                'enable_fingerprinting'               => false,
+                'enable_behavioral_analysis'          => false,
+                'enable_client_hints_validation'      => false,
+                'enable_agentic_detection'            => false,
+                'enable_head_request_detection'       => false,
+                'enable_asset_scraping_detection'     => false,
+                'rate_limit_enabled'                  => false,
+                'dnsbl_enabled'                       => false,
+
+                // No aggressive blocking
+                'block_unverified_ai'                 => false,
+                'strict_search_engines'               => false,
+
+                // Re-check DNS failures quickly
+                'dns_verification_negative_ttl'       => 3600,
+            ],
+
+    		'normal' => [
+                // Sync DNS verification ON — catches bot spoofing
+                'dns_verification_enabled'            => true,
+                'dynamic_ip_ranges_enabled'           => true,
+
+                // Rate limiting ON with conservative thresholds
+                'rate_limit_enabled'                  => true,
+                'rate_limits'                         => [
+                    'enabled'     => true,
+                    'global'      => ['requests' => 1000, 'window' => 3600],
+                    'per_minute'  => ['requests' => 60,   'window' => 60],
+                ],
+
+                // Experimental detectors OFF (FP risk)
+                'enable_fingerprinting'               => false,
+                'enable_behavioral_analysis'          => false,
+                'enable_client_hints_validation'      => false,
+                'enable_agentic_detection'            => false,
+                'enable_head_request_detection'       => false,
+                'enable_asset_scraping_detection'     => false,
+
+                // Aggressive blocking OFF (FP prevention)
+                'block_unverified_ai'                 => false,
+                'strict_search_engines'               => false,
+                'dnsbl_enabled'                       => false,
+                'dns_verification_require_forward_confirm' => false,
+
+                // FP prevention: shorter negative TTL
+                'dns_verification_negative_ttl'       => 3600,
+            ],
+
+    		'strict' => [
+                // Everything ON
+                'dns_verification_enabled'            => true,
+                'dynamic_ip_ranges_enabled'           => true,
+                'dns_verification_require_forward_confirm' => true,
+                'dns_verification_positive_ttl'       => 2592000,  // 30d
+                'dns_verification_negative_ttl'       => 86400,    // 1d
+
+                'enable_fingerprinting'               => true,
+                'enable_behavioral_analysis'          => true,
+                'enable_client_hints_validation'      => true,
+                'enable_agentic_detection'            => true,
+                'enable_head_request_detection'       => true,
+                'enable_asset_scraping_detection'     => true,
+
+                'rate_limit_enabled'                  => true,
+                'rate_limits'                         => [
+                    'enabled'     => true,
+                    'global'      => ['requests' => 500, 'window' => 3600],
+                    'per_minute'  => ['requests' => 30, 'window' => 60],
+                ],
+
+                'dnsbl_enabled'                       => true,
+                'block_unverified_ai'                 => true,
+                'strict_search_engines'               => true,
+            ],
+
+    		default => [
+                // Unknown strictness — return empty (defaults + user config apply)
+            ],
+    	};
+    }
+
+    /**
+     * Default configuration.
+     *
+     * Represents "minimal preset + normal strictness + logging=true".
+     * This is what operators get when they don't write a config file.
+     *
+     * The strictness_overrides() map for 'normal' mirrors these values,
+     * so explicitly setting 'strictness' => 'normal' is a no-op.
+     *
+     * @return array<string, mixed>
+     */
     public static function get_defaults(): array
     {
         return [
+            // === Core ===
             'logging' => true,
             'verbose' => false,
             'strict' => false,
             'offsite_forms' => false,
         	'show_contact_info' => false,
         	'show_detailed_block_page' => false,
+
+            // === Meta ===
+            'preset' => 'minimal',
+            'strictness' => 'normal',
+
+            // === Reverse proxy ===
             'reverse_proxy' => ['enabled' => false, 'header' => 'X-Forwarded-For', 'addresses' => []],
+
+            // === http:BL ===
             'httpbl' => ['key' => '', 'threat' => 25, 'maxage' => 30],
+
+            // === DNSBL (off by default — network dependent) ===
             'dnsbl' => ['enabled' => false, 'lists' => ['zen.spamhaus.org', 'bl.spamcop.net']],
-            'ai_crawlers' => ['allowed' => ['GPTBot', 'ClaudeBot', 'Google-Extended'], 'block_unverified' => true, 'strict' => false],
-            'bot_categories' => ['blocked' => ['malicious']],
+
+            // === AI crawlers ===
+            'ai_crawlers' => [
+                'allowed' => ['GPTBot', 'ClaudeBot', 'Google-Extended'],
+                'block_unverified' => false,
+                'strict' => false,
+            ],
+
+            // === Bot categories ===
+            'bot_categories' => ['blocked' => []],
+
+            // === Rate limits (conservative defaults; rate_limit_enabled=false) ===
             'rate_limits' => [
-                'enabled' => true,
+                'enabled' => false,
                 'global' => ['requests' => 1000, 'window' => 3600],
                 'per_minute' => ['requests' => 60, 'window' => 60],
                 'post' => ['requests' => 30, 'window' => 3600],
                 'login' => ['requests' => 10, 'window' => 900],
             ],
+
+            // === Custom rules ===
             'custom_rules' => [],
+
+            // === Fingerprints ===
             'fingerprints' => ['bad_ja3' => [], 'bad_h2' => [], 'bot_header_orders' => [], 'expected_ja3' => []],
+
+            // === GeoIP (off by default) ===
             'geoip' => ['enabled' => false, 'database_path' => '', 'blocked_countries' => [], 'blocked_asns' => []],
+
+            // === Challenge (off by default) ===
             'challenge' => ['enabled' => false, 'provider' => 'builtin', 'site_key' => '', 'secret_key' => '', 'recaptcha_min_score' => 0.5],
+
+            // === Performance ===
             'performance' => [
                 'skip_extensions' => self::default_skip_extensions(),
                 'skip_paths' => self::default_skip_paths(),
             ],
+
+            // === Body scan skip fields (used by BlacklistDetector) ===
             'body_scan_skip_fields' => [
                 'body', 'comment', 'content', 'text', 'message', 'description',
                 'code', 'source', 'snippet', 'markdown', 'html', 'wiki', 'post',
                 'article', 'page', 'entry', 'reply', 'review', 'feedback',
             ],
+
+            // === 3.0 Features (FP-prevention: all experimental OFF) ===
             'enable_fingerprinting' => false,
             'inspect_json_body' => false,
             'inspect_multipart_body' => false,
-            'enable_behavioral_analysis' => true,
+            'enable_behavioral_analysis' => false,
             'enable_ai_crawler_control' => true,
-        	'enable_client_hints_validation' => true,
-        	'enable_agentic_detection' => true,
+        	'enable_client_hints_validation' => false,
+        	'enable_agentic_detection' => false,
 
-        	// NEW: dns_verification defaults
+        	// === DNS verification ===
         	'dns_verification' => [
         		'enabled' => true,
         		'timeout_ms' => 300,
         		'require_forward_confirm' => false,
-        		'positive_ttl' => 604800,
-        		'negative_ttl' => 86400,
+        		'positive_ttl' => 604800,        // 7d
+        		'negative_ttl' => 3600,          // 1h
         	],
 
-        	// CHANGED: dynamic_ip_ranges restructured
+        	// === Dynamic IP ranges (async feed — ON by default) ===
         	'dynamic_ip_ranges' => [
-        		'enabled' => false,  // EXPERIMENTAL - OFF by default
+        		'enabled' => true,
         		'ttl' => 86400,
         		'feeds' => ['aws', 'cloudflare', 'fastly', 'gcp'],
         	],
 
-        	'enable_head_request_detection' => true,
-        	'head_require_referer' => true,
+        	// === Head / asset detectors (experimental — OFF in normal) ===
+        	'enable_head_request_detection' => false,
+        	'head_require_referer' => false,
         	'head_flood_threshold' => 20,
         	'head_probe_threshold' => 50,
         	'head_referer_exempt_paths' => ['/api/', '/wp-json/', '/health', '/status'],
 
-        	'enable_asset_scraping_detection' => true,
+        	'enable_asset_scraping_detection' => false,
         	'asset_extensions' => [
         		'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
         		'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
@@ -363,9 +544,30 @@ readonly class Configuration
         ];
     }
 
+    /**
+     * Get the strictness level for this configuration.
+     */
+    public function get_strictness(): string
+    {
+        return $this->strictness;
+    }
+
+    /**
+     * Get the active bot registry preset name.
+     */
+    public function get_preset(): string
+    {
+        return $this->preset;
+    }
+
     public function to_array(): array
     {
     	return [
+    		// === Meta ===
+    		'preset' => $this->preset,
+    		'strictness' => $this->strictness,
+
+    		// === Core ===
     		'logging' => $this->logging,
     		'verbose' => $this->verbose,
     		'strict' => $this->strict,
@@ -390,78 +592,78 @@ readonly class Configuration
     		'ai_crawlers' => [
     			'allowed' => $this->allowed_ai_crawlers,
     			'block_unverified' => $this->block_unverified_ai,
-    			'strict' => $this->strict_ai,
-    		],
-    		'bot_categories' => [
-    			'blocked' => $this->blocked_bot_categories,
-    		],
-    		'rate_limits' => array_merge(['enabled' => $this->rate_limit_enabled], $this->rate_limits),
-    		'custom_rules' => $this->custom_rules,
-    		'fingerprints' => [
-    			'bad_ja3' => $this->bad_ja3_fingerprints,
-    			'bad_h2' => $this->bad_h2_fingerprints,
-    			'bot_header_orders' => $this->bot_header_orders,
-    			'expected_ja3' => $this->expected_ja3,
-    		],
-    		'geoip' => [
-    			'enabled' => $this->geoip_enabled,
-    			'database_path' => $this->geoip_database_path,
-    			'blocked_countries' => $this->blocked_countries,
-    			'blocked_asns' => $this->blocked_asns,
-    		],
-    		'challenge' => [
-    			'enabled' => $this->challenge_enabled,
-    			'provider' => $this->challenge_provider,
-    			'site_key' => $this->challenge_site_key,
-    			'secret_key' => $this->challenge_secret_key,
-    			'recaptcha_min_score' => $this->recaptcha_min_score,
-    		],
-    		'performance' => [
-    			'skip_extensions' => $this->skip_static_extensions,
-    			'skip_paths' => $this->skip_static_paths,
-    		],
-    		'body_scan_skip_fields' => $this->body_scan_skip_fields ?? [],
-    		'enable_fingerprinting' => $this->enable_fingerprinting,
-    		'inspect_json_body' => $this->inspect_json_body,
-    		'inspect_multipart_body' => $this->inspect_multipart_body,
-    		'enable_behavioral_analysis' => $this->enable_behavioral_analysis,
-    		'enable_ai_crawler_control' => $this->enable_ai_crawler_control,
-    		'enable_client_hints_validation' => $this->enable_client_hints_validation,
-    		'enable_agentic_detection' => $this->enable_agentic_detection,
+                'strict' => $this->strict_ai,
+            ],
+            'bot_categories' => [
+                'blocked' => $this->blocked_bot_categories,
+            ],
+            'rate_limits' => array_merge(['enabled' => $this->rate_limit_enabled], $this->rate_limits),
+            'custom_rules' => $this->custom_rules,
+            'fingerprints' => [
+                'bad_ja3' => $this->bad_ja3_fingerprints,
+                'bad_h2' => $this->bad_h2_fingerprints,
+                'bot_header_orders' => $this->bot_header_orders,
+                'expected_ja3' => $this->expected_ja3,
+            ],
+            'geoip' => [
+                'enabled' => $this->geoip_enabled,
+                'database_path' => $this->geoip_database_path,
+                'blocked_countries' => $this->blocked_countries,
+                'blocked_asns' => $this->blocked_asns,
+            ],
+            'challenge' => [
+                'enabled' => $this->challenge_enabled,
+                'provider' => $this->challenge_provider,
+                'site_key' => $this->challenge_site_key,
+                'secret_key' => $this->challenge_secret_key,
+                'recaptcha_min_score' => $this->recaptcha_min_score,
+            ],
+            'performance' => [
+                'skip_extensions' => $this->skip_static_extensions,
+                'skip_paths' => $this->skip_static_paths,
+            ],
+            'body_scan_skip_fields' => $this->body_scan_skip_fields ?? [],
+            'enable_fingerprinting' => $this->enable_fingerprinting,
+            'inspect_json_body' => $this->inspect_json_body,
+            'inspect_multipart_body' => $this->inspect_multipart_body,
+            'enable_behavioral_analysis' => $this->enable_behavioral_analysis,
+            'enable_ai_crawler_control' => $this->enable_ai_crawler_control,
+            'enable_client_hints_validation' => $this->enable_client_hints_validation,
+            'enable_agentic_detection' => $this->enable_agentic_detection,
 
-    		// NEW: dns_verification
-    		'dns_verification' => [
-    			'enabled' => $this->dns_verification_enabled,
-    			'timeout_ms' => $this->dns_verification_timeout_ms,
-    			'require_forward_confirm' => $this->dns_verification_require_forward_confirm,
-    			'positive_ttl' => $this->dns_verification_positive_ttl,
-    			'negative_ttl' => $this->dns_verification_negative_ttl,
-    		],
+            'dns_verification' => [
+                'enabled' => $this->dns_verification_enabled,
+                'timeout_ms' => $this->dns_verification_timeout_ms,
+                'require_forward_confirm' => $this->dns_verification_require_forward_confirm,
+                'positive_ttl' => $this->dns_verification_positive_ttl,
+                'negative_ttl' => $this->dns_verification_negative_ttl,
+            ],
 
-    		// CHANGED: dynamic_ip_ranges restructured
-    		'dynamic_ip_ranges' => [
-    			'enabled' => $this->dynamic_ip_ranges_enabled,
-    			'ttl' => $this->dynamic_ip_ranges_ttl,
-    			'feeds' => $this->dynamic_ip_ranges_feeds,
-    		],
+            'dynamic_ip_ranges' => [
+                'enabled' => $this->dynamic_ip_ranges_enabled,
+                'ttl' => $this->dynamic_ip_ranges_ttl,
+                'feeds' => $this->dynamic_ip_ranges_feeds,
+            ],
 
-    		'enable_head_request_detection' => $this->enable_head_request_detection,
-    		'head_require_referer' => $this->head_require_referer,
-    		'head_flood_threshold' => $this->head_flood_threshold,
-    		'head_probe_threshold' => $this->head_probe_threshold,
-    		'head_referer_exempt_paths' => $this->head_referer_exempt_paths,
+            'enable_head_request_detection' => $this->enable_head_request_detection,
+            'head_require_referer' => $this->head_require_referer,
+            'head_flood_threshold' => $this->head_flood_threshold,
+            'head_probe_threshold' => $this->head_probe_threshold,
+            'head_referer_exempt_paths' => $this->head_referer_exempt_paths,
 
-    		'enable_asset_scraping_detection' => $this->enable_asset_scraping_detection,
-    		'asset_extensions' => $this->asset_extensions,
-    		'asset_no_referer_threshold' => $this->asset_no_referer_threshold,
-    		'asset_only_session_threshold' => $this->asset_only_session_threshold,
-    		'asset_pattern_threshold' => $this->asset_pattern_threshold,
+            'enable_asset_scraping_detection' => $this->enable_asset_scraping_detection,
+            'asset_extensions' => $this->asset_extensions,
+            'asset_no_referer_threshold' => $this->asset_no_referer_threshold,
+            'asset_only_session_threshold' => $this->asset_only_session_threshold,
+            'asset_pattern_threshold' => $this->asset_pattern_threshold,
 
-    		'log_table' => $this->log_table ?? '',
-    	];
+            'log_table' => $this->log_table ?? '',
+        ];
     }
 
-
+    /**
+     * Normalize rate_limits array, ensuring all named buckets have defaults.
+     */
     private static function normalize_rate_limits(array $limits): array
     {
         $defaults = [
@@ -471,6 +673,7 @@ readonly class Configuration
             'login'      => ['requests' => 10,   'window' => 900],
         ];
 
+        // Bare `['enabled' => true]` short-form — fill in defaults
         if (isset($limits['enabled']) && count($limits) === 1) {
             return ['enabled' => true] + $defaults;
         }
@@ -497,78 +700,81 @@ readonly class Configuration
     }
 
     /**
-     * Deep merge that preserves numeric keys (doesn't reindex)
+     * Deep merge that preserves numeric keys (doesn't reindex).
+     *
+     * List-typed values (numeric keys 0..n) are REPLACED, not merged.
+     * Associative arrays are merged recursively. This matches user
+     * expectation: writing `rate_limits.global.requests = 500` replaces
+     * just that one value, not the whole global bucket.
      */
     private static function array_merge_recursive(array $a1, array $a2): array
     {
-    	$merged = $a1;
-    	foreach ($a2 as $key => $value) {
-    		if (is_array($value) && isset($merged[$key]) && is_array($merged[$key])) {
-    			// Detect if both are lists (numeric keys 0..n)
-    			$is_list_1 = self::is_list($merged[$key]);
-    			$is_list_2 = self::is_list($value);
+        $merged = $a1;
+        foreach ($a2 as $key => $value) {
+            if (is_array($value) && isset($merged[$key]) && is_array($merged[$key])) {
+                $is_list_1 = self::is_list($merged[$key]);
+                $is_list_2 = self::is_list($value);
 
-    			if ($is_list_1 && $is_list_2) {
-    				// Both are lists → REPLACE entirely (user config wins)
-    				$merged[$key] = $value;
-    			} elseif (!$is_list_1 && !$is_list_2) {
-    				// Both are associative → MERGE recursively
-    				$merged[$key] = self::array_merge_recursive($merged[$key], $value);
-    			} else {
-    				// Mixed types → REPLACE (user config wins)
-    				$merged[$key] = $value;
-    			}
-    		} else {
-    			$merged[$key] = $value;
-    		}
-    	}
-    	return $merged;
+                if ($is_list_1 && $is_list_2) {
+                    // Both are lists → REPLACE entirely (user config wins)
+                    $merged[$key] = $value;
+                } elseif (!$is_list_1 && !$is_list_2) {
+                    // Both are associative → MERGE recursively
+                    $merged[$key] = self::array_merge_recursive($merged[$key], $value);
+                } else {
+                    // Mixed types → REPLACE (user config wins)
+                    $merged[$key] = $value;
+                }
+            } else {
+                $merged[$key] = $value;
+            }
+        }
+        return $merged;
     }
 
     /**
-     * Check if array is a list (numeric keys 0, 1, 2... n-1)
+     * Check if array is a list (numeric keys 0, 1, 2... n-1).
      */
     private static function is_list(array $array): bool
     {
-    	if ($array === []) return true;
-    	$keys = array_keys($array);
-    	return $keys === range(0, count($keys) - 1);
+        if ($array === []) return true;
+        $keys = array_keys($array);
+        return $keys === range(0, count($keys) - 1);
     }
 
     private static function ensure_array($value, array $default = []): array
     {
-    	if (is_array($value)) {
-    		return $value;
-    	}
-    	if (is_string($value) && $value !== '') {
-    		return [$value];
-    	}
-    	return $default;
+        if (is_array($value)) {
+            return $value;
+        }
+        if (is_string($value) && $value !== '') {
+            return [$value];
+        }
+        return $default;
     }
 
     /**
-     * Get defaults merged with adapter-specific overrides
-     * Used when no config file exists
+     * Get defaults merged with adapter-specific overrides.
+     * Used when no config file exists.
      */
     public static function get_defaults_merged(): array
     {
-    	$defaults = self::get_defaults();
-    	return $defaults; // Already complete
+        return self::get_defaults();
     }
 
     /**
-     * Deep merge two arrays (preserves numeric keys)
+     * Deep merge two arrays (preserves numeric keys).
      */
     public static function merge_arrays(array $a1, array $a2): array
     {
-    	$merged = $a1;
-    	foreach ($a2 as $key => $value) {
-    		if (is_array($value) && isset($merged[$key]) && is_array($merged[$key])) {
-    			$merged[$key] = self::merge_arrays($merged[$key], $value);
-    		} else {
-    			$merged[$key] = $value;
-    		}
-    	}
-    	return $merged;
+        $merged = $a1;
+        foreach ($a2 as $key => $value) {
+            if (is_array($value) && isset($merged[$key]) && is_array($merged[$key])) {
+                $merged[$key] = self::merge_arrays($merged[$key], $value);
+            } else {
+                $merged[$key] = $value;
+            }
+        }
+        return $merged;
     }
 }

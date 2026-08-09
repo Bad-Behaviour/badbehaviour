@@ -327,9 +327,13 @@ return [
 	 *   - 'feeds': which providers to fetch (trim to only what you use)
 	 *
 	 * Default: enabled, 24h TTL, all four providers
+	 *
+	 * IMPORTANT: default is FALSE. Enabling without setting up the cron
+	 * causes empty-cache warnings on every fresh worker. The static IP
+	 * ranges in the bot registry already cover Cloudflare/AWS/GCP/Fastly.
 	 */
 	'dynamic_ip_ranges' => [
-		'enabled' => true,
+		'enabled' => false,
 		'ttl'     => 86400,   // re-fetch every 24 hours
 		'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
 	],

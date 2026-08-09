@@ -47,19 +47,13 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 
 	public function get_settings(): array
 	{
-		$candidates = [
-			__DIR__ . '/../../config/bb_config.php',     // package root layout (your repo)
-			__DIR__ . '/../../../config/bb_config.php',  // nested layout (legacy / test fixtures)
-			'config/bb_config.php',                     // CWD-relative (CLI tools)
-		];
-
-		$file = null;
-		foreach ($candidates as $candidate) {
-			if (file_exists($candidate)) {
-				$file = $candidate;
-				break;
-			}
-		}
+		// Single source of truth: CONFIG_DIR if defined, else CWD-relative.
+		// The package directory (vendor/badbehaviour/.../config/bb_config.php)
+		// is intentionally NOT searched — it ships a test fixture config
+		// that is NOT valid for production. Falling through to it has caused
+		// real outages where the operator's bb_config.php was silently
+		// shadowed by the package's test fixture.
+		$file = $this->production_config_path();
 
 		if (file_exists($file)) {
 			$config = SafeConfigLoader::load($file, $this, 'bb_config_load');
@@ -82,13 +76,67 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 		ErrorReporter::warning($this,
 			'BadBehaviour config not found — running in safe-mode (monitor only)',
 			[
-				'path' => $file,
-				'hint' => 'Create config/bb_config.php to enable full protection',
+				'hint' => 'Either define CONFIG_DIR (recommended for production) '
+				. 'or run from a directory containing config/bb_config.php',
 			],
 			'bb_config_missing'
-		);
+			);
 
 		return SafeMode::settings('bad_behaviour');
+	}
+
+	/**
+	 * Resolve the production config file location.
+	 *
+	 * GenericAdapter has no canonical application directory, so the
+	 * resolution order is:
+	 *
+	 *   1. CONFIG_DIR/bb_config.php — preferred for production.
+	 *      Operators using a custom bootstrap should define CONFIG_DIR
+	 *      pointing at their application's config directory.
+	 *
+	 *   2. config/bb_config.php — CWD-relative. Fine for CLI tools and
+	 *      test harnesses; ambiguous in web context. Logged as a warning
+	 *      so operators know to set CONFIG_DIR.
+	 *
+	 * The package directory (vendor/badbehaviour/.../config/bb_config.php)
+	 * is intentionally excluded — that file exists only as a unit-test
+	 * fixture and is not safe for production use.
+	 *
+	 * @return string Path to config/bb_config.php, never empty.
+	 */
+	private function production_config_path(): string
+	{
+		if (defined('CONFIG_DIR') && is_dir(CONFIG_DIR)) {
+			$candidate = CONFIG_DIR . '/bb_config.php';
+			if (file_exists($candidate)) {
+				return $candidate;
+			}
+		}
+
+		$cwd_candidate = 'config/bb_config.php';
+		if (file_exists($cwd_candidate)) {
+			// Warn once per process: this resolution path is fine for CLI
+			// and tests but is ambiguous in web context. If you're seeing
+			// this warning in production logs, your CONFIG_DIR isn't
+			// being defined before BadBehaviour boots.
+			ErrorReporter::warning($this,
+				'GenericAdapter resolving config/bb_config.php via CWD; '
+				. 'production deployments should define CONFIG_DIR',
+				[
+					'resolved_path' => realpath($cwd_candidate) ?: $cwd_candidate,
+					'cwd' => getcwd(),
+					'hint' => 'Define CONFIG_DIR in your bootstrap (e.g., '
+					. '`define(\'CONFIG_DIR\', __DIR__ . \'/config\');`) '
+					. 'before instantiating GenericAdapter.',
+				],
+				'bb_config_cwd_relative'  // once-tag
+				);
+			return $cwd_candidate;
+		}
+
+		// Caller (get_settings) will fall through to safe-mode.
+		return $cwd_candidate;
 	}
 
 	public function get_whitelist(): array

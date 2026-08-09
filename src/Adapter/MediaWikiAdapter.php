@@ -64,8 +64,10 @@ class MediaWikiAdapter implements AdapterInterface, CacheInterface
 	{
 		global $wgBadBehaviourSettings;
 
-		// Start with PHP config file if exists
-		$file = $this->find_config_file();
+		// Single source of truth: the MediaWiki config directory.
+		// The package directory is intentionally not searched — see
+		// production_config_path() for the rationale.
+		$file = $this->production_config_path();
 		if ($file !== null) {
 			try {
 				$base_settings = Configuration::from_file($file, $this)->to_array();
@@ -115,19 +117,46 @@ class MediaWikiAdapter implements AdapterInterface, CacheInterface
 		return $base_settings;
 	}
 
-	private function find_config_file(): ?string
+	/**
+	 * Resolve the production config file location for MediaWiki.
+	 *
+	 * MediaWiki's convention is MW_CONFIG_FILE pointing to LocalSettings.php.
+	 * BadBehaviour config lives next to it (same directory). That is the
+	 * ONLY acceptable production location — the package's bundled test
+	 * fixture is intentionally excluded because it can shadow the
+	 * operator's actual config.
+	 *
+	 * @return string|null Absolute path, or null if not resolvable.
+	 */
+	private function production_config_path(): ?string
 	{
-		// Check common locations
-		$paths = [
-			__DIR__ . '/../../../config/bb_config.php',
-			MW_CONFIG_FILE ?? '', // MediaWiki's config directory
-		];
-
-		foreach ($paths as $path) {
-			if ($path && file_exists($path)) {
-				return $path;
-			}
+		if (!defined('MW_CONFIG_FILE')) {
+			ErrorReporter::warning($this,
+				'MediaWikiAdapter: MW_CONFIG_FILE not defined; cannot '
+				. 'locate config/bb_config.php in MediaWiki config directory',
+				[
+					'hint' => 'BadBehaviour expects config/bb_config.php next to '
+					. 'LocalSettings.php. If MW_CONFIG_FILE isn\'t defined '
+					. 'when BadBehaviour boots, you may need to load BadBehaviour '
+					. 'later in MediaWiki\'s initialization sequence.',
+				],
+				'bb_mw_config_dir_unresolved'  // once-tag
+				);
+			return null;
 		}
+
+		if (!file_exists(MW_CONFIG_FILE)) {
+			// MW_CONFIG_FILE is defined but the file doesn't exist —
+			// something is misconfigured upstream. Don't fall back to
+			// the package fixture (that's the bug we're fixing).
+			return null;
+		}
+
+		$candidate = dirname(MW_CONFIG_FILE) . '/config/bb_config.php';
+		if (file_exists($candidate)) {
+			return $candidate;
+		}
+
 		return null;
 	}
 

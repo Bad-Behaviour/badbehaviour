@@ -55,16 +55,17 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 
 	public function get_settings(): array
 	{
-		// In WackoWiki context: CONFIG_DIR/bb_config.php
-		// In badbehaviour repo (tests): __DIR__/../../../config/bb_config.php
-		// Fallback: config/bb_config.php (relative to CWD)
-		$possible_paths = [
-			defined('CONFIG_DIR') ? CONFIG_DIR . '/bb_config.php' : null,
-			'config/bb_config.php',                           // Relative to CWD
-			__DIR__ . '/../../../config/bb_config.php',       // From badbehaviour repo
-		];
-
-		$file = SafeConfigLoader::find_existing($possible_paths);
+		// Single source of truth: CONFIG_DIR/bb_config.php.
+		//
+		// The package directory (vendor/badbehaviour/.../config/bb_config.php)
+		// is intentionally NOT searched. It exists as a unit-test fixture
+		// and has caused production outages where the operator's
+		// bb_config.php was silently shadowed by the package's test fixture.
+		//
+		// CWD-relative lookup is also excluded: in a web request, CWD is
+		// the FPM pool's working directory, which is unrelated to the
+		// application's config location and would be silently wrong.
+		$file = $this->production_config_path();
 
 		if ($file !== null) {
 			$config = SafeConfigLoader::load($file, $this, 'bb_config_load');
@@ -88,13 +89,56 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		ErrorReporter::warning($this,
 			'BadBehaviour config not found — running in safe-mode (monitor only)',
 			[
-				'checked_paths' => array_values(array_filter($possible_paths)),
+				'expected_path' => defined('CONFIG_DIR')
+				? CONFIG_DIR . '/bb_config.php'
+				: 'CONFIG_DIR not defined',
 				'hint' => 'Create config/bb_config.php from config/bb_config.sample.php to enable full protection',
 			],
 			'bb_config_missing'
-		);
+			);
 
 		return $this->safe_mode_settings();
+	}
+
+	/**
+	 * Resolve the production config file location for WackoWiki.
+	 *
+	 * WackoWiki defines CONFIG_DIR as the absolute path to its config
+	 * directory. BadBehaviour's production config must live at
+	 * CONFIG_DIR/bb_config.php. That is the ONLY acceptable location.
+	 *
+	 * The package directory is intentionally excluded — it ships a test
+	 * fixture config that can shadow the operator's real config and
+	 * cause silent production misconfiguration. See commit history for
+	 * the outage this fix prevents.
+	 *
+	 * @return string|null Absolute path, or null if CONFIG_DIR is undefined
+	 *                     or the config file does not exist there.
+	 */
+	private function production_config_path(): ?string
+	{
+		if (!defined('CONFIG_DIR')) {
+			ErrorReporter::warning($this,
+				'WackoWikiAdapter: CONFIG_DIR not defined; cannot '
+				. 'locate config/bb_config.php in application config directory',
+				[
+					'hint' => 'BadBehaviour expects config/bb_config.php in the '
+					. 'directory WackoWiki defines as CONFIG_DIR. If '
+					. 'CONFIG_DIR isn\'t defined when BadBehaviour boots, '
+					. 'the extension may be loading before WackoWiki '
+					. 'initializes its config directory constant.',
+				],
+				'bb_wacko_config_dir_unresolved'  // once-tag
+				);
+			return null;
+		}
+
+		$candidate = CONFIG_DIR . '/bb_config.php';
+		if (file_exists($candidate)) {
+			return $candidate;
+		}
+
+		return null;
 	}
 
 	/**

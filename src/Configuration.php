@@ -106,7 +106,7 @@ readonly class Configuration
     	public int $dns_verification_negative_ttl = 3600,
 
     	// === Dynamic IP ranges (async feed) ===
-    	public bool $dynamic_ip_ranges_enabled = true,
+    	public bool $dynamic_ip_ranges_enabled = false,
     	public int $dynamic_ip_ranges_ttl = 86400,
     	public array $dynamic_ip_ranges_feeds = ['aws', 'cloudflare', 'fastly', 'gcp'],
 
@@ -354,87 +354,93 @@ readonly class Configuration
     	return match ($strictness ?? 'normal') {
 
     		'monitor-only' => [
-                // All active defenses OFF
-                'dns_verification_enabled'            => false,
-                'dynamic_ip_ranges_enabled'           => false,
-                'enable_fingerprinting'               => false,
-                'enable_behavioral_analysis'          => false,
-                'enable_client_hints_validation'      => false,
-                'enable_agentic_detection'            => false,
-                'enable_head_request_detection'       => false,
-                'enable_asset_scraping_detection'     => false,
-                'rate_limit_enabled'                  => false,
-                'dnsbl_enabled'                       => false,
+    			// All active defenses OFF
+    			'dns_verification' => [
+    				'enabled' => false,
+    				'negative_ttl' => 3600,
+    			],
+    			'dynamic_ip_ranges' => [
+    				'enabled' => false,
+    			],
+    			'enable_fingerprinting'               => false,
+    			'enable_behavioral_analysis'          => false,
+    			'enable_client_hints_validation'      => false,
+    			'enable_agentic_detection'            => false,
+    			'enable_head_request_detection'       => false,
+    			'enable_asset_scraping_detection'     => false,
+    			'rate_limit_enabled'                  => false,
+    			'dnsbl_enabled'                       => false,
 
-                // No aggressive blocking
-                'block_unverified_ai'                 => false,
-                'strict_search_engines'               => false,
-
-                // Re-check DNS failures quickly
-                'dns_verification_negative_ttl'       => 3600,
-            ],
+    			// No aggressive blocking
+    			'block_unverified_ai'                 => false,
+    			'strict_search_engines'               => false,
+    		],
 
     		'normal' => [
-                // Sync DNS verification ON — catches bot spoofing
-                'dns_verification_enabled'            => true,
-                'dynamic_ip_ranges_enabled'           => true,
+    			// Sync DNS verification ON — catches bot spoofing
+    			'dns_verification' => [
+    				'enabled' => true,
+    				'require_forward_confirm' => false,
+    				'negative_ttl' => 3600,
+    			],
+    			'dynamic_ip_ranges' => [
+    				'enabled' => false,
+    			],
 
-                // Rate limiting ON with conservative thresholds
-                'rate_limit_enabled'                  => true,
-                'rate_limits'                         => [
-                    'enabled'     => true,
-                    'global'      => ['requests' => 1000, 'window' => 3600],
-                    'per_minute'  => ['requests' => 60,   'window' => 60],
-                ],
+    			// Rate limiting ON with conservative thresholds
+    			'rate_limit_enabled' => true,
+    			'rate_limits' => [
+    				'enabled'     => true,
+    				'global'      => ['requests' => 1000, 'window' => 3600],
+    				'per_minute'  => ['requests' => 60,   'window' => 60],
+    			],
 
-                // Experimental detectors OFF (FP risk)
-                'enable_fingerprinting'               => false,
-                'enable_behavioral_analysis'          => false,
-                'enable_client_hints_validation'      => false,
-                'enable_agentic_detection'            => false,
-                'enable_head_request_detection'       => false,
-                'enable_asset_scraping_detection'     => false,
+    			// Experimental detectors OFF (FP risk)
+    			'enable_fingerprinting'               => false,
+    			'enable_behavioral_analysis'          => false,
+    			'enable_client_hints_validation'      => false,
+    			'enable_agentic_detection'            => false,
+    			'enable_head_request_detection'       => false,
+    			'enable_asset_scraping_detection'     => false,
 
-                // Aggressive blocking OFF (FP prevention)
-                'block_unverified_ai'                 => false,
-                'strict_search_engines'               => false,
-                'dnsbl_enabled'                       => false,
-                'dns_verification_require_forward_confirm' => false,
-
-                // FP prevention: shorter negative TTL
-                'dns_verification_negative_ttl'       => 3600,
-            ],
+    			// Aggressive blocking OFF (FP prevention)
+    			'block_unverified_ai'                 => false,
+    			'strict_search_engines'               => false,
+    			'dnsbl_enabled'                       => false,
+    		],
 
     		'strict' => [
-                // Everything ON
-                'dns_verification_enabled'            => true,
-                'dynamic_ip_ranges_enabled'           => true,
-                'dns_verification_require_forward_confirm' => true,
-                'dns_verification_positive_ttl'       => 2592000,  // 30d
-                'dns_verification_negative_ttl'       => 86400,    // 1d
+    			// Everything ON
+    			'dns_verification' => [
+    				'enabled' => true,
+    				'require_forward_confirm' => true,
+    				'positive_ttl' => 2592000,  // 30d
+    				'negative_ttl' => 86400,    // 1d
+    			],
+    			'dynamic_ip_ranges' => [
+    				'enabled' => true,
+    			],
 
-                'enable_fingerprinting'               => true,
-                'enable_behavioral_analysis'          => true,
-                'enable_client_hints_validation'      => true,
-                'enable_agentic_detection'            => true,
-                'enable_head_request_detection'       => true,
-                'enable_asset_scraping_detection'     => true,
+    			'enable_fingerprinting'               => true,
+    			'enable_behavioral_analysis'          => true,
+    			'enable_client_hints_validation'      => true,
+    			'enable_agentic_detection'            => true,
+    			'enable_head_request_detection'       => true,
+    			'enable_asset_scraping_detection'     => true,
 
-                'rate_limit_enabled'                  => true,
-                'rate_limits'                         => [
-                    'enabled'     => true,
-                    'global'      => ['requests' => 500, 'window' => 3600],
-                    'per_minute'  => ['requests' => 30, 'window' => 60],
-                ],
+    			'rate_limit_enabled'                  => true,
+    			'rate_limits'                         => [
+    				'enabled'     => true,
+    				'global'      => ['requests' => 500, 'window' => 3600],
+    				'per_minute'  => ['requests' => 30, 'window' => 60],
+    			],
 
-                'dnsbl_enabled'                       => true,
-                'block_unverified_ai'                 => true,
-                'strict_search_engines'               => true,
-            ],
+    			'dnsbl_enabled'                       => true,
+    			'block_unverified_ai'                 => true,
+    			'strict_search_engines'               => true,
+    		],
 
-    		default => [
-                // Unknown strictness — return empty (defaults + user config apply)
-            ],
+    		default => [],
     	};
     }
 
@@ -552,7 +558,7 @@ readonly class Configuration
 
         	// === Dynamic IP ranges (async feed — ON by default) ===
         	'dynamic_ip_ranges' => [
-        		'enabled' => true,
+        		'enabled' => false,
         		'ttl' => 86400,
         		'feeds' => ['aws', 'cloudflare', 'fastly', 'gcp'],
         	],

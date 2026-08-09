@@ -318,14 +318,14 @@ class BadBehaviour
 			'reverse_proxy_addresses'   => $this->config->reverse_proxy_addresses,
 		];
 
-		// Build the package (now we need full request context)
+		// Build the package FIRST — we need IP/UA/URI before any detection
+		// and before the timeout handler (so it has something to log).
 		$package = $server !== null
 			? RequestPackage::from_server_globals($proxy_settings, $server)
 			: RequestPackage::from_globals($proxy_settings);
 
-		// FAST PATH 2: Empty UA → immediate block. NEVER demoted in
+		// FAST PATH 1: Empty UA → immediate block. NEVER demoted in
 		// monitor-only mode — no UA = never a legitimate request.
-		// (See maybe_demote_to_monitored() for the exception list.)
 		if (empty($package->user_agent) || strlen(trim($package->user_agent)) < 5) {
 			$result = Result::block(
 				ResultCode::BLOCKED_MALICIOUS_UA,
@@ -336,7 +336,7 @@ class BadBehaviour
 			return $result;
 		}
 
-		// FAST PATH 3: Whitelisted IP → immediate allow (skip all detectors)
+		// FAST PATH 2: Whitelisted IP → immediate allow (skip all detectors)
 		if ($this->is_whitelisted($package)) {
 			$result = Result::allow($package);
 			$this->log_and_return($package, $result);
@@ -368,10 +368,60 @@ class BadBehaviour
 			// Fingerprint computation is best-effort
 		}
 
-		// Run detection pipeline (each detector is wrapped in try/catch internally)
-		$result = $this->detect($package);
+		// ============================================================
+		// HARD TIME BUDGET — Detection must NEVER stall the request.
+		// Wraps ONLY $this->detect() — enrichment and fast paths are
+		// outside the budget so they can't be cut off mid-flight.
+		// ============================================================
+		$bb_run_start = microtime(true);
+		$bb_budget_seconds = 1.5;
 
-		// === NEW: monitor-only demotion ===
+		// Set up hard timeout via pcntl_alarm (Unix only)
+		$bb_pcntl_available = function_exists('pcntl_signal') && function_exists('pcntl_alarm');
+		if ($bb_pcntl_available) {
+			pcntl_signal(SIGALRM, function() {
+				throw new \RuntimeException('bb_detection_timeout');
+			});
+		}
+
+		// Wrap the detection pipeline
+		try {
+			if ($bb_pcntl_available) {
+				pcntl_alarm((int)ceil($bb_budget_seconds));
+			}
+
+			$result = $this->detect($package);
+
+			if ($bb_pcntl_available) {
+				pcntl_alarm(0); // Cancel alarm
+			}
+
+		} catch (\RuntimeException $e) {
+			if (strpos($e->getMessage(), 'bb_detection_timeout') !== false) {
+				if ($bb_pcntl_available) {
+					pcntl_alarm(0);
+				}
+
+				// $package is now in scope and safe to use
+				ErrorReporter::error($this->adapter,
+					'BadBehaviour detection timed out — request allowed as fallback',
+					[
+						'elapsed_ms' => round((microtime(true) - $bb_run_start) * 1000, 2),
+						'budget_ms' => $bb_budget_seconds * 1000,
+						'uri' => $package->request_uri ?? 'unknown',
+						'ip' => $package->ip ?? 'unknown',
+						'hint' => 'Detection exceeded time limit. Check slow detectors or disabled features.',
+					],
+					'bb_detection_timeout'
+					);
+
+				$result = Result::allow($package);
+			} else {
+				throw $e;
+			}
+		}
+
+		// === monitor-only demotion ===
 		// After detection, if monitor-only mode is active and the result is
 		// a block/challenge, decide whether to enforce or demote to "monitored".
 		$result = $this->maybe_demote_to_monitored($result);

@@ -12,8 +12,9 @@ class CloudIpRangeProvider
 	private CacheInterface $cache;
 	private int $ttl = 86400; // 24h
 
-	// Service endpoints for official JSON feeds
-	private const FEEDS = [
+	// Service endpoints for official JSON feeds.
+	// Public so other components can reference URLs by name (logging, hints).
+	public const FEED_URLS = [
 		'aws'         => 'https://ip-ranges.amazonaws.com/ip-ranges.json',
 		'cloudflare'  => 'https://api.cloudflare.com/client/v4/ips',  // alt: plain-text ips-v4/v6
 		'fastly'      => 'https://api.fastly.com/public-ip-list',
@@ -60,7 +61,7 @@ class CloudIpRangeProvider
 
 	private function fetch(string $provider, ?string $tag): ?array
 	{
-		$url = self::FEEDS[$provider] ?? null;
+		$url = self::FEED_URLS[$provider] ?? null;
 		if (!$url) return null;
 
 		$ctx = stream_context_create([

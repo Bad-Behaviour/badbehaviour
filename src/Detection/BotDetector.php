@@ -68,6 +68,23 @@ class BotDetector
 	private string $config_fingerprint;
 	private const RESULT_CACHE_TTL = 300;
 
+	/**
+	 * Providers proven unreachable this PHP process.
+	 *
+	 * Keyed by provider name. Once we determine a provider has no
+	 * cached ranges (or its cache read fails), we record it here so
+	 * subsequent BotDetector::is_cloud_infrastructure_ip() calls skip
+	 * the cache lookup entirely. This is what prevents the asset
+	 * "log lines per page request" pathology when a high-traffic
+	 * page generates many sub-requests.
+	 *
+	 * Static at class level (not function-level) so it survives across
+	 * BotDetector instances in the same process.
+	 *
+	 * @var array<string, true>
+	 */
+	private static array $known_unreachable_providers = [];
+
 	public function __construct(
 		Configuration $config,
 		AdapterInterface $adapter,
@@ -261,26 +278,144 @@ class BotDetector
 	 *
 	 * Uses the INJECTED registry's cloud_infrastructure() method so swapping
 	 * registries (e.g., preset='human-only') affects this check too.
+	 *
+	 * === TRIPLE-LAYER PROTECTION AGAINST LOG FLOODING ===
+	 *
+	 * When cloud feeds are unreachable, this method MUST surface a
+	 * warning to the operator (Goal 2: "Signal to the user when
+	 * something is broken"). But it MUST NOT flood the log when many
+	 * requests trigger the same code path (Goal 3: never break the app).
+	 *
+	 * Three independent gates ensure at most one warning per 5 minutes
+	 * per PHP-FPM worker:
+	 *
+	 *   1. Function-local `static $warned` — once per worker process
+	 *      for this method, regardless of how many BotDetector instances
+	 *      exist or how many times the method is called.
+	 *
+	 *   2. `self::$known_unreachable_providers` — class-level static
+	 *      memoization. After the first call identifies a provider as
+	 *      unreachable, subsequent calls skip the cache lookup entirely
+	 *      for that provider. Reduces per-request work AND makes the
+	 *      function-level $warned the only gate that matters.
+	 *
+	 *   3. `ErrorReporter::warning($once_tag = 'cloud_init_slow')` —
+	 *      defense-in-depth. The once-tag + time-throttle in
+	 *      ErrorReporter catches any path that bypasses gates 1 and 2.
 	 */
 	private function is_cloud_infrastructure_ip(string $ip): bool
 	{
 		try {
+			$start = microtime(true);
+			$deadline = $start + 0.1; // 100ms absolute max for init
+
 			static $cloud_ranges = null;
-			if ($cloud_ranges === null) {
+			static $init_done = false;
+
+			if ($cloud_ranges === null && !$init_done) {
+				$init_done = true;
 				$cloud_ranges = [];
+				$unreachable_providers = [];
+				$empty_cache_providers = [];
+
+				// 1. Static ranges from the in-memory registry (fast).
 				foreach ($this->registry->cloud_infrastructure() as $bot) {
 					$cloud_ranges = array_merge($cloud_ranges, $bot->ip_ranges);
-				}
-				// Optional: append dynamic ranges if enabled
-				if ($this->cloud_provider && $this->config->dynamic_ip_ranges_enabled) {
-					foreach ($this->config->dynamic_ip_ranges_feeds as $provider) {
-						try {
-							$cloud_ranges = array_merge($cloud_ranges, $this->cloud_provider->ranges($provider));
-						} catch (\Throwable $e) {
-							// Skip this provider on error
-						}
+					if (microtime(true) > $deadline) {
+						// Even static ranges shouldn't blow the budget on
+						// first init. Subsequent calls hit the static cache.
+						$cloud_ranges = [];
+						break;
 					}
 				}
+
+				// 2. Dynamic ranges from the cache (only if enabled).
+				//    Reads from cache — never live-fetches here. Live
+				//    fetching belongs in bin/update-ip-ranges.php (cron).
+				if ($this->cloud_provider
+					&& $this->config->dynamic_ip_ranges_enabled
+					&& microtime(true) < $deadline) {
+
+						foreach ($this->config->dynamic_ip_ranges_feeds as $provider) {
+							if (microtime(true) >= $deadline) {
+								break;
+							}
+
+							// Skip providers already proven unreachable this
+							// process. Saves a cache lookup per request
+							// after the first one identifies the problem.
+							if (isset(self::$known_unreachable_providers[$provider])) {
+								$unreachable_providers[] = $provider;
+								continue;
+							}
+
+							$cache_key = "ip_range:{$provider}:all";
+							$cached = null;
+							try {
+								$cached = $this->adapter->get($cache_key);
+							} catch (\Throwable $e) {
+								// Cache read failure — treat as unreachable,
+								// remember it for subsequent calls.
+								$unreachable_providers[] = $provider;
+								self::$known_unreachable_providers[$provider] = true;
+								continue;
+							}
+
+							if ($cached === null) {
+								// No cache entry at all. Either:
+								//   (a) cron job has never run (no data yet), or
+								//   (b) cache backend was reset.
+								// Both are operator-fixable; remember and skip.
+								$unreachable_providers[] = $provider;
+								self::$known_unreachable_providers[$provider] = true;
+								continue;
+							}
+
+							$data = is_array($cached) ? ($cached['data'] ?? []) : [];
+							if (empty($data)) {
+								$empty_cache_providers[] = $provider;
+								continue;
+							}
+
+							$cloud_ranges = array_merge($cloud_ranges, $data);
+						}
+					}
+
+					// 3. Surface slow init to the operator.
+					//    Triple-layer protection against log flooding:
+					//      - Function-local static $warned (once per process)
+					//      - ErrorReporter::warning() with once_tag
+					//      - ErrorReporter time-based throttle (5 min)
+					//    Any one of these is sufficient; all three together
+					//    guarantee at most one warning per 5 minutes per worker.
+					$elapsed_ms = (microtime(true) - $start) * 1000;
+					static $warned = false;
+					if (!$warned && ($elapsed_ms > 50 || !empty($unreachable_providers))) {
+						$warned = true;
+
+						$hint = $this->build_cloud_init_hint(
+							$unreachable_providers,
+							$empty_cache_providers
+							);
+
+						ErrorReporter::warning($this->adapter,
+							'Cloud infrastructure whitelist initialization has '
+							. 'problems — health-check IPs may be blocked',
+							[
+								'elapsed_ms'             => round($elapsed_ms, 2),
+								'range_count'            => count($cloud_ranges),
+								'dynamic_enabled'        => $this->config->dynamic_ip_ranges_enabled,
+								'unreachable_providers'  => $unreachable_providers,
+								'empty_cache_providers'  => $empty_cache_providers,
+								'feed_urls'              => array_intersect_key(
+									CloudIpRangeProvider::FEED_URLS,
+									array_flip($this->config->dynamic_ip_ranges_feeds)
+									),
+								'hint' => $hint,
+							],
+							'cloud_init_slow'  // once-tag (ErrorReporter layer)
+							);
+					}
 			}
 
 			if (empty($cloud_ranges)) {
@@ -289,11 +424,65 @@ class BotDetector
 
 			return IpUtil::match_any($ip, $cloud_ranges);
 		} catch (\Throwable $e) {
-			// Cloud infrastructure check failure: err on the side of
-			// NOT blocking (better to let a probe through than to
-			// accidentally take your CDN offline).
+			// Never let cloud check crash detection
 			return false;
 		}
+	}
+
+	/**
+	 * Build an actionable hint for the operator based on which providers
+	 * had problems during initialization.
+	 *
+	 * Three failure modes are distinguished so the operator doesn't have
+	 * to guess:
+	 *
+	 *   - unreachable:  no cache entry exists. Either cron never ran, or
+	 *                  the cache was cleared, or the cache backend is
+	 *                  unreachable. Operator action required.
+	 *   - empty cache:  cache entry exists but contains no ranges.
+	 *                  Usually means cron ran but the upstream feed
+	 *                  returned no data (or the feed URL changed).
+	 *   - slow init:    initialization took >50ms but no providers are
+	 *                  unreachable. Likely a slow cache backend.
+	 *
+	 * @param string[] $unreachable Providers with no cache entry
+	 * @param string[] $empty       Providers with empty cache entry
+	 * @return string Operator-facing hint
+	 */
+	private function build_cloud_init_hint(array $unreachable, array $empty): string
+	{
+		if (!empty($unreachable)) {
+			$urls = array_intersect_key(
+				CloudIpRangeProvider::FEED_URLS,
+				array_flip($unreachable)
+				);
+			$url_list = implode("\n  - ", array_map(
+				fn($p, $u) => "$p: $u",
+				array_keys($urls),
+				array_values($urls)
+				));
+
+			return "Cloud provider(s) have no cached ranges: "
+				. implode(', ', $unreachable)
+				. ". Either:\n"
+					. "  (1) Run bin/update-ip-ranges.php via cron (recommended):\n"
+						. "        0 */6 * * * php /path/to/badbehaviour/bin/update-ip-ranges.php\n"
+							. "  (2) Or disable dynamic_ip_ranges in config/bb_config.php:\n"
+								. "        'dynamic_ip_ranges' => ['enabled' => false]\n"
+									. "  (3) Or fix network reachability to:\n"
+										. "        $url_list";
+		}
+
+		if (!empty($empty)) {
+			return "Cloud provider(s) have empty cached ranges: "
+				. implode(', ', $empty)
+				. ". Cron likely ran but feeds returned no data. "
+					. "Check bin/update-ip-ranges.php logs and verify feed URLs.";
+		}
+
+		return "Initialization took longer than 50ms but no providers "
+			. "are unreachable. Likely a slow cache backend — check "
+				. "adapter->get() performance.";
 	}
 
 	/**

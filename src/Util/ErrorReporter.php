@@ -31,6 +31,27 @@ final class ErrorReporter
 	private static array $reported = [];
 
 	/**
+	 * Track last-emit timestamp per tag for time-based throttling.
+	 *
+	 * Combined with $reported, provides defense-in-depth against log
+	 * flooding when many sub-requests share a process or when the
+	 * static state somehow gets reset (e.g., registry rebuild,
+	 * multiple BotDetector instances, etc.).
+	 *
+	 * @var array<string, int>
+	 */
+	private static array $last_emitted_at = [];
+
+	/**
+	 * Minimum seconds between re-emission of the same once-tag.
+	 *
+	 * If we somehow get past the $reported gate (e.g., process boundary,
+	 * cache backend reset, pcntl_fork), this rate-limits re-emission
+	 * so we never flood the log even under pathological conditions.
+	 */
+	private const ONCE_TAG_MIN_INTERVAL = 300; // 5 minutes
+
+	/**
 	 * Track whether ANY fatal has been reported (for fatal_logged semantics).
 	 */
 	private static bool $fatal_logged = false;
@@ -54,24 +75,42 @@ final class ErrorReporter
 		string $message,
 		array $context = [],
 		?string $once_tag = null
-	): void {
-		if ($once_tag !== null) {
-			if (isset(self::$reported[$once_tag])) {
-				return;
-			}
-			self::$reported[$once_tag] = true;
-		}
+		): void {
+			if ($once_tag !== null) {
+				// Layer 1: hard once-per-process gate (caller-supplied tag)
+				if (isset(self::$reported[$once_tag])) {
+					return;
+				}
 
-		if ($adapter !== null && method_exists($adapter, 'log')) {
-			try {
-				$adapter->log('error', $message, $context);
-				return;
-			} catch (\Throwable $e) {
-				// Adapter logger failed — fall through to error_log
-			}
-		}
+				// Layer 2: time-based throttle (defense-in-depth).
+				// If static state was somehow reset but the same tag
+				// fired recently, suppress re-emission. This catches the
+				// case where multiple BotDetector instances or sub-requests
+				// each create their own warning trigger.
+				$now = time();
+				if (isset(self::$last_emitted_at[$once_tag])
+					&& ($now - self::$last_emitted_at[$once_tag]) < self::ONCE_TAG_MIN_INTERVAL) {
+						// Mark as reported anyway so the time check becomes
+						// the sole gate going forward (cheaper than time math
+						// on every call once we've decided to suppress).
+							self::$reported[$once_tag] = true;
+							return;
+					}
 
-		self::fallback_log('error', $message, $context);
+					self::$reported[$once_tag] = true;
+					self::$last_emitted_at[$once_tag] = $now;
+			}
+
+			if ($adapter !== null && method_exists($adapter, 'log')) {
+				try {
+					$adapter->log('error', $message, $context);
+					return;
+				} catch (\Throwable $e) {
+					// Adapter logger failed — fall through to error_log
+				}
+			}
+
+			self::fallback_log('error', $message, $context);
 	}
 
 	/**
@@ -87,24 +126,36 @@ final class ErrorReporter
 		string $message,
 		array $context = [],
 		?string $once_tag = null
-	): void {
-		if ($once_tag !== null) {
-			if (isset(self::$reported[$once_tag])) {
-				return;
-			}
-			self::$reported[$once_tag] = true;
-		}
+		): void {
+			if ($once_tag !== null) {
+				// Layer 1: hard once-per-process gate (caller-supplied tag)
+				if (isset(self::$reported[$once_tag])) {
+					return;
+				}
 
-		if ($adapter !== null && method_exists($adapter, 'log')) {
-			try {
-				$adapter->log('warning', $message, $context);
-				return;
-			} catch (\Throwable $e) {
-				// fall through
-			}
-		}
+				// Layer 2: time-based throttle (defense-in-depth).
+				// See error() for the rationale.
+				$now = time();
+				if (isset(self::$last_emitted_at[$once_tag])
+					&& ($now - self::$last_emitted_at[$once_tag]) < self::ONCE_TAG_MIN_INTERVAL) {
+						self::$reported[$once_tag] = true;
+						return;
+					}
 
-		self::fallback_log('warning', $message, $context);
+					self::$reported[$once_tag] = true;
+					self::$last_emitted_at[$once_tag] = $now;
+			}
+
+			if ($adapter !== null && method_exists($adapter, 'log')) {
+				try {
+					$adapter->log('warning', $message, $context);
+					return;
+				} catch (\Throwable $e) {
+					// fall through
+				}
+			}
+
+			self::fallback_log('warning', $message, $context);
 	}
 
 	/**
@@ -147,6 +198,7 @@ final class ErrorReporter
 	public static function reset(): void
 	{
 		self::$reported = [];
+		self::$last_emitted_at = [];
 		self::$fatal_logged = false;
 	}
 

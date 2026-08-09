@@ -120,10 +120,6 @@ readonly class Configuration
 
     public static function from_array(array $config, ?AdapterInterface $adapter = null): self
     {
-        if (!defined('BB_DIAGNOSTICS_PERSIST')) {
-            Diagnostics::reset();
-        }
-
         $flat_user    = Schema::flatten($config);
         $flat_default = Schema::flatten(self::get_defaults());
 
@@ -142,6 +138,64 @@ readonly class Configuration
             if (!array_key_exists($dotted, $flat)) continue;
             $args[$property] = self::coerce_for_property($flat[$dotted], $property, $dotted);
         }
+
+        // === Clamping / range validation ===
+        // These were in the legacy code path but not carried over to the
+        // schema-driven rewrite. Without them, user input like
+        // httpbl_threat=999 or dns_verification_timeout_ms=10 (which would
+        // cause every DNS lookup to time out) reach the runtime as-is.
+
+        	if (isset($args['httpbl_threat'])) {
+        		$args['httpbl_threat'] = max(0, min(255, (int)$args['httpbl_threat']));
+        	}
+        	if (isset($args['httpbl_maxage'])) {
+        		$args['httpbl_maxage'] = max(0, (int)$args['httpbl_maxage']);
+        	}
+        	if (isset($args['dns_verification_timeout_ms'])) {
+        		$args['dns_verification_timeout_ms'] = max(50, min(2000, (int)$args['dns_verification_timeout_ms']));
+        	}
+        	if (isset($args['dns_verification_positive_ttl'])) {
+        		$args['dns_verification_positive_ttl'] = max(3600, (int)$args['dns_verification_positive_ttl']);
+        	}
+        	if (isset($args['dns_verification_negative_ttl'])) {
+        		$args['dns_verification_negative_ttl'] = max(60, (int)$args['dns_verification_negative_ttl']);
+        	}
+        	if (isset($args['dynamic_ip_ranges_ttl'])) {
+        		$args['dynamic_ip_ranges_ttl'] = max(3600, (int)$args['dynamic_ip_ranges_ttl']);
+        	}
+
+        	// Threshold values must be >= 1 (zero would disable the detector entirely)
+        	$threshold_props = [
+        		'head_flood_threshold',
+        		'head_probe_threshold',
+        		'asset_no_referer_threshold',
+        		'asset_only_session_threshold',
+        		'asset_pattern_threshold',
+        	];
+        	foreach ($threshold_props as $prop) {
+        		if (isset($args[$prop])) {
+        			$args[$prop] = max(1, (int)$args[$prop]);
+        		}
+        	}
+
+        	// Rate limits: nested buckets need clamping too
+        	if (isset($args['rate_limits']) && is_array($args['rate_limits'])) {
+        		foreach (['global', 'per_minute', 'post', 'login'] as $bucket) {
+        			if (isset($args['rate_limits'][$bucket])) {
+        				if (isset($args['rate_limits'][$bucket]['requests'])) {
+        					$args['rate_limits'][$bucket]['requests'] = max(1, (int)$args['rate_limits'][$bucket]['requests']);
+        				}
+        				if (isset($args['rate_limits'][$bucket]['window'])) {
+        					$args['rate_limits'][$bucket]['window'] = max(1, (int)$args['rate_limits'][$bucket]['window']);
+        				}
+        			}
+        		}
+        	}
+
+        	// Force the validated strictness (user-provided invalid values
+        	// were caught earlier, but $args['strictness'] got populated from
+        	// $flat which includes user config — overwrite it here)
+        	$args['strictness'] = $strictness;
 
         // === rate_limits: collapse nested buckets ===
         if (array_key_exists('rate_limits', $config) && is_array($config['rate_limits'])) {
@@ -985,6 +1039,14 @@ readonly class Configuration
                 $limits[$name] = $limit;
             } elseif (is_array($limits[$name])) {
                 $limits[$name] = array_merge($limit, $limits[$name]);
+
+                // === CLAMPING (moved here so it's guaranteed to run) ===
+                if (isset($limits[$name]['requests'])) {
+                	$limits[$name]['requests'] = max(1, (int)$limits[$name]['requests']);
+                }
+                if (isset($limits[$name]['window'])) {
+                	$limits[$name]['window'] = max(1, (int)$limits[$name]['window']);
+                }
             }
         }
         return ['enabled' => $limits['enabled'] ?? true] + $limits;

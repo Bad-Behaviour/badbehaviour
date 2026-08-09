@@ -70,34 +70,23 @@ final class SafeMode
      */
     private const SAFE_MODE_OVERRIDES = [
         // === All active defenses OFF (flat boolean properties) ===
-        'enable_fingerprinting'              => false,
-        'inspect_json_body'                  => false,
-        'inspect_multipart_body'             => false,
-        'enable_behavioral_analysis'         => false,
-        'enable_ai_crawler_control'          => false,
-        'enable_client_hints_validation'     => false,
-        'enable_agentic_detection'           => false,
-        'enable_head_request_detection'      => false,
-        'enable_asset_scraping_detection'    => false,
-        'strict'                             => false,
-        'offsite_forms'                      => false,
 
-        // === Reverse proxy — disabled ===
-        // Without operator config, we don't know which header to trust
-        // or which addresses are legitimate proxies. Enabling this with
-        // wrong settings could let attackers spoof their IP.
-        'reverse_proxy' => [
-            'enabled'   => false,
-            'header'    => 'X-Forwarded-For',
-            'addresses' => [],
-        ],
+    	// === Reverse proxy — disabled ===
+    	// Without operator config, we don't know which header to trust
+    	// or which addresses are legitimate proxies. Enabling this with
+    	// wrong settings could let attackers spoof their IP.
+    	'reverse_proxy' => [
+    		'enabled'   => false,
+    		'header'    => 'X-Forwarded-For',
+    		'addresses' => [],
+    	],
 
-        // === http:BL — disabled (no API key) ===
-        'httpbl' => [
-            'key'    => '',
-            'threat' => 25,
-            'maxage' => 30,
-        ],
+    	// === http:BL — disabled (no API key) ===
+    	'httpbl' => [
+    		'key'    => '',
+    		'threat' => 25,
+    		'maxage' => 30,
+    	],
 
         // === DNSBL — disabled ===
         'dnsbl' => [
@@ -112,43 +101,44 @@ final class SafeMode
             'strict'           => false,
         ],
 
-        // === Bot categories — all empty ===
-        // Defaults are also empty, but explicit here for clarity.
-        'bot_categories' => [
-            'blocked'   => [],
-            'challenge' => [],
-            'log_only'  => [],
-            'allowed'   => [],
-        ],
+    	// === Bot categories — all empty ===
+    	// Defaults are also empty, but explicit here for clarity.
+    	'bot_categories' => [
+    		'blocked'   => [],
+    		'challenge' => [],
+    		'log_only'  => [],
+    		'allowed'   => [],
+    	],
 
-        // === Rate limits — disabled, safe defaults preserved ===
-        'rate_limits' => [
-            'enabled'     => false,
-            'global'      => ['requests' => 1000, 'window' => 3600],
-            'per_minute'  => ['requests' => 60,   'window' => 60],
-            'post'        => ['requests' => 30,   'window' => 3600],
-            'login'       => ['requests' => 10,   'window' => 900],
-        ],
+    	// === Rate limits — disabled, safe defaults preserved ===
+    	'rate_limits' => [
+    		'enabled'     => false,
+    		'global'      => ['requests' => 1000, 'window' => 3600],
+    		'per_minute'  => ['requests' => 60,   'window' => 60],
+    		'post'        => ['requests' => 30,   'window' => 3600],
+    		'login'       => ['requests' => 10,   'window' => 900],
+    	],
 
-        // === Custom rules — empty (no user intent known) ===
-        'custom_rules' => [],
+    	// === Custom rules — empty (no user intent known) ===
+    	'custom_rules' => [],
 
-        // === GeoIP — disabled ===
-        'geoip' => [
-            'enabled'           => false,
-            'database_path'     => '',
-            'blocked_countries' => [],
-            'blocked_asns'      => [],
-        ],
+    	// === GeoIP — disabled ===
+    	'geoip' => [
+    		'enabled'           => false,
+    		'database_path'     => '',
+    		'blocked_countries' => [],
+    		'blocked_asns'      => [],
+    	],
 
-        // === Challenge — disabled ===
-        'challenge' => [
-            'enabled'             => false,
-            'provider'            => 'builtin',
-            'site_key'            => '',
-            'secret_key'          => '',
-            'recaptcha_min_score' => 0.5,
-        ],
+    	// === Challenge — disabled ===
+    	'challenge' => [
+    		'enabled'             => false,
+    		'provider'            => 'builtin',
+    		'site_key'            => '',
+    		'secret_key'          => '',
+    		'recaptcha_min_score' => 0.5,
+    	],
+
 
         // === DNS verification — disabled (network-dependent) ===
         'dns_verification' => [
@@ -159,16 +149,15 @@ final class SafeMode
             'negative_ttl'            => 3600,
         ],
 
-        // === Dynamic IP ranges — disabled ===
-        'dynamic_ip_ranges' => [
-            'enabled' => false,
-            'ttl'     => 86400,
-            'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
-        ],
+    	// === Dynamic IP ranges — disabled ===
+    	'dynamic_ip_ranges' => [
+    		'enabled' => false,
+    		'ttl'     => 86400,
+    		'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
+    	],
 
-        // === Head detection — don't require Referer ===
-        'head_require_referer'      => false,
-        'head_referer_exempt_paths' => [],
+    	// === Head detection — don't require Referer ===
+    	'head_require_referer'      => false,
 
         // === Performance / static skip — INHERITED from defaults ===
         // Intentionally NOT overridden. Safe-mode MUST still skip static

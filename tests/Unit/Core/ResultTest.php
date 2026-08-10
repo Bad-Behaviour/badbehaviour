@@ -8,9 +8,10 @@ use BadBehaviour\Core\EnforcementAction;
 use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
 use BadBehaviour\Util\RequestPackage;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-class ResultTest extends TestCase
+final class ResultTest extends TestCase
 {
     private RequestPackage $pkg;
 
@@ -29,7 +30,7 @@ class ResultTest extends TestCase
     }
 
     // ====================================================================
-    // FACTORY METHODS — your existing tests, preserved verbatim
+    // FACTORY METHODS
     // ====================================================================
 
     public function test_allow(): void
@@ -41,6 +42,12 @@ class ResultTest extends TestCase
         $this->assertFalse($result->requires_challenge());
         $this->assertEquals(200, $result->http_status());
         $this->assertEquals(ResultCode::ALLOWED, $result->code);
+    }
+
+    public function test_allow_with_package_attaches_it(): void
+    {
+        $result = Result::allow($this->pkg);
+        $this->assertSame($this->pkg, $result->package);
     }
 
     public function test_block(): void
@@ -61,6 +68,7 @@ class ResultTest extends TestCase
         $this->assertEquals($this->pkg, $result->package);
         $this->assertEquals(['test' => 'data'], $result->metadata);
         $this->assertNotNull($result->support_key);
+        $this->assertSame(EnforcementAction::ENFORCED, $result->enforcement);
     }
 
     public function test_challenge(): void
@@ -76,6 +84,7 @@ class ResultTest extends TestCase
         $this->assertTrue($result->requires_challenge());
         $this->assertEquals(403, $result->http_status());
         $this->assertEquals(ResultCode::CHALLENGE_REQUIRED, $result->code);
+        $this->assertSame(EnforcementAction::ENFORCED, $result->enforcement);
     }
 
     public function test_to_array(): void
@@ -88,12 +97,17 @@ class ResultTest extends TestCase
         $this->assertArrayHasKey('support_key', $array);
         $this->assertArrayHasKey('http_status', $array);
         $this->assertArrayHasKey('metadata', $array);
+        $this->assertArrayHasKey('enforcement', $array);
+        $this->assertArrayHasKey('is_monitored', $array);
+        $this->assertArrayHasKey('is_actionable', $array);
+        $this->assertArrayHasKey('original_code', $array);
         $this->assertEquals('blocked.bot', $array['code']);
         $this->assertEquals(403, $array['http_status']);
+        $this->assertSame(EnforcementAction::ENFORCED->value, $array['enforcement']);
     }
 
     // ====================================================================
-    // NEW: is_actionable() — the routing predicate hosts SHOULD use
+    // ROUTING PREDICATES — is_actionable() / reaches_application()
     // ====================================================================
 
     public function testIsActionableTrueForEnforcedBlock(): void
@@ -153,7 +167,7 @@ class ResultTest extends TestCase
     }
 
     // ====================================================================
-    // NEW: reaches_application() vs is_purely_allowed() vs is_allowed()
+    // is_allowed() vs reaches_application() vs is_purely_allowed()
     // ====================================================================
 
     public function testIsAllowedIsStrict(): void
@@ -203,8 +217,19 @@ class ResultTest extends TestCase
         $this->assertFalse($monitored->is_purely_allowed());
     }
 
+    public function testIsAllowedOrMonitoredMatchesReachesApplication(): void
+    {
+        $this->assertTrue(Result::allow($this->pkg)->is_allowed_or_monitored());
+
+        $blocked = Result::block(ResultCode::BLOCKED_BOT, 'x', $this->pkg);
+        $this->assertFalse($blocked->is_allowed_or_monitored());
+
+        $monitored = Result::monitored_from($blocked);
+        $this->assertTrue($monitored->is_allowed_or_monitored());
+    }
+
     // ====================================================================
-    // NEW: monitored_from() preserves metadata
+    // monitored_from() — metadata preservation and demotion
     // ====================================================================
 
     public function testMonitoredFromPreservesOriginalMetadata(): void
@@ -227,6 +252,8 @@ class ResultTest extends TestCase
 
     public function testMonitoredFromUnmonitorableCodeKeepsCode(): void
     {
+        // ALLOWED has no monitored counterpart — code stays ALLOWED,
+        // but enforcement is still set to MONITORED (per source comment).
         $allowed = Result::allow($this->pkg);
         $monitored = Result::monitored_from($allowed);
 
@@ -234,8 +261,31 @@ class ResultTest extends TestCase
         $this->assertSame(EnforcementAction::MONITORED, $monitored->enforcement);
     }
 
+    public function testMonitoredFromMapsBlockedToMonitoredCode(): void
+    {
+        $blocked = Result::block(ResultCode::BLOCKED_BOT, 'x', $this->pkg);
+        $monitored = Result::monitored_from($blocked);
+        $this->assertSame(ResultCode::MONITORED_BOT, $monitored->code);
+    }
+
+    public function testMonitoredFromMapsChallengeRequiredToMonitoredChallenge(): void
+    {
+        $challenged = Result::challenge(ResultCode::CHALLENGE_REQUIRED, 'go', $this->pkg);
+        $monitored = Result::monitored_from($challenged);
+        $this->assertSame(ResultCode::MONITORED_CHALLENGE, $monitored->code);
+    }
+
+    public function testMonitoredFromRecordsOriginalCodeInMetadata(): void
+    {
+        $blocked = Result::block(ResultCode::BLOCKED_BOT, 'x', $this->pkg);
+        $monitored = Result::monitored_from($blocked);
+
+        $this->assertSame('blocked.bot', $monitored->metadata['original_code']);
+        $this->assertTrue($monitored->metadata['monitor_only']);
+    }
+
     // ====================================================================
-    // NEW: to_array() includes new fields
+    // to_array() — monitored and enforced variants
     // ====================================================================
 
     public function testToArrayIncludesIsActionableForBlock(): void
@@ -260,12 +310,73 @@ class ResultTest extends TestCase
     }
 
     // ====================================================================
-    // NEW: ResultCode::to_monitored() coverage
+    // Support key generation
     // ====================================================================
 
-    /**
-     * @dataProvider blockedToMonitoredProvider
-     */
+    public function testGenerateSupportKeyIsDeterministic(): void
+    {
+        $pkg1 = new RequestPackage(
+            ip: '198.51.100.42',
+            headers: [],
+            headers_mixed: [],
+            request_method: 'GET',
+            request_uri: '/page',
+            server_protocol: 'HTTP/1.1',
+            request_entity: [],
+            user_agent: 'Mozilla/5.0'
+        );
+        $pkg2 = new RequestPackage(
+            ip: '198.51.100.42',
+            headers: [],
+            headers_mixed: [],
+            request_method: 'GET',
+            request_uri: '/page',
+            server_protocol: 'HTTP/1.1',
+            request_entity: [],
+            user_agent: 'Mozilla/5.0'
+        );
+
+        $this->assertSame(
+            Result::generate_support_key_public($pkg1),
+            Result::generate_support_key_public($pkg2)
+        );
+    }
+
+    public function testGenerateSupportKeyDiffersForDifferentIp(): void
+    {
+        $a = new RequestPackage(
+            ip: '198.51.100.1', headers: [], headers_mixed: [],
+            request_method: 'GET', request_uri: '/', server_protocol: 'HTTP/1.1',
+            request_entity: [], user_agent: 'UA'
+        );
+        $b = new RequestPackage(
+            ip: '198.51.100.2', headers: [], headers_mixed: [],
+            request_method: 'GET', request_uri: '/', server_protocol: 'HTTP/1.1',
+            request_entity: [], user_agent: 'UA'
+        );
+
+        $this->assertNotSame(
+            Result::generate_support_key_public($a),
+            Result::generate_support_key_public($b)
+        );
+    }
+
+    public function testGenerateSupportKeyMatchesExpectedFormat(): void
+    {
+        $key = Result::generate_support_key_public($this->pkg);
+
+        // Format: XXXX-XXXX-XXXX-XXXX (4 groups of 4 hex chars)
+        $this->assertMatchesRegularExpression(
+            '/^[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}$/',
+            $key
+        );
+    }
+
+    // ====================================================================
+    // ResultCode — demotion table (ResultCode::to_monitored)
+    // ====================================================================
+
+    #[DataProvider('blockedToMonitoredProvider')]
     public function testToMonitoredConvertsBlockedCodes(
         ResultCode $blocked,
         ResultCode $expectedMonitored
@@ -299,34 +410,61 @@ class ResultTest extends TestCase
         $this->assertNull(ResultCode::ERROR_CONFIGURATION->to_monitored());
         $this->assertNull(ResultCode::CHALLENGE_FAILED->to_monitored());
 
-        // Already-monitored codes have no further demotion
+        // Already-monitored codes have no further demotion.
         $this->assertNull(ResultCode::MONITORED_BOT->to_monitored());
         $this->assertNull(ResultCode::MONITORED_CHALLENGE->to_monitored());
     }
 
-    public function testIsBlockedTrueForBlockedAndChallenge(): void
+    public function testResultCodeIsBlockedOnlyForBlockedAndChallengeFailed(): void
     {
         $this->assertTrue(ResultCode::BLOCKED_BOT->is_blocked());
         $this->assertTrue(ResultCode::BLOCKED_AI_CRAWLER->is_blocked());
-        $this->assertFalse(ResultCode::BLOCKED_BOT->requires_challenge());
-        $this->assertTrue(ResultCode::CHALLENGE_REQUIRED->requires_challenge());
+        $this->assertTrue(ResultCode::CHALLENGE_FAILED->is_blocked());
+        $this->assertFalse(ResultCode::CHALLENGE_REQUIRED->is_blocked());
+        $this->assertFalse(ResultCode::ALLOWED->is_blocked());
+        $this->assertFalse(ResultCode::MONITORED_BOT->is_blocked());
     }
 
-    public function testIsMonitoredOnlyForMonitoredCodes(): void
+    public function testResultCodeRequiresChallengeOnlyForChallengeRequired(): void
+    {
+        $this->assertTrue(ResultCode::CHALLENGE_REQUIRED->requires_challenge());
+        $this->assertFalse(ResultCode::BLOCKED_BOT->requires_challenge());
+        $this->assertFalse(ResultCode::MONITORED_CHALLENGE->requires_challenge());
+    }
+
+    public function testResultCodeIsMonitoredOnlyForMonitoredCodes(): void
     {
         $this->assertTrue(ResultCode::MONITORED_BOT->is_monitored());
+        $this->assertTrue(ResultCode::MONITORED_CHALLENGE->is_monitored());
         $this->assertFalse(ResultCode::BLOCKED_BOT->is_monitored());
         $this->assertFalse(ResultCode::ALLOWED->is_monitored());
     }
 
-    public function testHttpStatusForMonitoredCodes(): void
+    public function testResultCodeHttpStatusForMonitoredCodes(): void
     {
-        // Monitored codes never reach the wire — they flow through to the app
-        // which returns 200. The 403 fallback only matters if a monitored
-        // result accidentally leaks into handle_result().
+        // Monitored codes never reach the wire — they flow through to
+        // the app which returns 200. The 403 fallback only matters if a
+        // monitored result accidentally leaks into handle_result().
         $this->assertSame(403, ResultCode::MONITORED_BOT->http_status());
         $this->assertSame(200, ResultCode::ALLOWED->http_status());
+        $this->assertSame(403, ResultCode::BLOCKED_BOT->http_status());
         $this->assertSame(429, ResultCode::BLOCKED_RATE_LIMIT->http_status());
         $this->assertSame(500, ResultCode::ERROR_INTERNAL->http_status());
+    }
+
+    // ====================================================================
+    // Package accessor
+    // ====================================================================
+
+    public function testGetPackageReturnsAttachedPackage(): void
+    {
+        $r = Result::block(ResultCode::BLOCKED_BOT, 'x', $this->pkg);
+        $this->assertSame($this->pkg, $r->get_package());
+    }
+
+    public function testGetPackageReturnsNullForAllowWithoutPackage(): void
+    {
+        $r = Result::allow();
+        $this->assertNull($r->get_package());
     }
 }

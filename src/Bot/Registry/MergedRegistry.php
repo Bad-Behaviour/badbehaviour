@@ -62,6 +62,16 @@ class MergedRegistry implements RegistryInterface
 	// RegistryInterface implementation
 	// ========================================================================
 
+	/**
+	 * Build the merged set by walking registries in input order.
+	 *
+	 * Later registries overwrite earlier ones for the same bot ID. The
+	 * resulting set is the source of truth for every other view
+	 * (`get()`, `has()`, per-category accessors, `find_by_ua`,
+	 * `find_by_tokens`) — they MUST be consistent with this set, or the
+	 * "last-wins" contract is broken in subtle ways (e.g., a category
+	 * accessor returning a bot definition that doesn't match `get($id)`).
+	 */
 	public function all(): array
 	{
 		if ($this->all_cache !== null) {
@@ -69,9 +79,11 @@ class MergedRegistry implements RegistryInterface
 		}
 
 		$merged = [];
-		// Iterate in REVERSE so later registries overwrite earlier (last-wins)
-		for ($i = count($this->registries) - 1; $i >= 0; $i--) {
-			foreach ($this->registries[$i]->all() as $id => $def) {
+		// Iterate in INPUT ORDER (not reverse) so the later registry's
+		// assignment overwrites the earlier registry's value, giving us
+		// "last wins" semantics matching `get()` and `has()`.
+		foreach ($this->registries as $registry) {
+			foreach ($registry->all() as $id => $def) {
 				$merged[$id] = $def;
 			}
 		}
@@ -171,75 +183,91 @@ class MergedRegistry implements RegistryInterface
 
 	public function search_engines(): array
 	{
-		return $this->collect_category('search_engines');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::SEARCH_ENGINE);
 	}
 
 	public function ai_crawlers(): array
 	{
-		return $this->collect_category('ai_crawlers');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::AI_CRAWLER);
 	}
 
 	public function social_crawlers(): array
 	{
-		return $this->collect_category('social_crawlers');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::SOCIAL_CRAWLER);
 	}
 
 	public function seo_crawlers(): array
 	{
-		return $this->collect_category('seo_crawlers');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::SEO_CRAWLER);
 	}
 
 	public function archive_crawlers(): array
 	{
-		return $this->collect_category('archive_crawlers');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::ARCHIVE_CRAWLER);
 	}
 
 	public function monitoring(): array
 	{
-		return $this->collect_category('monitoring');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::MONITORING);
 	}
 
 	public function feed_readers(): array
 	{
-		return $this->collect_category('feed_readers');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::FEED_READER);
 	}
 
 	public function shopping_crawlers(): array
 	{
-		return $this->collect_category('shopping_crawlers');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::SHOPPING_CRAWLER);
 	}
 
 	public function cloud_infrastructure(): array
 	{
-		return $this->collect_category('cloud_infrastructure');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::CLOUD_INFRASTRUCTURE);
 	}
 
 	public function security_scanners(): array
 	{
-		return $this->collect_category('security_scanners');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::SECURITY_SCANNER);
 	}
 
 	public function residential_crawlers(): array
 	{
-		return $this->collect_category('residential_crawlers');
+		return $this->filter_all_by_category(\BadBehaviour\Bot\BotCategory::RESIDENTIAL_PROXY);
 	}
 
 	/**
-	 * Collect bots of a given category across all source registries.
-	 * Later registries overwrite earlier ones for the same ID (last-wins).
+	 * Partition the merged set by category.
+	 *
+	 * Derives from `all()` (the source of truth) rather than re-merging
+	 * category-by-category. This guarantees:
+	 *
+	 *   1. Category views are ALWAYS consistent with `all()` — if
+	 *      `all()['gptbot']->category === AI_CRAWLER`, then `gptbot`
+	 *      appears under `ai_crawlers()` and NOT under `search_engines()`.
+	 *
+	 *   2. Last-wins semantics are preserved end-to-end — when a later
+	 *      registry re-categorizes a bot, the old category view stops
+	 *      containing that bot.
+	 *
+	 *   3. The fix to `all()` (forward iteration) propagates here
+	 *      automatically — no separate merge logic to keep in sync.
+	 *
+	 * Cost: one full scan of `all()` per category accessor call. The
+	 * result is not cached because:
+	 *
+	 *   - The merged set itself is already cached in `all_cache`.
+	 *   - `array_filter` over a flat array is O(n) and very fast.
+	 *   - The caller is typically `BotDetector::is_cloud_infrastructure_ip()`
+	 *     or admin tooling — not on the per-request hot path for category
+	 *     accessors.
 	 */
-	private function collect_category(string $method): array
+	private function filter_all_by_category(\BadBehaviour\Bot\BotCategory $category): array
 	{
-		$merged = [];
-		// Reverse for last-wins semantics
-		for ($i = count($this->registries) - 1; $i >= 0; $i--) {
-			if (method_exists($this->registries[$i], $method)) {
-				foreach ($this->registries[$i]->$method() as $id => $def) {
-					$merged[$id] = $def;
-				}
-			}
-		}
-		return $merged;
+		return array_filter(
+			$this->all(),
+			fn(BotDefinition $b) => $b->category === $category
+		);
 	}
 
 	// ========================================================================

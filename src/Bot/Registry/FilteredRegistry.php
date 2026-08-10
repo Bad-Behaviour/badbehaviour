@@ -34,12 +34,23 @@ use BadBehaviour\Bot\RegistryTokens;
  *
  * === FILTER PRECEDENCE (applied to each bot) ===
  *
- *   1. Keep-list (whitelist) — bot must be in this list to pass
+ *   1. Keep-list (whitelist) — bot must be in this list to pass.
+ *      When the keep-list is non-empty, it is the SOLE gate: bots
+ *      in the keep-list pass unconditionally (immune to exclude_bots
+ *      and category filters), and bots NOT in the keep-list are
+ *      dropped unconditionally. The keep-list grants immunity, not
+ *      just admission.
+ *
  *   2. Exclude-list — bot must NOT be in this list
  *   3. Category include — bot's category must be in this list (if set)
  *   4. Category exclude — bot's category must NOT be in this list
  *
- * Steps 1 and 2 are bot-ID based; steps 3 and 4 are category-based.
+ * Steps 2-4 only run when the keep-list is empty (or the bot wasn't
+ * dropped by it). When keep_bots is set, it short-circuits all other
+ * filters — consistent with the documented "keep_bots runs first"
+ * precedence and with user intent (an explicit whitelist should not
+ * be undermined by a broader blacklist).
+ *
  * A bot must pass ALL active filters.
  */
 class FilteredRegistry implements RegistryInterface
@@ -285,12 +296,31 @@ class FilteredRegistry implements RegistryInterface
 	 * Apply all configured filters to a single bot.
 	 *
 	 * Returns true if the bot should be visible in this filtered registry.
+	 *
+	 * === PRECEDENCE ===
+	 *
+	 *   1. Keep-list (when non-empty) — SOLE gate:
+	 *      - bot IN keep-list     → pass unconditionally (immune to
+	 *                               exclude_bots and category filters)
+	 *      - bot NOT IN keep-list → fail unconditionally
+	 *
+	 *   2. Exclude-list — bot must NOT be in this list
+	 *   3. Category include — bot's category must be in this list (if set)
+	 *   4. Category exclude — bot's category must NOT be in this list
+	 *
+	 * The keep-list's "grants immunity" behavior is documented in the
+	 * class docblock: "keep_bots runs first → bot passes through even
+	 * if also in exclude_bots." Without this, an explicit whitelist
+	 * would be silently undermined by a broader blacklist — surprising
+	 * and contrary to operator intent.
 	 */
 	private function passes(BotDefinition $bot): bool
 	{
-		// 1. Keep-list (whitelist) — if set, bot MUST be in this list
-		if (!empty($this->keep_bots) && !in_array($bot->id, $this->keep_bots, true)) {
-			return false;
+		// 1. Keep-list (whitelist) — when set, the SOLE gate.
+		//    In-list = unconditional pass (immune to subsequent filters).
+		//    Not-in-list = unconditional fail.
+		if (!empty($this->keep_bots)) {
+			return in_array($bot->id, $this->keep_bots, true);
 		}
 
 		// 2. Explicit exclude-list

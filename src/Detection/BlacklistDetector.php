@@ -487,6 +487,35 @@ final class BlacklistDetector
 
         $normalized_uri = urldecode($uri);
 
+        // === QUERY-STRING '+' NORMALIZATION ===
+        //
+        // Per application/x-www-form-urlencoded (RFC 1866/HTML5), '+' in
+        // a URL query string represents a literal space character. PHP's
+        // urldecode() follows RFC 3986 and does NOT convert '+' to space
+        // (that's urldecode() vs. parse_str() semantics — they differ on
+        // this point).
+        //
+        // Real-world consequence: a SQLi payload delivered via
+        // `?id=1+union+select+1` (the canonical form-encoded attack) has
+        // `+` between tokens, but our contextual patterns like
+        // `\b\d+\s+union\s+select\b` require `\s+` (whitespace) between
+        // them. Without normalization, the attack slips through.
+        //
+        // Safe to apply globally here because:
+        //   1. RAW_URI_ATTACK_REGEX already fired above (catches raw
+        //      payloads without needing normalization).
+        //   2. ALWAYS_BLOCK_PATTERNS targets technical anomalies (null
+        //      bytes, double-encoding, absolute paths) — `+` → space is
+        //      benign for all of them.
+        //   3. PATH_ONLY_PATTERNS and credential patterns work on the
+        //      path/param-name structure, not token sequences.
+        //
+        // Only path-segment `+` would be a semantic change; in practice
+        // query strings are where form-encoded payloads live, and the
+        // practical security win (catching form-encoded SQLi) outweighs
+        // the negligible risk of a path containing literal `+`.
+        $normalized_uri = str_replace('+', ' ', $normalized_uri);
+
         // Tier 1: always block (technical anomalies)
         foreach (self::ALWAYS_BLOCK_PATTERNS as $pattern) {
             if (@preg_match($pattern, $normalized_uri)) {

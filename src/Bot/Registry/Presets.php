@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BadBehaviour\Bot\Registry;
 
 use BadBehaviour\Bot\BotCategory;
+use BadBehaviour\Bot\BotDefinition;
 use BadBehaviour\Bot\RegistryInterface;
 
 /**
@@ -112,15 +113,59 @@ class Presets
 	 * 'verified-only' — only bots with DNS verification or IP ranges.
 	 *
 	 * Stricter, but may miss some regional bots that only match by UA token.
+	 *
+	 * === CLOUD INFRASTRUCTURE EXCEPTION ===
+	 *
+	 * Cloud infrastructure bots are ALWAYS included regardless of whether
+	 * they meet the "verified-capable" criterion. The criterion is meant
+	 * to exclude bots that rely solely on UA-token matching (e.g., FOSSies)
+	 * — fine for most categories, but disastrous for cloud bots because
+	 * blocking CDN/LB health probes marks the origin unhealthy and takes
+	 * you offline.
+	 *
+	 * Several cloud bots (e.g., `aws_elb_health`, `azure_health`) have
+	 * `verify_dns: false` and empty `ip_ranges` because their identity is
+	 * established through UA matching alone — the LB health-checker probes
+	 * have no static IPs (they originate from the LB's NAT) and don't
+	 * resolve to a reverse DNS hostname. Excluding them from `verified-only`
+	 * would silently undermine the same availability guarantee that all
+	 * other presets uphold.
+	 *
+	 * This is the same invariant enforced by the
+	 * `test_preset_includes_cloud_infrastructure_when_it_has_any_bots`
+	 * regression test — the test just makes it explicit.
 	 */
 	private static function verified_only(RegistryInterface $full): RegistryInterface
 	{
 		$verified = [];
 		foreach ($full->all() as $id => $def) {
+			// === CLOUD INFRASTRUCTURE SAFETY OVERRIDE ===
+			//
+			// Always include cloud infrastructure bots, even if they
+			// don't meet the "verified-capable" criterion. Excluding them
+			// would let CDN/LB health probes reach a detector that might
+			// block them (e.g., BotDetector's strict search engines, or
+			// any future detector that treats UA-only matches as
+			// unverified) — which marks the origin unhealthy and takes
+			// the site offline.
+			//
+			// This matches the documented availability guarantee that
+			// every other preset (`minimal`, `eu-only`, `no-ai`,
+			// `no-seo`) upholds via the `assert_has_bot` cloud-safety
+			// regression test.
+			if ($def->category === BotCategory::CLOUD_INFRASTRUCTURE) {
+				$verified[$id] = $def;
+				continue;
+			}
+
+			// === STANDARD "VERIFIED-CAPABLE" CRITERION ===
+			//
 			// A bot is "verified-capable" if it has either DNS verification
 			// or static IP ranges. Bots relying solely on UA-token matching
-			// (e.g., FOSSies) are excluded by this preset.
-			if ($def->verify_dns || !empty($def->ip_ranges)) {
+			// (e.g., FOSSies, regional search engines without published IPs)
+			// are excluded by this preset.
+			$verified_capable = $def->verify_dns || !empty($def->ip_ranges);
+			if ($verified_capable) {
 				$verified[$id] = $def;
 			}
 		}

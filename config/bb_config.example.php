@@ -304,6 +304,192 @@ return [
 	],
 
 	// =========================================================================
+	// ON-DEMAND IP RANGE REFRESH ("WEB CRON")
+	// =========================================================================
+
+	/**
+	 * Automatic IP range refresh triggered by page traffic.
+	 *
+	 * Replaces `bin/update-ip-ranges.php` cron for deployments without
+	 * scheduled-job support (shared hosting, PaaS, containerized apps
+	 * without CronJob support). On a small fraction of requests, checks
+	 * if the cached merged IP ranges are stale; if so, fetches fresh
+	 * from upstream feeds in the background (after the response is
+	 * sent to the client) and atomically swaps the cache.
+	 *
+	 * === WHEN TO USE ===
+	 *
+	 *   - Recommended for: shared hosting, PaaS, sites without cron access
+	 *   - Not recommended for: high-traffic sites with cron available —
+	 *     use `bin/update-ip-ranges.php` directly (more efficient, runs
+	 *     on a known schedule, doesn't piggyback on user requests)
+	 *
+	 * === HOW IT WORKS ===
+	 *
+	 * Four gates gate each refresh — probability × cooldown × staleness ×
+	 * mutex — so even on very busy sites the refresh runs at most once
+	 * per `min_age_seconds` per worker, and at most once concurrently
+	 * across all workers on a shared cache:
+	 *
+	 *   Gate 1: Probability   — 1 in N requests even checks
+	 *   Gate 2: Cooldown      — skip while lock is held
+	 *   Gate 3: Staleness     — skip when cache is fresh
+	 *   Gate 4: Mutex         — only one worker fetches at a time
+	 *
+	 * The actual fetch runs after the HTTP response has been sent to the
+	 * client, so user-facing latency is unaffected. Under PHP-FPM this
+	 * uses `fastcgi_finish_request()`; under CLI / mod_php the refresh
+	 * is skipped (no clean way to detach from response time).
+	 *
+	 * === CACHE BACKEND REQUIREMENT ===
+	 *
+	 * The mutex lock must be in a SHARED cache across processes/hosts:
+	 *   - Redis, Memcached, DB-backed cache: works correctly
+	 *   - File-based cache: gives per-host mutex only (still works, just
+	 *     multiple hosts may refresh concurrently — bounded by
+	 *     probability × staleness floor, so the cost is trivial)
+	 *
+	 * === COLD START ===
+	 *
+	 * On a fresh install with no cache, the FIRST triggering request will
+	 * populate the cache during shutdown. Until that happens (a few seconds
+	 * to a few minutes, depending on traffic), bots whose IPs aren't in
+	 * the shipped static ranges won't be verified by DNS. The bundled
+	 * static ranges already cover ~95% of production traffic, so this is
+	 * generally fine.
+	 *
+	 * === FEED ENDPOINT PRESSURE ===
+	 *
+	 * At default settings (1/1000 probability, 6h staleness floor), each
+	 * worker performs ~6 checks/hour and ~4 actual fetches/day. Well
+	 * within feed providers' rate limits. If you raise the probability
+	 * or shorten the staleness floor, monitor feed provider responses.
+	 *
+	 * === COST ===
+	 *
+	 *   - Per-request overhead: 1 mt_rand() call + 1 cache get on the
+	 *     rare triggering request. Negligible.
+	 *   - Per-refresh cost: 4-8 feed fetches × ~500ms each = 2-4 seconds
+	 *     of shutdown-handler time, once every `min_age_seconds`.
+	 *   - Cache storage: ~50KB for the merged ranges payload.
+	 */
+	'on_demand_ip_refresh' => [
+
+		/**
+		 * Master switch.
+		 *
+		 * Recommended for: shared hosting, PaaS, sites without cron access.
+		 * Not recommended for: high-traffic sites with cron available
+		 * (use `bin/update-ip-ranges.php` instead).
+		 *
+		 * Default: false
+		 */
+		'enabled' => false,
+
+		/**
+		 * Probability denominator.
+		 *
+		 * 1 in N requests triggers the staleness check. Higher values mean
+		 * less frequent checks and less load on feed endpoints. At
+		 * 100 req/min with denominator=1000: ~6 checks/hour per worker.
+		 *
+		 * At 1000 req/min with denominator=1000: ~60 checks/hour per worker.
+		 * At 10000 req/min with denominator=1000: ~600 checks/hour per worker.
+		 *
+		 * The actual refresh frequency is bounded by `min_age_seconds`
+		 * (Gate 3), so increasing the denominator doesn't increase feed
+		 * endpoint pressure — it only reduces the CPU cost of Gate 1's
+		 * mt_rand() call on the hot path.
+		 *
+		 * Default: 1000
+		 */
+		'probability_denominator' => 1000,
+
+		/**
+		 * Staleness floor (seconds).
+		 *
+		 * Minimum age of the cached data before a refresh is allowed,
+		 * regardless of how often the probability gate fires. This is
+		 * the hard floor on refresh frequency.
+		 *
+		 * Recommended values:
+		 *   - 21600 (6h)  — typical; feeds change infrequently
+		 *   - 43200 (12h) — conservative; less feed endpoint load
+		 *   - 3600  (1h)  — aggressive; only if you observe feed-driven
+		 *                   bot misidentifications
+		 *
+		 * Default: 21600
+		 */
+		'min_age_seconds' => 21600,
+
+		/**
+		 * Lock TTL (seconds).
+		 *
+		 * How long the refresh mutex is held. Functions as both:
+		 *   (a) Cross-process/host mutex — only one worker fetches
+		 *   (b) Cooldown — don't re-check within this window
+		 *
+		 * Should comfortably exceed the worst-case refresh duration
+		 * (4 feeds × `feed_timeout_seconds`). With default timeouts:
+		 * 4 × 5s = 20s, so 600s (10 min) gives 30× headroom.
+		 *
+		 * Default: 600
+		 */
+		'lock_ttl' => 600,
+
+		/**
+		 * Cache TTL (seconds).
+		 *
+		 * How long the refreshed cache entry lives in the cache backend.
+		 * Acts as "stale tolerance" — if feed endpoints become unreachable
+		 * for up to `cache_ttl` seconds, the old ranges are still served.
+		 *
+		 * 7 days is generous. Handles a feed going down for a long weekend
+		 * without leaving the site un-protected.
+		 *
+		 * Default: 604800 (7 days)
+		 */
+		'cache_ttl' => 604800,
+
+		/**
+		 * Feed fetch timeout (seconds).
+		 *
+		 * Hard wall-clock budget for the entire refresh. Protects against
+		 * a misbehaving feed hanging the shutdown handler indefinitely.
+		 *
+		 * Accepts fractional values (e.g., 0.5, 1.5) for sub-second
+		 * budgets on fast networks.
+		 *
+		 * Default: 5
+		 */
+		'feed_timeout_seconds' => 5,
+
+		/**
+		 * Bot IDs to refresh (optional filter).
+		 *
+		 * Restrict the refresh scope to specific bots. Null = all bots
+		 * in the registry. Useful for high-traffic sites that only care
+		 * about a subset (e.g., ['googlebot', 'gptbot', 'claude']).
+		 *
+		 * Default: null (all bots)
+		 */
+		'bot_ids' => null,
+
+		/**
+		 * Cloud providers to refresh (optional filter).
+		 *
+		 * Restrict the refresh scope to specific cloud providers. Null =
+		 * all four defaults ('aws', 'cloudflare', 'fastly', 'gcp').
+		 *
+		 * Useful if you don't use one of the providers and want to
+		 * avoid the wasted fetch.
+		 *
+		 * Default: null (all four providers)
+		 */
+		'cloud_providers' => null,
+	],
+
+	// =========================================================================
 	// DYNAMIC IP RANGES — fetches cloud provider IP feeds (Cloudflare, AWS, etc.)
 	// =========================================================================
 

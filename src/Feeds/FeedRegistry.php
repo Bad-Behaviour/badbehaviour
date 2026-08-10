@@ -13,7 +13,7 @@ use BadBehaviour\Feeds\Adapters\PlainTextFeed;
 use BadBehaviour\Feeds\Adapters\GenericJsonFeed;
 use BadBehaviour\Feeds\CachedFeedDecorator;
 
-class FeedRegistry
+class FeedRegistry implements FeedProviderInterface
 {
     /** @var IpFeedInterface[] */
     private array $feeds = [];
@@ -108,6 +108,21 @@ class FeedRegistry
     	}
 
     	return array_map('array_unique', $merged);
+    }
+
+    /**
+     * Return the configured feed list for iteration.
+     *
+     * Exposes the IpFeedInterface map so callers (notably OnDemandRefresher)
+     * can iterate feeds and call fetch() on each. The returned array is
+     * a copy of the internal map (PHP arrays are value types, so no
+     * aliasing concern).
+     *
+     * @return array<string, IpFeedInterface>
+     */
+    public function get_feeds(): array
+    {
+    	return $this->feeds;
     }
 
     public function get_feed_status(): array

@@ -89,6 +89,15 @@ readonly class Configuration
         public int $dynamic_ip_ranges_ttl = 86400,
         public array $dynamic_ip_ranges_feeds = ['aws', 'cloudflare', 'fastly', 'gcp'],
 
+    	public bool $on_demand_ip_refresh_enabled = false,
+    	public int $on_demand_ip_refresh_probability_denominator = 1000,
+    	public int $on_demand_ip_refresh_min_age_seconds = 21600,
+    	public int $on_demand_ip_refresh_lock_ttl = 600,
+    	public int $on_demand_ip_refresh_cache_ttl = 604800,
+    	public int|float $on_demand_ip_refresh_feed_timeout_seconds = 5,
+    	public array $on_demand_ip_refresh_bot_ids = [],
+    	public array $on_demand_ip_refresh_cloud_providers = [],
+
         public bool $enable_head_request_detection = false,
         public bool $head_require_referer = false,
         public int $head_flood_threshold = 20,
@@ -405,6 +414,10 @@ readonly class Configuration
     		'asset_no_referer_threshold',
     		'asset_only_session_threshold',
     		'asset_pattern_threshold',
+    		'on_demand_ip_refresh_probability_denominator',
+    		'on_demand_ip_refresh_min_age_seconds',
+    		'on_demand_ip_refresh_lock_ttl',
+    		'on_demand_ip_refresh_cache_ttl',
     	];
 
     	// Properties whose expected type is `float`.
@@ -578,6 +591,37 @@ readonly class Configuration
     			fallback: 0.0,
     			);
     	}
+
+    // === INT|FLOAT HANDLING ===
+    //
+    // Properties accepting either int or float (union types).
+    // Currently only `feed_timeout_seconds` — sub-second budgets
+    // like 0.5 or 1.5 are useful for fast networks.
+    static $int_or_float_props = [
+    	'on_demand_ip_refresh_feed_timeout_seconds',
+    ];
+    if (in_array($property, $int_or_float_props, true)) {
+    	if ($value === null || $value === '') {
+    		return 0.0;
+    	}
+    	if (is_int($value) || is_float($value)) {
+    		return $value;
+    	}
+    	if (is_bool($value)) {
+    		return $value ? 1.0 : 0.0;
+    	}
+    	if (is_string($value) && is_numeric($value)) {
+    		return (float)$value;
+    	}
+    	return self::warn_coercion_and_return(
+    		property: $property,
+    		dotted: $dotted,
+    		actual_type: get_debug_type($value),
+    		expected_type: 'int|float',
+    		actual_value: $value,
+    		fallback: 0.0,
+    		);
+    }
 
     	// === STRING HANDLING ===
     	if (in_array($property, $string_props, true)) {
@@ -885,6 +929,16 @@ readonly class Configuration
                 'enabled' => false, 'ttl' => 86400,
                 'feeds' => ['aws', 'cloudflare', 'fastly', 'gcp'],
             ],
+        	'on_demand_ip_refresh' => [
+        		'enabled'                 => false,
+        		'probability_denominator' => 1000,
+        		'min_age_seconds'         => 21600,
+        		'lock_ttl'                => 600,
+        		'cache_ttl'               => 604800,
+        		'feed_timeout_seconds'    => 5,
+        		'bot_ids'                 => [],
+        		'cloud_providers'         => [],
+        	],
 
             'enable_head_request_detection'   => false,
             'head_require_referer'            => false,
@@ -999,6 +1053,16 @@ readonly class Configuration
                 'ttl' => $this->dynamic_ip_ranges_ttl,
                 'feeds' => $this->dynamic_ip_ranges_feeds,
             ],
+        	'on_demand_ip_refresh' => [
+        		'enabled'                 => $this->on_demand_ip_refresh_enabled,
+        		'probability_denominator' => $this->on_demand_ip_refresh_probability_denominator,
+        		'min_age_seconds'         => $this->on_demand_ip_refresh_min_age_seconds,
+        		'lock_ttl'                => $this->on_demand_ip_refresh_lock_ttl,
+        		'cache_ttl'               => $this->on_demand_ip_refresh_cache_ttl,
+        		'feed_timeout_seconds'    => $this->on_demand_ip_refresh_feed_timeout_seconds,
+        		'bot_ids'                 => $this->on_demand_ip_refresh_bot_ids,
+        		'cloud_providers'         => $this->on_demand_ip_refresh_cloud_providers,
+        	],
 
             'enable_head_request_detection'   => $this->enable_head_request_detection,
             'head_require_referer'            => $this->head_require_referer,

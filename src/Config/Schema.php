@@ -148,6 +148,16 @@ final class Schema
         'dynamic_ip_ranges.ttl'                  => 'dynamic_ip_ranges_ttl',
         'dynamic_ip_ranges.feeds'                => 'dynamic_ip_ranges_feeds',
 
+    	// === On-demand IP range refresh ===
+    	'on_demand_ip_refresh.enabled'                => 'on_demand_ip_refresh_enabled',
+    	'on_demand_ip_refresh.probability_denominator'=> 'on_demand_ip_refresh_probability_denominator',
+    	'on_demand_ip_refresh.min_age_seconds'        => 'on_demand_ip_refresh_min_age_seconds',
+    	'on_demand_ip_refresh.lock_ttl'               => 'on_demand_ip_refresh_lock_ttl',
+    	'on_demand_ip_refresh.cache_ttl'              => 'on_demand_ip_refresh_cache_ttl',
+    	'on_demand_ip_refresh.feed_timeout_seconds'   => 'on_demand_ip_refresh_feed_timeout_seconds',
+    	'on_demand_ip_refresh.bot_ids'                => '_collapsible:on_demand_ip_refresh.bot_ids',
+    	'on_demand_ip_refresh.cloud_providers'        => '_collapsible:on_demand_ip_refresh.cloud_providers',
+
         // === Head detection ===
         'enable_head_request_detection'          => 'enable_head_request_detection',
         'head_require_referer'                   => 'head_require_referer',

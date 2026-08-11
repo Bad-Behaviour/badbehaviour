@@ -391,39 +391,38 @@ final class OnDemandRefresher
         // Run with a wall-clock budget so a single slow feed can't blow
         // out the whole shutdown handler.
         foreach ($this->registry->get_feeds() as $name => $feed) {
-            if ($this->microtime() >= $deadline) {
-                $feed_status[$name] = ['status' => 'skipped', 'reason' => 'budget_exhausted'];
-                continue;
-            }
+        	if ($this->microtime() >= $deadline) {
+        		$feed_status[$name] = ['status' => 'skipped', 'reason' => 'budget_exhausted'];
+        		continue;
+        	}
 
-            try {
-                $data = $feed->fetch();
-                foreach ($data as $bot_id => $cidrs) {
-                    if (!$this->bot_id_allowed($bot_id)) {
-                        continue;
-                    }
-                    $merged[$bot_id] = array_merge($merged[$bot_id] ?? [], $cidrs);
-                }
-                $feed_status[$name] = ['status' => 'ok', 'bot_count' => count($data)];
-                $had_success = true;
-            } catch (\Throwable $e) {
-                $feed_status[$name] = [
-                    'status' => 'error',
-                    'error' => $e->getMessage(),
-                    'exception_class' => $e::class,
-                ];
-                $had_failure = true;
-                ErrorReporter::error(
-                    null,
-                    'OnDemandRefresher: feed fetch failed',
-                    [
-                        'feed' => $name,
-                        'error' => $e->getMessage(),
-                        'exception_class' => $e::class,
-                    ],
-                    'on_demand_refresh_feed_' . md5($name)
-                );
-            }
+        	try {
+        		$data = $feed->fetch();
+        		$feed_cidr_count = 0;
+        		$feed_bot_count = 0;
+        		foreach ($data as $bot_id => $cidrs) {
+        			if (!$this->bot_id_allowed($bot_id)) {
+        				continue;
+        			}
+        			$merged[$bot_id] = array_merge($merged[$bot_id] ?? [], $cidrs);
+        			$feed_cidr_count += count($cidrs);
+        			$feed_bot_count++;
+        		}
+        		$feed_status[$name] = [
+        			'status'     => 'ok',
+        			'bot_count'  => $feed_bot_count,
+        			'cidr_count' => $feed_cidr_count,
+        		];
+        		$had_success = true;
+        	} catch (\Throwable $e) {
+        		$feed_status[$name] = [
+        			'status' => 'error',
+        			'error' => $e->getMessage(),
+        			'exception_class' => $e::class,
+        		];
+        		$had_failure = true;
+        		ErrorReporter::error(...);
+        	}
         }
 
         // === Phase 2: Cloud provider ranges ===
@@ -442,21 +441,24 @@ final class OnDemandRefresher
             }
 
             try {
-                $cidrs = $this->cloud->ranges($provider);
-                if (!empty($cidrs)) {
-                    $bot_id = $this->provider_to_bot_id($provider);
-                    if ($bot_id !== null && $this->bot_id_allowed($bot_id)) {
-                        $merged[$bot_id] = array_merge(
-                            $merged[$bot_id] ?? [],
-                            $cidrs
-                        );
-                    }
-                }
-                $feed_status["cloud:{$provider}"] = [
-                    'status' => 'ok',
-                    'cidr_count' => count($cidrs),
-                ];
-                $had_success = true;
+            	$cidrs = $this->cloud->ranges($provider);
+            	$bot_id = $this->provider_to_bot_id($provider);
+            	$bot_added = false;
+
+            	if (!empty($cidrs) && $bot_id !== null && $this->bot_id_allowed($bot_id)) {
+            		$merged[$bot_id] = array_merge(
+            			$merged[$bot_id] ?? [],
+            			$cidrs
+            			);
+            		$bot_added = true;
+            	}
+
+            	$feed_status["cloud:{$provider}"] = [
+            		'status'     => 'ok',
+            		'bot_count'  => $bot_added ? 1 : 0,
+            		'cidr_count' => count($cidrs),
+            	];
+            	$had_success = true;
             } catch (\Throwable $e) {
                 $feed_status["cloud:{$provider}"] = [
                     'status' => 'error',

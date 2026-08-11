@@ -12,6 +12,10 @@ use BadBehaviour\Config\Schema;
 use BadBehaviour\Util\ErrorReporter;
 use BadBehaviour\Util\SafeMode;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
+use ReflectionIntersectionType;
+use ReflectionNamedType;
+use ReflectionUnionType;
 
 class ConfigurationTest extends TestCase
 {
@@ -381,76 +385,111 @@ class ConfigurationTest extends TestCase
      */
     public function test_all_array_constructor_parameters_survive_coercion(): void
     {
-        $adapter = new GenericAdapter();
-        $config = Configuration::from_array([], $adapter);
+    	$reflection = new ReflectionClass(Configuration::class);
+    	$constructor = $reflection->getConstructor();
+    	$array_params = [];
 
-        $reflection = new \ReflectionClass(Configuration::class);
-        $constructor = $reflection->getConstructor();
-        $array_params = [];
+    	foreach ($constructor->getParameters() as $param) {
+    		$type = $param->getType();
+    		if ($type === null) {
+    			continue;
+    		}
 
-        foreach ($constructor->getParameters() as $param) {
-            $type = $param->getType();
-            if ($type && $type->getName() === 'array') {
-                $array_params[] = $param->getName();
-            }
-        }
+    		// === Handle single named type (most common case) ===
+    		if ($type instanceof ReflectionNamedType) {
+    			if ($type->getName() === 'array') {
+    				$array_params[] = $param->getName();
+    			}
+    			continue;
+    		}
 
-        $this->assertNotEmpty(
-            $array_params,
-            'Configuration must have at least one array parameter'
-        );
+    		// === Handle union types (PHP 8.0+, e.g., int|float) ===
+    		//
+    		// ReflectionUnionType does NOT have getName() — it's a collection
+    		// of ReflectionNamedType instances accessible via getTypes().
+    		// Used by `on_demand_ip_refresh_feed_timeout_seconds` which
+    		// accepts int|float for sub-second precision budgets.
+    		if ($type instanceof ReflectionUnionType) {
+    			foreach ($type->getTypes() as $namedType) {
+    				if ($namedType instanceof ReflectionNamedType
+    					&& $namedType->getName() === 'array') {
+    						$array_params[] = $param->getName();
+    						break;
+    					}
+    			}
+    			continue;
+    		}
 
-        // Defaults that must produce non-empty arrays
-        $must_be_non_empty = [
-            'skip_static_extensions',
-            'skip_static_paths',
-            'allowed_ai_crawlers',
-            'dnsbl_lists',
-            'head_referer_exempt_paths',
-            'dynamic_ip_ranges_feeds',
-            'asset_extensions',
-            'body_scan_skip_fields',
-        ];
+    		// === Handle intersection types (PHP 8.1+) ===
+    		//
+    		// Cannot include `array` in practice (array isn't a class),
+    		// so this branch never adds anything. Included for completeness.
+    		if ($type instanceof ReflectionIntersectionType) {
+    			continue;
+    		}
+    	}
 
-        // Defaults that must produce empty arrays (not null, not scalar)
-        $must_be_empty = [
-            'reverse_proxy_addresses',
-            'blocked_bot_categories',
-            'challenge_bot_categories',
-            'log_only_bot_categories',
-            'allowed_bot_categories',
-            'bad_ja3_fingerprints',
-            'bad_h2_fingerprints',
-            'bot_header_orders',
-            'expected_ja3',
-            'blocked_countries',
-            'blocked_asns',
-            'custom_rules',
-        ];
+    	$this->assertNotEmpty(
+    		$array_params,
+    		'Configuration must have at least one array parameter'
+    		);
 
-        foreach ($array_params as $param) {
-            $value = $config->{$param} ?? null;
+    	// Defaults that must produce non-empty arrays
+    	$must_be_non_empty = [
+    		'skip_static_extensions',
+    		'skip_static_paths',
+    		'allowed_ai_crawlers',
+    		'dnsbl_lists',
+    		'head_referer_exempt_paths',
+    		'dynamic_ip_ranges_feeds',
+    		'asset_extensions',
+    		'body_scan_skip_fields',
+    	];
 
-            $this->assertIsArray(
-                $value,
-                "$param must be an array after from_array([]) "
-                . "(got " . get_debug_type($value) . ')'
-            );
+    	// Defaults that must produce empty arrays (not null, not scalar)
+    	$must_be_empty = [
+    		'reverse_proxy_addresses',
+    		'blocked_bot_categories',
+    		'challenge_bot_categories',
+    		'log_only_bot_categories',
+    		'allowed_bot_categories',
+    		'bad_ja3_fingerprints',
+    		'bad_h2_fingerprints',
+    		'bot_header_orders',
+    		'expected_ja3',
+    		'blocked_countries',
+    		'blocked_asns',
+    		'custom_rules',
+    	];
 
-            if (in_array($param, $must_be_non_empty, true)) {
-                $this->assertNotEmpty(
-                    $value,
-                    "$param must be non-empty (defaults must survive coercion)"
-                );
-            } elseif (in_array($param, $must_be_empty, true)) {
-                $this->assertSame(
-                    [],
-                    $value,
-                    "$param must be empty array (not null, not scalar)"
-                );
-            }
-            // rate_limits is complex — just verify it's an array
-        }
+    	// ============================================================
+    	// FIX: Instantiate Configuration so we can read its properties
+    	// ============================================================
+    	$config = Configuration::from_array([]);
+
+    	foreach ($array_params as $param) {
+    		$value = $config->{$param} ?? null;
+
+    		$this->assertIsArray(
+    			$value,
+    			"$param must be an array after from_array([]) "
+    			. "(got " . get_debug_type($value) . ')'
+    			);
+
+    		if (in_array($param, $must_be_non_empty, true)) {
+    			$this->assertNotEmpty(
+    				$value,
+    				"$param must be non-empty (defaults must survive coercion)"
+    				);
+    		} elseif (in_array($param, $must_be_empty, true)) {
+    			$this->assertSame(
+    				[],
+    				$value,
+    				"$param must be empty array (not null, not scalar)"
+    				);
+    		}
+    		// rate_limits is complex — just verify it's an array
+    	}
     }
 
     /**

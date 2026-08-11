@@ -51,6 +51,13 @@ class BadBehaviour
 	private AssetScrapingDetector $asset_detector;
 
 	/**
+	 * Optional on-demand IP range refresher. Null when disabled by
+	 * config or when construction failed. See run_internal() for
+	 * how/when it's invoked.
+	 */
+	private ?\BadBehaviour\Feeds\OnDemandRefresher $refresh_checker = null;
+
+	/**
 	 * @param Configuration $config
 	 * @param RegistryInterface|null $registry Optional bot registry override.
 	 *        If null, loads from config/bb_registry.php (or falls back to
@@ -109,6 +116,59 @@ class BadBehaviour
 		$this->agentic_detector = new AgenticBehaviorDetector($this->config, $this->adapter);
 		$this->head_detector = new HeadRequestDetector($this->config, $this->adapter);
 		$this->asset_detector = new AssetScrapingDetector($this->config, $this->adapter);
+
+		// === On-demand IP range refresher ===
+		//
+		// Constructed lazily and gated by config — default off (opt-in).
+		// When enabled, replaces the need for `bin/update-ip-ranges.php`
+		// cron on deployments without scheduled-job support.
+		//
+		// Failure to instantiate (missing cache backend, broken cloud
+		// provider setup) is non-fatal: the refresher stays null and
+		// run_internal() treats on-demand refresh as a no-op. Detection
+		// continues to work using the shipped static IP ranges.
+		if ($this->config->on_demand_ip_refresh_enabled) {
+			try {
+				// Pick the best available cache backend. Prefer explicit
+				// config injection; fall back to the adapter if it implements
+				// CacheInterface.
+				if ($this->cache !== null) {
+					$cache = $this->cache;
+				} elseif ($this->adapter instanceof CacheInterface) {
+					$cache = $this->adapter;
+				} else {
+					throw new \RuntimeException(
+						'No CacheInterface available — pass $config->cache or use an adapter that implements CacheInterface'
+						);
+				}
+
+				$this->refresh_checker = new \BadBehaviour\Feeds\OnDemandRefresher(
+					cache: $cache,
+					registry: new \BadBehaviour\Feeds\FeedRegistry($cache),
+					cloud: new \BadBehaviour\Feeds\CloudIpRangeProvider($cache),
+					options: [
+						'probability_denominator' => $this->config->on_demand_ip_refresh_probability_denominator,
+						'min_age_seconds'         => $this->config->on_demand_ip_refresh_min_age_seconds,
+						'lock_ttl'                => $this->config->on_demand_ip_refresh_lock_ttl,
+						'cache_ttl'               => $this->config->on_demand_ip_refresh_cache_ttl,
+						'feed_timeout_seconds'    => $this->config->on_demand_ip_refresh_feed_timeout_seconds,
+						'bot_ids'                 => $this->config->on_demand_ip_refresh_bot_ids ?: null,
+						'cloud_providers'         => $this->config->on_demand_ip_refresh_cloud_providers ?: null,
+					],
+					);
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter,
+					'BadBehaviour: on-demand refresher init failed; disabled',
+					[
+						'error' => $e->getMessage(),
+						'exception_class' => $e::class,
+						'hint' => 'Check cache backend connectivity and config.',
+					],
+					'on_demand_refresher_init_failed'
+					);
+				$this->refresh_checker = null;
+			}
+		}
 	}
 
 	/**
@@ -220,18 +280,19 @@ class BadBehaviour
 		$strictness = $this->config->get_strictness();
 
 		$detectors = [
-			'blacklist'    => true, // always-on (except in safe-mode)
-			'bot'          => true, // always-on (except in safe-mode)
-			'dns_verify'   => $this->config->dns_verification_enabled,
-			'dyn_ranges'   => $this->config->dynamic_ip_ranges_enabled,
-			'rate_limit'   => $this->config->rate_limit_enabled,
-			'dnsbl'        => $this->config->dnsbl_enabled,
-			'behavioral'   => $this->config->enable_behavioral_analysis,
-			'fingerprint'  => $this->config->enable_fingerprinting,
-			'client_hints' => $this->config->enable_client_hints_validation,
-			'agentic'      => $this->config->enable_agentic_detection,
-			'head'         => $this->config->enable_head_request_detection,
-			'asset'        => $this->config->enable_asset_scraping_detection,
+			'blacklist'           => true, // always-on (except in safe-mode)
+			'bot'                 => true, // always-on (except in safe-mode)
+			'dns_verify'          => $this->config->dns_verification_enabled,
+			'dyn_ranges'          => $this->config->dynamic_ip_ranges_enabled,
+			'on_demand_refresh'   => $this->refresh_checker !== null,
+			'rate_limit'          => $this->config->rate_limit_enabled,
+			'dnsbl'               => $this->config->dnsbl_enabled,
+			'behavioral'          => $this->config->enable_behavioral_analysis,
+			'fingerprint'         => $this->config->enable_fingerprinting,
+			'client_hints'        => $this->config->enable_client_hints_validation,
+			'agentic'             => $this->config->enable_agentic_detection,
+			'head'                => $this->config->enable_head_request_detection,
+			'asset'               => $this->config->enable_asset_scraping_detection,
 		];
 
 		$config_loaded = false;
@@ -367,6 +428,25 @@ class BadBehaviour
 		} catch (\Throwable $e) {
 			// Fingerprint computation is best-effort
 		}
+
+		// ============================================================
+		// ON-DEMAND IP RANGE REFRESH GATE
+		//
+		// Cheap check (1/N requests trigger even the cache lookup) that
+		// schedules a background fetch of fresh IP ranges. Runs AFTER
+		// enrichment so we have what we need for logs, but BEFORE
+		// detection so the next request benefits from any refresh that
+		// completes during this request's shutdown handler.
+		//
+		// Latency impact on this request: ~1 mt_rand() call + 1-2 cache
+		// reads. The actual feed fetches happen after the response is
+		// sent (register_shutdown_function), so user-facing latency is
+		// unaffected under PHP-FPM.
+		//
+		// Skipped entirely when the refresher isn't configured
+		// (refresh_checker is null) — zero overhead for the common case.
+		// ============================================================
+		$this->maybe_schedule_refresh();
 
 		// ============================================================
 		// HARD TIME BUDGET — Detection must NEVER stall the request.
@@ -777,6 +857,102 @@ class BadBehaviour
 		}
 	}
 
+	/**
+	 * Run the on-demand IP range refresh gate and, if it schedules,
+	 * register a shutdown function to perform the actual refresh.
+	 *
+	 * === WHERE IT FITS IN THE PIPELINE ===
+	 *
+	 * Called after fast-path checks (empty UA, whitelist, enrichment)
+	 * and before detection. Placement rationale:
+	 *
+	 *   - After fast paths: empty UA / whitelist requests skip the
+	 *     gate entirely (zero overhead).
+	 *   - Before detection: gives the next request the freshest data
+	 *     possible — if this request's refresh completes before the
+	 *     next request starts (common on low/medium traffic), the
+	 *     next request sees warm ranges immediately.
+	 *
+	 * === LATENCY ===
+	 *
+	 * On the hot path (Gate 1 fails): 1 mt_rand() call, ~1µs.
+	 * On the slow path (Gate 1 passes): 2 cache reads + 1 cache write
+	 * for the lock, ~1ms even on slow backends. Still well below the
+	 * "skip static" speed.
+	 *
+	 * The actual feed fetches (potentially seconds) happen in the
+	 * shutdown function, AFTER the response has been sent under
+	 * PHP-FPM. Under mod_php / CGI, shutdown runs before the response
+	 * is fully flushed, so the user waits for the refresh — documented
+	 * limitation.
+	 *
+	 * === FAILURE MODES ===
+	 *
+	 * - maybe_refresh() itself NEVER throws (defensive contract).
+	 *   Gate failures just return skip decisions.
+	 * - do_refresh() inside the shutdown function also NEVER throws.
+	 *   Per-feed failures degrade to partial refresh.
+	 * - Shutdown function not registered when refresh_checker is null
+	 *   (refresher disabled or failed to construct).
+	 *
+	 * @return void
+	 */
+	private function maybe_schedule_refresh(): void
+	{
+		if ($this->refresh_checker === null) {
+			return;
+		}
+
+		try {
+			$decision = $this->refresh_checker->maybe_refresh();
+		} catch (\Throwable $e) {
+			// Defensive: maybe_refresh() shouldn't throw, but if a
+			// future bug introduces one, we MUST NOT crash the request.
+			ErrorReporter::error($this->adapter,
+				'on-demand refresh gate threw; skipping',
+				[
+					'error' => $e->getMessage(),
+					'exception_class' => $e::class,
+				],
+				'on_demand_refresh_gate_threw'
+				);
+			return;
+		}
+
+		if (!$decision->should_schedule) {
+			return;
+		}
+
+		// Schedule the slow work for after the response is sent.
+		//
+		// Under PHP-FPM: shutdown_function runs after fastcgi_finish_request
+		// (if the host calls it) or after the response buffer is flushed
+		// naturally. Either way, the user doesn't wait for the refresh.
+		//
+		// Under mod_php/CGI: shutdown_function runs before the response
+		// is fully flushed. User waits up to feed_timeout_seconds × N feeds
+		// (default 5s × 8 feeds ≈ 40s worst case). Acceptable since this
+		// fires at most once per min_age_seconds per worker.
+		//
+		// We capture the refresher by reference (it's a property on $this,
+		// which outlives this request scope for the duration of the
+		// shutdown sequence).
+		$refresher = $this->refresh_checker;
+		register_shutdown_function(static function () use ($refresher): void {
+			try {
+				$refresher->do_refresh();
+			} catch (\Throwable $e) {
+				// Defensive: do_refresh() shouldn't throw, but if it
+				// ever does (a future bug, a network stack that throws
+				// during shutdown), swallow + log.
+				error_log(
+					'[BadBehaviour] on-demand refresh shutdown handler threw: '
+					. $e->getMessage()
+					);
+			}
+		});
+	}
+
 	// === Static Resource Skip Logic ===
 	private function should_skip_static(string $uri): bool
 	{
@@ -899,17 +1075,122 @@ class BadBehaviour
 						'table creation query returned false', [
 							'sql_preview' => substr((string)$sql, 0, 200),
 						], 'install_query_failed'
-					);
+						);
 				}
 			}
 		} catch (\Throwable $e) {
 			// Swallow + log. Logging itself must not throw.
 			ErrorReporter::error($this->adapter, 'install_once failed', [
 				'error' => $e->getMessage(),
-				'exception_class' => get_class($e),
-				'hint' => 'Run bin/install-bb.php to set up the log table manually, '
-					. 'or check database connectivity and permissions',
+				'exception_class' => $e::class,
+				'hint' => 'Run bin/install-bb.php to set up the log table and '
+				. '(if on-demand refresh is enabled) seed the IP-range cache, '
+				. 'or check database connectivity and permissions',
 			], 'install_once_failure');
+		}
+
+		// === Opportunistic cache seeding ===
+		//
+		// If on-demand refresh is enabled AND the cache is empty/cold,
+		// fetch fresh ranges synchronously here — but ONLY if we have
+		// spare time budget (cap at 3 seconds; install_once is on the
+		// hot path of the first request of a process).
+		//
+		// Host apps that want guaranteed seeding (rather than opportunistic)
+		// should run bin/install-bb.php during their install flow instead.
+		//
+		// Why opportunistic: zero ops burden for hosts that already have
+		// bin/install-bb.php running; zero extra work for hosts that don't
+		// care about cold-start optimization.
+		if ($this->refresh_checker === null) {
+			return; // On-demand refresh not enabled — nothing to seed.
+		}
+
+		// Skip if cache already has data (any non-empty payload counts).
+		$existing = $this->cache !== null
+		? $this->cache->get(OnDemandRefresher::CACHE_KEY_MERGED)
+		: ($this->adapter instanceof CacheInterface
+			? $this->adapter->get(OnDemandRefresher::CACHE_KEY_MERGED)
+			: null);
+		if (is_array($existing) && !empty($existing['data'])) {
+			return;
+		}
+
+		// Skip during CLI — no per-request latency concern, but also no
+		// point running from a CLI process's first request.
+		if (php_sapi_name() === 'cli') {
+			return;
+		}
+
+		// Cap seeding at 3 seconds. install_once runs on the first request
+		// of a process; we can't afford to block the user for the full
+		// feed_timeout_seconds × N feeds.
+		$install_budget = 3.0;
+		$start = microtime(true);
+
+		try {
+			// Build a one-shot refresher with the install-time budget.
+			// We deliberately don't reuse $this->refresh_checker here
+			// because its options are already locked-in for runtime use.
+			$cache = $this->cache ?? ($this->adapter instanceof CacheInterface
+				? $this->adapter
+				: null);
+			if ($cache === null) {
+				return; // No cache backend; nothing to do.
+			}
+
+			$seeder = new OnDemandRefresher(
+				cache: $cache,
+				registry: new \BadBehaviour\Feeds\FeedRegistry($cache),
+				cloud: new \BadBehaviour\Feeds\CloudIpRangeProvider($cache),
+				options: [
+					'probability_denominator' => 1, // Skip the gate; we know we want this.
+					'min_age_seconds'         => $this->config->on_demand_ip_refresh_min_age_seconds,
+					'lock_ttl'                => $this->config->on_demand_ip_refresh_lock_ttl,
+					'cache_ttl'               => $this->config->on_demand_ip_refresh_cache_ttl,
+					'feed_timeout_seconds'    => $install_budget,
+					'bot_ids'                 => $this->config->on_demand_ip_refresh_bot_ids ?: null,
+					'cloud_providers'         => $this->config->on_demand_ip_refresh_cloud_providers ?: null,
+				],
+				);
+
+			// Acquire the lock (fresh install — no contention expected).
+			$decision = $seeder->maybe_refresh();
+			if (!$decision->should_schedule) {
+				// Another worker seeded concurrently. That's fine — we
+				// don't need to do anything.
+				return;
+			}
+
+			// Run the fetch synchronously, capped by the budget.
+			$result = $seeder->do_refresh();
+
+			if ($result->cache_written) {
+				error_log(sprintf(
+					'[BadBehaviour] install_once: seeded %d CIDRs from %d feeds in %.2fs',
+					$result->cidr_count,
+					$result->successful_feed_count(),
+					microtime(true) - $start
+					));
+			} else {
+				error_log(
+					'[BadBehaviour] install_once: seed fetch returned no data; '
+					. 'cache left empty. Operator should run bin/install-bb.php manually.'
+					);
+			}
+		} catch (\Throwable $e) {
+			// Never let install_once throw. Worst case the user gets a
+			// cold-start window and the on-demand refresher catches up
+			// on a later request.
+			ErrorReporter::error($this->adapter,
+				'install_once: opportunistic seed failed',
+				[
+					'error' => $e->getMessage(),
+					'exception_class' => $e::class,
+					'hint' => 'Run bin/install-bb.php manually to seed the cache.',
+				],
+				'install_once_seed_failed'
+				);
 		}
 	}
 

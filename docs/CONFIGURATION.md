@@ -452,6 +452,18 @@ return [
     'enable_agentic_detection'        => false,  // would break power users
     'enable_dynamic_ip_ranges'        => false,  // experimental
 
+    // ===== ON-DEMAND IP REFRESH (for shared hosting / PaaS / no cron) =====
+    'on_demand_ip_refresh' => [
+        'enabled'                 => false,  // flip true if no cron access
+        'probability_denominator' => 1000,
+        'min_age_seconds'         => 21600,  // 6 hours
+        'lock_ttl'                => 600,    // 10 minutes
+        'cache_ttl'               => 604800, // 7 days
+        'feed_timeout_seconds'    => 5,
+        'bot_ids'                 => [],
+        'cloud_providers'         => [],
+    ],
+
     // Head + asset scraping — ON by default, low FP risk
     'enable_head_request_detection'   => true,
     'enable_asset_scraping_detection' => true,
@@ -931,6 +943,226 @@ php bin/update-ip-ranges.php --ttl=43200           # Override cache TTL
 
 ---
 
+### On-Demand IP Refresh (`on_demand_ip_refresh`)
+
+Replaces `bin/update-ip-ranges.php` cron for deployments **without scheduled-job support** (shared hosting, PaaS, containerized apps without CronJob support). On a small fraction of requests, checks if the cached merged IP ranges are stale; if so, fetches fresh from upstream feeds **after the response is sent to the client** and atomically swaps the cache.
+
+#### When to Use
+
+| Deployment | Recommended approach |
+|------------|----------------------|
+| **Shared hosting, PaaS, no cron access** | Use `on_demand_ip_refresh` (this feature) |
+| **Single-server with cron available** | Use `bin/update-ip-ranges.php` on cron (more efficient) |
+| **Multi-server with shared cache** | Use `bin/update-ip-ranges.php` on cron (coordinated) |
+| **Multi-server without shared cache** | Use `on_demand_ip_refresh` (each host refreshes independently) |
+
+#### How It Works
+
+Four gates coordinate each refresh — probability × cooldown × staleness × mutex — so even on very busy sites the refresh runs **at most once per `min_age_seconds` per worker**, and **at most once concurrently** across all workers on a shared cache:
+
+```
+Gate 1: Probability   1 in N requests even checks the staleness gate
+Gate 2: Cooldown      Skip while lock is held (cache TTL doubles as lock)
+Gate 3: Staleness     Skip when cached data is fresh enough
+Gate 4: Mutex         Only one worker fetches at a time
+```
+
+The actual fetch runs **after** the HTTP response has been sent to the client, so user-facing latency is unaffected. Under PHP-FPM this uses `fastcgi_finish_request()`; under CLI / mod_php the refresh is skipped.
+
+#### Settings
+
+| Setting | Type | Default | Risk | Description |
+|---------|------|---------|------|-------------|
+| `enabled` | bool | `false` | 🟡 **LOW** | Master switch |
+| `probability_denominator` | int | `1000` | 🟢 **LOW** | 1 in N requests triggers Gate 1. Higher = less frequent checks |
+| `min_age_seconds` | int | `21600` (6h) | 🟢 **LOW** | Hard floor on refresh frequency |
+| `lock_ttl` | int | `600` (10min) | 🟢 **LOW** | Cache lock TTL (mutex + cooldown combined) |
+| `cache_ttl` | int | `604800` (7d) | 🟢 **LOW** | How long refreshed data lives in cache |
+| `feed_timeout_seconds` | int\|float | `5` | 🟢 **LOW** | Hard wall-clock budget for entire refresh |
+| `bot_ids[]` | string[]\|null | `null` | 🟢 **LOW** | Restrict to specific bot IDs (null = all) |
+| `cloud_providers[]` | string[]\|null | `null` | 🟢 **LOW** | Restrict to specific providers (null = all 4 defaults) |
+
+**`bot_ids` and `cloud_providers` accept arrays of strings or null.** When set, only those bots/providers are refreshed. When null (default), all configured bots and the four default cloud providers (aws, cloudflare, fastly, gcp) are refreshed.
+
+#### Full Configuration
+
+```php
+<?php
+// config/bb_config.php
+
+return [
+    // ... (other settings) ...
+
+    // ===== ON-DEMAND IP REFRESH =====
+    'on_demand_ip_refresh' => [
+        // Master switch — recommended for shared hosting / PaaS
+        'enabled' => true,
+
+        // 1 in N requests triggers Gate 1. At 100 req/min with
+        // denominator=1000: ~6 checks/hour per worker. At 10000
+        // req/min: ~600 checks/hour per worker. The actual refresh
+        // frequency is bounded by min_age_seconds (Gate 3), so
+        // increasing this doesn't increase feed endpoint pressure.
+        'probability_denominator' => 1000,
+
+        // Minimum age of cached data before refresh is allowed.
+        // Recommended values:
+        //   21600 (6h)  — typical; feeds change infrequently
+        //   43200 (12h) — conservative; less feed endpoint load
+        //    3600 (1h)  — aggressive; only if you observe feed-driven
+        //                  bot misidentifications
+        'min_age_seconds' => 21600,
+
+        // How long the refresh mutex is held. Functions as both:
+        //   (a) Cross-process/host mutex — only one worker fetches
+        //   (b) Cooldown — don't re-check within this window
+        // Should comfortably exceed worst-case refresh duration
+        // (4 feeds × feed_timeout_seconds = 20s, so 600s = 30× headroom).
+        'lock_ttl' => 600,
+
+        // How long refreshed cache entry lives. Acts as "stale tolerance"
+        // — if feed endpoints become unreachable for up to cache_ttl,
+        // the old ranges are still served. 7 days handles a feed going
+        // down for a long weekend without leaving the site un-protected.
+        'cache_ttl' => 604800,
+
+        // Hard wall-clock budget for the entire refresh. Protects
+        // against a misbehaving feed hanging the shutdown handler
+        // indefinitely. Accepts fractional values (e.g., 0.5) for
+        // sub-second budgets on fast networks.
+        'feed_timeout_seconds' => 5,
+
+        // Restrict refresh scope to specific bots (optional).
+        // null = all bots in the registry. Useful for high-traffic
+        // sites that only care about a subset:
+        //   'bot_ids' => ['googlebot', 'gptbot', 'claude'],
+        'bot_ids' => null,
+
+        // Restrict refresh scope to specific cloud providers (optional).
+        // null = all four defaults ('aws', 'cloudflare', 'fastly', 'gcp').
+        'cloud_providers' => null,
+    ],
+
+    // ... (other settings) ...
+];
+```
+
+#### Seeding the Cache at Install Time
+
+`on_demand_ip_refresh` triggers **on page traffic** — but on a fresh install with no traffic yet, the cache stays empty until the first user visits. To populate the cache immediately:
+
+```bash
+# Seeds cache with fresh data from all configured feeds.
+# Safe to re-run; use --force to bypass freshness check.
+php bin/install-bb.php              # seed cache (skip if fresh)
+php bin/install-bb.php --force      # always re-seed
+php bin/install-bb.php --dry-run    # show what would happen
+php bin/install-bb.php --verbose    # per-feed progress output
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success (cache seeded, or already fresh and not `--force`) |
+| `1` | Configuration error (no cache backend, etc.) |
+| `2` | Partial failure (some feeds errored; cache written with what we got) |
+| `3` | Total failure (no feeds succeeded; cache NOT written) |
+
+After seeding, the cache key is `bb:ip_ranges:merged` and contains:
+```php
+[
+    'data'    => ['googlebot' => ['1.2.3.0/24', ...], ...],
+    'fetched' => 1735689600,  // Unix timestamp
+]
+```
+
+#### Programmatic API (Advanced)
+
+For tests, admin tools, and hosts that want manual control, `BadBehaviour` exposes:
+
+```php
+use BadBehaviour\Core\BadBehaviour;
+use BadBehaviour\Feeds\RefreshDecision;
+use BadBehaviour\Feeds\RefreshResult;
+
+$bb = new BadBehaviour($config);
+
+// Read-only gate check — what would the next refresh call do?
+$decision = $bb->peek_refresh_decision();
+// $decision->should_schedule (bool)
+// $decision->reason ('probability' | 'cooldown' | 'fresh' | 'mutex_lost' | 'stale' | 'cold_start')
+// $decision->cache_age (int|null) — age of cached data when scheduling
+// $decision->staleness_floor (int|null)
+
+// Is the feature usable (enabled + cache available)?
+$bb->is_on_demand_refresh_enabled();  // bool
+
+// Force an immediate synchronous refresh — bypasses all gates.
+$result = $bb->force_refresh_now();
+// $result->success (bool) — no failures AND data written
+// $result->partial (bool) — some failures AND data written
+// $result->bot_count (int)
+// $result->cidr_count (int)
+// $result->elapsed_seconds (float)
+// $result->cache_written (bool)
+// $result->feed_status (array) — per-feed success/error map
+
+// Register a shutdown function that runs the refresh IF gates pass.
+// Returns false if disabled or no cache backend available.
+if ($bb->register_shutdown_refresh()) {
+    // Shutdown function is now queued
+}
+
+// Inspect the last completed refresh result (null until first refresh).
+$bb->get_last_refresh_result();  // ?RefreshResult
+```
+
+**Diagnostics** includes the feature state:
+
+```php
+$diag = $bb->diagnostics();
+// $diag['on_demand_refresh']['enabled']   (bool)
+// $diag['on_demand_refresh']['usable']    (bool)
+// $diag['on_demand_refresh']['probability_denominator'] (int)
+// $diag['on_demand_refresh']['min_age_seconds'] (int)
+// $diag['on_demand_refresh']['cache_ttl'] (int)
+```
+
+#### Cold-Start Behavior
+
+On a fresh install with no cache, the **first triggering request** will populate the cache during shutdown. Until that happens (a few seconds to a few minutes, depending on traffic), bots whose IPs aren't in the shipped static ranges won't be verified by DNS. The bundled static ranges already cover ~95% of production traffic, so this is generally fine.
+
+If you can't tolerate the cold-start window, run `bin/install-bb.php` immediately after deployment to pre-warm the cache.
+
+#### Multi-Server Deployments
+
+The mutex lock **must be in a shared cache** across processes/hosts:
+
+| Cache backend | Multi-host behavior |
+|---------------|---------------------|
+| Redis, Memcached, DB-backed | ✅ Works correctly — mutex coordinates across hosts |
+| File-based (default) | ⚠️ Per-host mutex only — multiple hosts may refresh concurrently |
+
+At default settings (1/1000 probability, 6h staleness floor), N hosts cost N × 1 refresh per 6h ≈ trivial even without coordination.
+
+#### Comparison: Cron vs. On-Demand
+
+| Aspect | `bin/update-ip-ranges.php` (cron) | `on_demand_ip_refresh` (web) |
+|--------|-----------------------------------|------------------------------|
+| **When** | Fixed schedule (every 6h) | Opportunistic (1/N requests) |
+| **Where** | Runs in CLI process | Runs in FPM worker shutdown |
+| **Predictability** | ✅ Runs at known times | ⚠️ Depends on traffic patterns |
+| **Cold start** | N/A — runs on schedule | ⚠️ Empty cache until first triggering request |
+| **Multi-host coordination** | ✅ One host's cron is enough | ⚠️ Each host refreshes (bounded by probability) |
+| **Latency impact** | ✅ Zero (separate process) | ✅ Zero (runs after response sent) |
+| **Deployment complexity** | Requires cron | Just flip a config flag |
+| **Best for** | Single-server, predictable ops | Shared hosting, PaaS, containers |
+
+**Recommendation:** If you have cron, use it. Use `on_demand_ip_refresh` when you don't.
+
+---
+
 ### Rate Limiting (`rate_limits`)
 
 | Setting | Type | Default | Risk | Tuning |
@@ -1250,6 +1482,9 @@ de = "DE"
 | `enable_client_hints_validation` | 🟡 MEDIUM | `false` | 1–2 weeks monitoring |
 | `enable_agentic_detection` | 🟡 MEDIUM | `false` | Power-user FPs ruled out |
 | `enable_dynamic_ip_ranges` | 🟡 EXPERIMENTAL | `false` | Cron deployed + single server or Redis |
+| `on_demand_ip_refresh.enabled` | 🟢 LOW | `false` | Shared hosting / PaaS / no cron access |
+| `on_demand_ip_refresh.probability_denominator` | 🟢 LOW | `1000` | Keep default |
+| `on_demand_ip_refresh.min_age_seconds` | 🟢 LOW | `21600` (6h) | Lower for faster refresh, higher for less feed load |
 | `enable_head_request_detection` | 🟢 LOW | `true` | Keep enabled |
 | `enable_asset_scraping_detection` | 🟢 LOW | `true` | Keep enabled |
 | `block_unverified_ai` | 🟢 LOW | `true` | Keep enabled |
@@ -1433,9 +1668,18 @@ php /path/to/badbehaviour/bin/update-ip-ranges.php --dry-run
 |------|---------|
 | `config/bb_config.php` | Typed PHP-array configuration (single source of truth) |
 | `config/bb_config.example.php` | Fully commented example |
+| `config/bb_registry.php` | Bot registry configuration (preset, filters, additions) |
+| `config/bb_registry.example.php` | Fully commented bot registry example |
 | `config/bb_whitelist.conf` | Whitelist (INI — human-editable, simple) |
-| `bin/update-ip-ranges.php` | Cron script for `enable_dynamic_ip_ranges` |
+| `bin/install-bb.php` | Cache seeder — pre-warms IP range cache (run once at install or on schedule) |
+| `bin/update-ip-ranges.php` | Cron script for explicit, scheduled IP range refresh |
 
+**`install-bb.php` vs `update-ip-ranges.php`:**
+
+- `install-bb.php` seeds the cache that `on_demand_ip_refresh` (or any caller) reads from. Safe to re-run. Use at deploy time or via cron if you don't have the cron capacity for `update-ip-ranges.php`.
+- `update-ip-ranges.php` is the canonical scheduled-refresh script. Use it via cron (`0 */6 * * *`) when you have scheduled-job support.
+
+Both scripts populate the same cache key (`bb:ip_ranges:merged`) with the same data shape. They are functionally equivalent — pick one based on your deployment.
 ---
 
 This reference gives admins **exactly what they need**: risk level, when to enable, and what breaks if misconfigured.

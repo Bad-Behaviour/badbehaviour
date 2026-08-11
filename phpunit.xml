@@ -32,7 +32,7 @@
     </coverage>
     <php>
         <env name="APP_ENV" value="test"/>
-        <env name="BB2_CORE" value="src"/>
-        <env name="BB2_CWD" value="."/>
+        <env name="BB_CORE" value="src"/>
+        <env name="BB_CWD" value="."/>
     </php>
 </phpunit>

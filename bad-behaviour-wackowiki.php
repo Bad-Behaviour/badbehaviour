@@ -4,9 +4,9 @@
  */
 
 if (!defined('IN_WACKO')) die('I said no cheating!');
-if (!defined('BB2_CWD')) define('BB2_CWD', __DIR__);
+if (!defined('BB_CWD')) define('BB_CWD', __DIR__);
 
-require_once BB2_CWD . '/vendor/autoload.php';
+require_once BB_CWD . '/vendor/autoload.php';
 
 use BadBehaviour\Bootstrap;
 use BadBehaviour\Adapter\WackoWikiAdapter;
@@ -25,4 +25,4 @@ if ($result->is_actionable()) {
 	$bb->handle_result($result);
 }
 
-$GLOBALS['bb2_timer_total'] = microtime(true) - ($_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true));
+$GLOBALS['bb_timer_total'] = microtime(true) - ($_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true));

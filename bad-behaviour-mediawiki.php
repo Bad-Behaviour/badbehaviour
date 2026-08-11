@@ -4,14 +4,14 @@
  */
 
 if (!defined('MEDIAWIKI')) die();
-if (!defined('BB2_CWD')) define('BB2_CWD', __DIR__);
+if (!defined('BB_CWD')) define('BB_CWD', __DIR__);
 
-require_once BB2_CWD . '/vendor/autoload.php';
+require_once BB_CWD . '/vendor/autoload.php';
 
 use BadBehaviour\Adapter\MediaWikiAdapter;
 use BadBehaviour\Configuration;
 
-global $wgDBprefix, $wgEmergencyContact, $wgScript, $wgBadBehaviourTimer, $bb2_timer_total;
+global $wgDBprefix, $wgEmergencyContact, $wgScript, $wgBadBehaviourTimer, $bb_timer_total;
 
 $wgBadBehaviourTimer = false;
 
@@ -24,7 +24,7 @@ $wgExtensionCredits['other'][] = [
 ];
 
 $wgExtensionFunctions[] = function () use ($wgDBprefix, $wgEmergencyContact, $wgScript) {
-    global $bb2_timer_total, $wgDB, $wgOut, $wgBadBehaviourSettings;
+    global $bb_timer_total, $wgDB, $wgOut, $wgBadBehaviourSettings;
 
     $start = microtime(true);
 
@@ -53,13 +53,13 @@ $wgExtensionFunctions[] = function () use ($wgDBprefix, $wgEmergencyContact, $wg
         }
     }
 
-    $bb2_timer_total = microtime(true) - $start;
+    $bb_timer_total = microtime(true) - $start;
 };
 
 $wgHooks['BeforePageDisplay'][] = function (&$out, &$skin) {
-    global $bb2_timer_total, $wgBadBehaviourTimer;
-    if ($wgBadBehaviourTimer && $bb2_timer_total) {
-        $out->addHTML("<!-- Bad Behaviour 3.0 run time: " . number_format(1000 * $bb2_timer_total, 3) . " ms -->");
+    global $bb_timer_total, $wgBadBehaviourTimer;
+    if ($wgBadBehaviourTimer && $bb_timer_total) {
+        $out->addHTML("<!-- Bad Behaviour 3.0 run time: " . number_format(1000 * $bb_timer_total, 3) . " ms -->");
     }
     return true;
 };

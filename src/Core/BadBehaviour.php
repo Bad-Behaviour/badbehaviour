@@ -1055,7 +1055,7 @@ class BadBehaviour
 		// Set FIRST so we never retry on this process, even if install fails
 		$this->install_done = true;
 
-		if (defined('BB2_NO_CREATE') || !$this->config->logging) {
+		if (defined('BB_NO_CREATE') || !$this->config->logging) {
 			return;
 		}
 

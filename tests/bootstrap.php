@@ -5,14 +5,14 @@ declare(strict_types=1);
 require_once __DIR__ . '/../vendor/autoload.php';
 
 // Define constants for testing
-if (!defined('BB2_CORE')) {
-    define('BB2_CORE', __DIR__ . '/../src');
+if (!defined('BB_CORE')) {
+    define('BB_CORE', __DIR__ . '/../src');
 }
-if (!defined('BB2_CWD')) {
-    define('BB2_CWD', __DIR__ . '/..');
+if (!defined('BB_CWD')) {
+    define('BB_CWD', __DIR__ . '/..');
 }
-if (!defined('BB2_VERSION')) {
-    define('BB2_VERSION', '3.0.0-test');
+if (!defined('BB_VERSION')) {
+    define('BB_VERSION', '3.0.0-test');
 }
 
 // Ensure PHP settings for testing

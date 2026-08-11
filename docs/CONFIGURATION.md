@@ -1680,6 +1680,7 @@ php /path/to/badbehaviour/bin/update-ip-ranges.php --dry-run
 - `update-ip-ranges.php` is the canonical scheduled-refresh script. Use it via cron (`0 */6 * * *`) when you have scheduled-job support.
 
 Both scripts populate the same cache key (`bb:ip_ranges:merged`) with the same data shape. They are functionally equivalent — pick one based on your deployment.
+
 ---
 
 This reference gives admins **exactly what they need**: risk level, when to enable, and what breaks if misconfigured.

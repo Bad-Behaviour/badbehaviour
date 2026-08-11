@@ -62,13 +62,30 @@ class BadBehaviour
 	 * @param RegistryInterface|null $registry Optional bot registry override.
 	 *        If null, loads from config/bb_registry.php (or falls back to
 	 *        the configured preset's registry).
+	 * @param CacheInterface|null $cache Optional cache backend override.
+	 *        If null, uses $config->cache; if that's also null, falls back
+	 *        to $adapter if it implements CacheInterface.
+	 *        Exposed primarily for testing — production code should set
+	 *        the cache via Configuration::from_array()'s adapter param
+	 *        (adapters that need cache typically implement CacheInterface
+	 *        themselves, so the fallback chain usually works without
+	 *        explicit injection).
 	 */
-	public function __construct(Configuration $config, ?RegistryInterface $registry = null)
-	{
+	public function __construct(
+		Configuration $config,
+		?RegistryInterface $registry = null,
+		?CacheInterface $cache = null
+	) {
 		$this->config = $config;
 		$this->adapter = $config->adapter ?? throw new \InvalidArgumentException('Adapter is required');
 		$this->logger = $config->logger;
-		$this->cache = $config->cache;
+		// Cache resolution priority:
+		//   1. explicit constructor argument (testing/manual override)
+		//   2. $config->cache (production setting via Configuration)
+		//   3. $adapter if it implements CacheInterface (adapter-as-cache)
+		$this->cache = $cache ?? $config->cache ?? (
+			$this->adapter instanceof CacheInterface ? $this->adapter : null
+		);
 		$this->geoip = $config->geoip;
 
 		// === Registry: explicit injection > config file > preset default ===
@@ -185,6 +202,219 @@ class BadBehaviour
 		return $clone;
 	}
 
+	// ====================================================================
+	// ON-DEMAND IP REFRESH API
+	// ====================================================================
+	//
+	// Exposed for:
+	//   - Integration tests that assert refresh behavior end-to-end
+	//   - Hosts that want manual control over refresh timing
+	//   - Admin tooling (e.g., "refresh now" button in admin UI)
+	//
+	// All methods are safe to call regardless of whether the feature is
+	// enabled in config — they return null/false when disabled.
+
+	/**
+	 * Evaluate whether the on-demand refresher would schedule a background
+	 * refresh on the next detection call.
+	 *
+	 * Runs the four-gate check (probability × cooldown × staleness × mutex)
+	 * WITHOUT acquiring the lock or triggering any side effects. Safe to
+	 * call from anywhere.
+	 *
+	 * Returns null when on-demand refresh is disabled in config
+	 * (no refresher constructed = no decision possible).
+	 *
+	 * @return \BadBehaviour\Feeds\RefreshDecision|null
+	 */
+	public function peek_refresh_decision(): ?\BadBehaviour\Feeds\RefreshDecision
+	{
+		try {
+			$refresher = $this->build_refresher();
+			if ($refresher === null) {
+				return null;
+			}
+			return $refresher->maybe_refresh();
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter,
+				'peek_refresh_decision failed', [
+					'error' => $e->getMessage(),
+				], 'peek_refresh_decision_failure');
+			return null;
+		}
+	}
+
+	/**
+	 * Check if the on-demand refresher has been constructed and is usable.
+	 *
+	 * True when:
+	 *   - on_demand_ip_refresh_enabled = true in config
+	 *   - Cache backend is available (either $config->cache or adapter
+	 *     implements CacheInterface)
+	 *
+	 * @return bool
+	 */
+	public function is_on_demand_refresh_enabled(): bool
+	{
+		return $this->config->on_demand_ip_refresh_enabled
+		&& $this->resolve_cache() !== null;
+	}
+
+	/**
+	 * Force an immediate synchronous refresh.
+	 *
+	 * Bypasses all gates (probability, cooldown, staleness, mutex) and
+	 * runs the refresh NOW, returning the result. Useful for:
+	 *   - Admin "refresh now" buttons
+	 *   - Cron replacement scripts (manual trigger from admin UI)
+	 *   - Tests that need to assert refresh behavior
+	 *
+	 * Returns null when refresh is not configured. Returns the
+	 * RefreshResult on success/partial/failure.
+	 *
+	 * NOTE: This does NOT take the mutex. If another worker is refreshing
+	 * concurrently, you'll both write to the cache (last writer wins).
+	 * Acceptable for manual/admin triggers; not for hot-path use.
+	 *
+	 * @return \BadBehaviour\Feeds\RefreshResult|null
+	 */
+	public function force_refresh_now(): ?\BadBehaviour\Feeds\RefreshResult
+	{
+		try {
+			$refresher = $this->build_refresher();
+			if ($refresher === null) {
+				return null;
+			}
+			return $refresher->do_refresh();
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter,
+				'force_refresh_now failed', [
+					'error' => $e->getMessage(),
+					'exception_class' => get_class($e),
+				], 'force_refresh_now_failure');
+			return null;
+		}
+	}
+
+	/**
+	 * Register a shutdown function that runs the refresh IF the gates
+	 * pass. Mirrors the production wiring — call this from your bootstrap
+	 * or middleware to opt into automatic refresh.
+	 *
+	 * Returns true if a shutdown function was registered, false if:
+	 *   - on-demand refresh is disabled
+	 *   - no cache backend available
+	 *   - refresher construction failed
+	 *
+	 * Tests use this to verify the wiring without actually waiting for
+	 * shutdown.
+	 */
+	public function register_shutdown_refresh(): bool
+	{
+		$refresher = $this->build_refresher();
+		if ($refresher === null) {
+			return false;
+		}
+
+		register_shutdown_function(static function () use ($refresher): void {
+			// Re-evaluate gates at shutdown time (cache state may have
+			// changed since register_shutdown_refresh() was called).
+			$decision = $refresher->maybe_refresh();
+			if ($decision->should_schedule) {
+				$refresher->do_refresh();
+			}
+		});
+
+			return true;
+	}
+
+	/**
+	 * Get the result of the most recent force_refresh_now() or shutdown
+	 * refresh. Null if no refresh has completed on this instance.
+	 *
+	 * Used by tests and admin dashboards to inspect refresh metrics.
+	 */
+	public function get_last_refresh_result(): ?\BadBehaviour\Feeds\RefreshResult
+	{
+		$refresher = $this->build_refresher();
+		if ($refresher === null) {
+			return null;
+		}
+		return $refresher->get_last_result();
+	}
+
+	// === Internal helpers (package-private) ===
+
+	/**
+	 * Build an OnDemandRefresher from current config + adapter.
+	 *
+	 * Returns null when:
+	 *   - on_demand_ip_refresh_enabled = false
+	 *   - no cache backend is available
+	 *
+	 * Cached per-instance so multiple calls don't rebuild.
+	 */
+	private ?\BadBehaviour\Feeds\OnDemandRefresher $refresher_instance = null;
+
+	private function build_refresher(): ?\BadBehaviour\Feeds\OnDemandRefresher
+	{
+		if (!$this->config->on_demand_ip_refresh_enabled) {
+			return null;
+		}
+		if ($this->refresher_instance !== null) {
+			return $this->refresher_instance;
+		}
+
+		try {
+			$cache = $this->resolve_cache();
+			if ($cache === null) {
+				return null;
+			}
+
+			$registry = new \BadBehaviour\Feeds\FeedRegistry($cache);
+			$cloud = new \BadBehaviour\Feeds\CloudIpRangeProvider($cache);
+
+			$this->refresher_instance = new \BadBehaviour\Feeds\OnDemandRefresher(
+				cache: $cache,
+				registry: $registry,
+				cloud: $cloud,
+				options: [
+					'probability_denominator' => $this->config->on_demand_ip_refresh_probability_denominator,
+					'min_age_seconds'         => $this->config->on_demand_ip_refresh_min_age_seconds,
+					'lock_ttl'                => $this->config->on_demand_ip_refresh_lock_ttl,
+					'cache_ttl'               => $this->config->on_demand_ip_refresh_cache_ttl,
+					'feed_timeout_seconds'    => $this->config->on_demand_ip_refresh_feed_timeout_seconds,
+					'bot_ids'                 => $this->config->on_demand_ip_refresh_bot_ids ?: null,
+					'cloud_providers'         => $this->config->on_demand_ip_refresh_cloud_providers ?: null,
+				],
+				);
+			return $this->refresher_instance;
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter,
+				'OnDemandRefresher construction failed', [
+					'error' => $e->getMessage(),
+				], 'on_demand_refresher_build_failure');
+			return null;
+		}
+	}
+
+	/**
+	 * Resolve the cache backend from config or adapter.
+	 *
+	 * Priority: $config->cache (explicit injection) > adapter implementing
+	 * CacheInterface (fallback for adapters like GenericAdapter, WackoWiki).
+	 */
+	private function resolve_cache(): ?\BadBehaviour\Core\Interfaces\CacheInterface
+	{
+		if ($this->config->cache instanceof \BadBehaviour\Core\Interfaces\CacheInterface) {
+			return $this->config->cache;
+		}
+		if ($this->adapter instanceof \BadBehaviour\Core\Interfaces\CacheInterface) {
+			return $this->adapter;
+		}
+		return null;
+	}
+
 	/**
 	 * Get the currently active registry.
 	 */
@@ -268,6 +498,7 @@ class BadBehaviour
 	 *     preset: string,
 	 *     logging_enabled: bool,
 	 *     detectors_active: array<string, bool>,
+	 *     on_demand_refresh: array<string, mixed>,
 	 *     config_loaded: bool,
 	 *     hint: ?string
 	 * }
@@ -280,19 +511,26 @@ class BadBehaviour
 		$strictness = $this->config->get_strictness();
 
 		$detectors = [
-			'blacklist'           => true, // always-on (except in safe-mode)
-			'bot'                 => true, // always-on (except in safe-mode)
-			'dns_verify'          => $this->config->dns_verification_enabled,
-			'dyn_ranges'          => $this->config->dynamic_ip_ranges_enabled,
-			'on_demand_refresh'   => $this->refresh_checker !== null,
-			'rate_limit'          => $this->config->rate_limit_enabled,
-			'dnsbl'               => $this->config->dnsbl_enabled,
-			'behavioral'          => $this->config->enable_behavioral_analysis,
-			'fingerprint'         => $this->config->enable_fingerprinting,
-			'client_hints'        => $this->config->enable_client_hints_validation,
-			'agentic'             => $this->config->enable_agentic_detection,
-			'head'                => $this->config->enable_head_request_detection,
-			'asset'               => $this->config->enable_asset_scraping_detection,
+			'blacklist'    => true, // always-on (except in safe-mode)
+			'bot'          => true, // always-on (except in safe-mode)
+			'dns_verify'   => $this->config->dns_verification_enabled,
+			'dyn_ranges'   => $this->config->dynamic_ip_ranges_enabled,
+			'rate_limit'   => $this->config->rate_limit_enabled,
+			'dnsbl'        => $this->config->dnsbl_enabled,
+			'behavioral'   => $this->config->enable_behavioral_analysis,
+			'fingerprint'  => $this->config->enable_fingerprinting,
+			'client_hints' => $this->config->enable_client_hints_validation,
+			'agentic'      => $this->config->enable_agentic_detection,
+			'head'         => $this->config->enable_head_request_detection,
+			'asset'        => $this->config->enable_asset_scraping_detection,
+		];
+
+		$on_demand_refresh = [
+			'enabled'                 => $this->config->on_demand_ip_refresh_enabled,
+			'usable'                  => $this->is_on_demand_refresh_enabled(),
+			'probability_denominator' => $this->config->on_demand_ip_refresh_probability_denominator,
+			'min_age_seconds'         => $this->config->on_demand_ip_refresh_min_age_seconds,
+			'cache_ttl'               => $this->config->on_demand_ip_refresh_cache_ttl,
 		];
 
 		$config_loaded = false;
@@ -329,6 +567,7 @@ class BadBehaviour
 			'config_loaded'          => $config_loaded,
 			'logging_enabled'        => $this->config->logging,
 			'detectors_active'       => $detectors,
+			'on_demand_refresh'      => $on_demand_refresh,
 			'hint'                   => $hint,
 		];
 	}

@@ -10,6 +10,7 @@ use BadBehaviour\Bot\BotDefinition;
 use BadBehaviour\Bot\Registry\DefaultRegistry;
 use BadBehaviour\Bot\RegistryInterface;
 use BadBehaviour\Util\IpUtil;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -283,9 +284,8 @@ final class DefaultRegistryTest extends TestCase
             'DefaultRegistry must ship cloud_infrastructure bots');
     }
 
-    /**
-     * @dataProvider expectedCloudBotProvider
-     */
+    
+    #[DataProvider('expectedCloudBotProvider')]
     public function test_expected_cloud_bot_is_present(string $bot_id): void
     {
         $registry = $this->get_default();
@@ -523,9 +523,8 @@ final class DefaultRegistryTest extends TestCase
     // 12. Spot-check: well-known bots
     // ============================================================
 
-    /**
-     * @dataProvider expectedBotProvider
-     */
+    
+    #[DataProvider('expectedBotProvider')]
     public function test_expected_bot_is_present(string $bot_id, string $expected_category): void
     {
         $registry = $this->get_default();

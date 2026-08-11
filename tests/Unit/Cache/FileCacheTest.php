@@ -5,11 +5,10 @@ declare(strict_types=1);
 namespace BadBehaviour\Tests\Unit\Cache;
 
 use BadBehaviour\Cache\FileCache;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
-/**
- * @covers \BadBehaviour\Cache\FileCache
- */
+#[CoversClass(\BadBehaviour\Cache\FileCache::class)]
 final class FileCacheTest extends TestCase
 {
     private string $cacheDir;

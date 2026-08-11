@@ -8,6 +8,7 @@ use BadBehaviour\Bot\BotCategory;
 use BadBehaviour\Bot\Registry\DefaultRegistry;
 use BadBehaviour\Bot\Registry\EmptyRegistry;
 use BadBehaviour\Bot\Registry\Presets;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -465,9 +466,8 @@ final class PresetsTest extends TestCase
 	//     every preset that includes ANY bots (except human-only/custom).
 	// ============================================================
 
-	/**
-	 * @dataProvider cloudSafetyProvider
-	 */
+	
+    #[DataProvider('cloudSafetyProvider')]
 	public function test_preset_includes_cloud_infrastructure_when_it_has_any_bots(string $preset): void
 	{
 		$registry = Presets::load($preset);

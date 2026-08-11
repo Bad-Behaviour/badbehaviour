@@ -8,6 +8,7 @@ use BadBehaviour\Core\Interfaces\CacheInterface;
 use BadBehaviour\Feeds\CloudIpRangeProvider;
 use BadBehaviour\Feeds\IpFeedInterface;
 use BadBehaviour\Util\ErrorReporter;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -329,9 +330,8 @@ final class CloudIpRangeProviderTest extends TestCase
 	// 8. Provider-specific contract: each provider has a URL
 	// ============================================================
 
-	/**
-	 * @dataProvider everyProviderProvider
-	 */
+	
+    #[DataProvider('everyProviderProvider')]
 	public function test_each_documented_provider_has_a_feed_url(string $provider): void
 	{
 		$this->assertArrayHasKey(

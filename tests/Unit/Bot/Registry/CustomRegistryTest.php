@@ -8,6 +8,7 @@ use BadBehaviour\Bot\BotAction;
 use BadBehaviour\Bot\BotCategory;
 use BadBehaviour\Bot\BotDefinition;
 use BadBehaviour\Bot\Registry\CustomRegistry;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -219,9 +220,8 @@ final class CustomRegistryTest extends TestCase
     // 3. user_agent_patterns granularity
     // ============================================================
 
-    /**
-     * @dataProvider tooShortPatternProvider
-     */
+
+    #[DataProvider('tooShortPatternProvider')]
     public function test_user_agent_patterns_shorter_than_three_chars_is_rejected(string $pattern): void
     {
         $registry = new CustomRegistry([
@@ -286,9 +286,8 @@ final class CustomRegistryTest extends TestCase
     // 4. Category enum validation
     // ============================================================
 
-    /**
-     * @dataProvider invalidCategoryProvider
-     */
+
+    #[DataProvider('invalidCategoryProvider')]
     public function test_invalid_category_is_rejected(string $category): void
     {
         $registry = new CustomRegistry([
@@ -331,9 +330,8 @@ final class CustomRegistryTest extends TestCase
     // 5. default_action enum validation
     // ============================================================
 
-    /**
-     * @dataProvider invalidActionProvider
-     */
+
+    #[DataProvider('invalidActionProvider')]
     public function test_invalid_default_action_is_rejected(string $action): void
     {
         $registry = new CustomRegistry([
@@ -404,9 +402,8 @@ final class CustomRegistryTest extends TestCase
     /**
      * The CIDR validator regex is `^[\d\.:a-fA-F]+/\d+$`. These are the
      * CIDR strings the regex ACTUALLY rejects.
-     *
-     * @dataProvider invalidCidrProvider
      */
+    #[DataProvider('invalidCidrProvider')]
     public function test_invalid_cidrs_are_rejected(string $cidr): void
     {
         $registry = new CustomRegistry([

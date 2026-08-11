@@ -16,6 +16,7 @@ use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
 use BadBehaviour\Detection\BotDetector;
 use BadBehaviour\Util\RequestPackage;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -190,7 +191,7 @@ final class BotDetectorCategoryOverrideTest extends TestCase
 	// 2. USER CATEGORY OVERRIDES
 	// ============================================================
 
-	/** @dataProvider overrideListProvider */
+	#[DataProvider('overrideListProvider')]
 	public function test_category_override_wins_over_default_logic(
 		string $list_key,
 		ResultCode $expected_code,
@@ -279,9 +280,8 @@ final class BotDetectorCategoryOverrideTest extends TestCase
 	// 3. DEFAULT CATEGORY-SPECIFIC LOGIC
 	// ============================================================
 
-	/**
-	 * @dataProvider alwaysAllowedCategoryProvider
-	 */
+
+    #[DataProvider('alwaysAllowedCategoryProvider')]
 	public function test_revenue_categories_allow_verified_bots(BotCategory $category, string $bot_id): void
 	{
 		$registry = new InMemoryRegistry([

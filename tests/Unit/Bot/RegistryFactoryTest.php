@@ -15,6 +15,7 @@ use BadBehaviour\Bot\RegistryFactory;
 use BadBehaviour\Bot\RegistryInterface;
 use BadBehaviour\Core\Interfaces\AdapterInterface;
 use BadBehaviour\Util\ErrorReporter;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -267,9 +268,8 @@ final class RegistryFactoryTest extends TestCase
     /**
      * Every preset that produces a non-empty registry MUST include all
      * cloud_infrastructure bots.
-     *
-     * @dataProvider presetCloudSafetyProvider
      */
+    #[DataProvider('presetCloudSafetyProvider')]
     public function test_preset_includes_cloud_infrastructure_when_bots_present(string $preset): void
     {
         $registry = RegistryFactory::from_array(['preset' => $preset]);

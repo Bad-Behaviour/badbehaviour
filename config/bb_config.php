@@ -149,6 +149,21 @@ return [
 		'negative_ttl'              => 86400,   // 1 day
 	],
 
+	// ===== ON-DEMAND IP RANGE REFRESH =====
+	// Replaces `bin/update-ip-ranges.php` cron for deployments without
+	// scheduled-job support. See bb_config.example.php for full docs.
+	// Off by default — operators opt in by flipping `enabled` to true.
+	'on_demand_ip_refresh' => [
+		'enabled'                 => false,
+		'probability_denominator' => 1000,
+		'min_age_seconds'         => 21600,
+		'lock_ttl'                => 600,
+		'cache_ttl'               => 604800,
+		'feed_timeout_seconds'    => 5,
+		'bot_ids'                 => [],
+		'cloud_providers'         => [],
+	],
+
 	// ===== DYNAMIC IP RANGES =====
 	// Pull fresh IP ranges from cloud provider feeds to avoid hardcoded
 	// CIDR drift. Requires cron: php bin/update-ip-ranges.php every 6-24h.

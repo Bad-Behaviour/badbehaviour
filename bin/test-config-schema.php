@@ -628,7 +628,19 @@ $array_params = [];
 
 foreach ($constructor->getParameters() as $param) {
 	$type = $param->getType();
-	if ($type && $type->getName() === 'array') {
+	if ($type === null) continue;
+
+	// PHP 8.0+ — ReflectionUnionType doesn't have getName()
+	// Use __toString() as a portable fallback
+	if (method_exists($type, 'getName')) {
+		$type_name = $type->getName();
+	} else {
+		$type_name = (string)$type;
+	}
+
+	// For union types like "int|float", check if "array" appears
+	// (safe since "array" isn't a substring of any other type name)
+	if ($type_name === 'array' || $type_name === '?array') {
 		$array_params[] = $param->getName();
 	}
 }

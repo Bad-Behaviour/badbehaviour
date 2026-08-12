@@ -1,6 +1,12 @@
 <?php
 /**
  * Bad Behaviour 3.0 - MediaWiki Extension
+ *
+ * This shim exists because MediaWiki requires the
+ * $wgExtensionFunctions / $wgHooks registration pattern — there is no
+ * "inline this into LocalSettings.php" equivalent. The 3.0 entry point
+ * is just `with_adapter() + run()`; everything else here is MediaWiki
+ * boilerplate (credits, debug hooks, the global timer marker).
  */
 
 if (!defined('MEDIAWIKI')) die();
@@ -9,57 +15,69 @@ if (!defined('BB_CWD')) define('BB_CWD', __DIR__);
 require_once BB_CWD . '/vendor/autoload.php';
 
 use BadBehaviour\Adapter\MediaWikiAdapter;
-use BadBehaviour\Configuration;
+use BadBehaviour\Core\BadBehaviour;
 
-global $wgDBprefix, $wgEmergencyContact, $wgScript, $wgBadBehaviourTimer, $bb_timer_total;
+global $wgDBprefix, $wgEmergencyContact, $wgScript, $wgBadBehaviourTimer, $wgDB;
 
 $wgBadBehaviourTimer = false;
 
 $wgExtensionCredits['other'][] = [
-    'name' => 'Bad Behaviour',
-    'version' => '3.0.0',
-    'author' => 'Michael Hampton & Contributors',
-    'description' => 'Modern bot detection and blocking',
-    'url' => 'https://github.com/Bad-Behaviour/badbehaviour'
+	'name'        => 'Bad Behaviour',
+	'version'     => '3.0.0',
+	'author'      => 'Michael Hampton & Contributors',
+	'description' => 'Modern bot detection and blocking',
+	'url'         => 'https://github.com/Bad-Behaviour/badbehaviour',
 ];
 
-$wgExtensionFunctions[] = function () use ($wgDBprefix, $wgEmergencyContact, $wgScript) {
-    global $bb_timer_total, $wgDB, $wgOut, $wgBadBehaviourSettings;
+$wgExtensionFunctions[] = static function (): void {
+	global $wgDB, $wgDBprefix, $wgEmergencyContact, $wgScript, $wgOut;
+	global $wgBadBehaviourTimer;
 
-    $start = microtime(true);
+	if (php_sapi_name() === 'cli') {
+		return;
+	}
 
-    if (php_sapi_name() !== 'cli') {
-        $db = $wgDB ?? wfGetDB(DB_REPLICA);
-        $adapter = new MediaWikiAdapter($db, $wgDBprefix, $wgEmergencyContact, $wgScript);
+	$bb_start = microtime(true);
 
-        $raw = $wgBadBehaviourSettings ?? [];
-        $config = Configuration::from_array($raw, $adapter);
+	try {
+		// === Adapter does config loading (config/bb_config.php)
+		//     AND DB connection, table prefix, abuse email, script path
+		//     in one constructor. No manual Settings() wiring. ===
+		$adapter = new MediaWikiAdapter(
+			$wgDB,
+			$wgDBprefix,
+			$wgEmergencyContact,
+			$wgScript,
+			);
 
-        $bb = new \BadBehaviour\Core\BadBehaviour($config);
-        $result = $bb->run();
+		$bb = BadBehaviour::with_adapter($adapter);
+		$result = $bb->run();
 
-        if ($result->is_actionable()) {
-            if ($result->requires_challenge() && $config->challenge_enabled) {
-                $challenge = $bb->create_challenge();
-                if (!$challenge->verify($result->package)) {
-                    $output = $challenge->render($wgScript);
-                    wfDebugLog('badbehaviour', 'Challenge issued: ' . $result->code->value);
-                    $wgOut->addHTML($output);
-                    $wgOut->disable();
-                    return;
-                }
-            }
-            $bb->handle_result($result);
-        }
-    }
+		if ($result->is_actionable()) {
+			$bb->handle_result($result);
+			// handle_result() exits; execution does not reach here.
+		}
+	} catch (\Throwable $e) {
+		// Never let BadBehaviour crash MediaWiki. Log and continue —
+		// the user gets served normally (defense in depth; BadBehaviour
+		// itself already swallows exceptions internally, but a mediawiki-
+		// specific wrapper here makes the integration contract explicit).
+		wfDebugLog('badbehaviour', 'BadBehaviour threw: ' . $e->getMessage());
+	}
 
-    $bb_timer_total = microtime(true) - $start;
+	if ($wgBadBehaviourTimer) {
+		$GLOBALS['bb_timer_total'] = microtime(true) - $bb_start;
+	}
 };
 
-$wgHooks['BeforePageDisplay'][] = function (&$out, &$skin) {
-    global $bb_timer_total, $wgBadBehaviourTimer;
-    if ($wgBadBehaviourTimer && $bb_timer_total) {
-        $out->addHTML("<!-- Bad Behaviour 3.0 run time: " . number_format(1000 * $bb_timer_total, 3) . " ms -->");
-    }
-    return true;
+$wgHooks['BeforePageDisplay'][] = static function (&$out, &$skin): bool {
+	global $bb_timer_total, $wgBadBehaviourTimer;
+	if ($wgBadBehaviourTimer && $bb_timer_total) {
+		$out->addHTML(
+			'<!-- Bad Behaviour 3.0 run time: '
+			. number_format(1000 * $bb_timer_total, 3)
+			. ' ms -->'
+			);
+	}
+	return true;
 };

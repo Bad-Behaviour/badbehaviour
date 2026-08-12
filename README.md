@@ -13,6 +13,7 @@ Trusted by thousands of sites—from personal blogs to enterprise platforms—to
 | **Cloud Safety** | Hard-allows Cloudflare/AWS/GCP/Azure/Fastly LB health probes — blocking these = origin marked unhealthy = site-wide outage. |
 | **Zero-Config Defaults** | Works out-of-the-box on most PHP platforms in minutes. |
 | **Custom Bot Registries** | Pluggable, composable bot set: add internal bots, swap registries per tenant, or filter the ~100 shipped bots without forking the library. |
+| **On-Demand IP Refresh** | Keeps bot IP ranges current without cron jobs — runs opportunistically after each response is sent. |
 
 ### How It's Different
 Unlike WAFs or content filters that inspect *payloads*, Bad Behaviour analyzes the **delivery mechanism**:
@@ -21,15 +22,16 @@ Unlike WAFs or content filters that inspect *payloads*, Bad Behaviour analyzes t
 *   **Behavioral & Agentic Analysis** (Rate anomalies, AI-agent patterns)
 *   **Request-Method Analysis** (HEAD flooding for site mapping)
 *   **Asset-Scraping Detection** (AI training crawlers that skip HTML loads)
-*   **Attacker Software Identification** — **100+ verified bots** across 11 categories, dynamic IP feeds, **customizable registries**
+*   **Attacker Software Identification** — **100+ verified bots** across 12 categories, dynamic IP feeds, **customizable registries**
 *   **Cloud-LB Safety Net** — pre-UA-match fast path for AWS/Cloudflare/GCP/Azure/Fastly health probes
+*   **On-Demand IP Range Refresh** — keeps Google/OpenAI/Anthropic/Apple/Cloudflare IP feeds fresh without cron
 
 This allows it to block **zero-day exploits and novel scrapers** that signature-based tools miss.
 
 ### Ecosystem & Compatibility
 *   **Framework Agnostic:** Works with virtually any PHP-based software (WordPress, Drupal, MediaWiki, custom CMS, forums).
 *   **Defense in Depth:** Designed to run **alongside** a WAF, rate limiter, or spam service—increasing their efficiency by filtering noise upstream.
-*   **Platform Integrations:** Ready-to-use adapters for [Generic PHP](#option-1-modern-composer-usage-recommended), [MediaWiki](#for-mediawiki-eg-localsettingsphp), [WackoWiki](#for-wackowiki), and legacy drop-in files.
+*   **Platform Integrations:** Ready-to-use adapters for Generic PHP, MediaWiki, and WackoWiki (see [Installation](#installation--usage)).
 
 ### Quick Start
 ```bash
@@ -50,7 +52,7 @@ php -r "require 'vendor/autoload.php'; \BadBehaviour\Bootstrap::run();"
 
 ## What's New in 3.0 (Complete Modern Rewrite)
 
-Version 3.0 is a complete rewrite of Bad Behaviour, modernizing the 10+ year old codebase from procedural PHP to a clean, typed PHP 8.2+ architecture. It bundles the full bot-registry expansion, four new bot categories, the cloud-infrastructure safety net, and a fully pluggable registry system.
+Version 3.0 is a complete rewrite of Bad Behaviour, modernizing the 10+ year old codebase from procedural PHP to a clean, typed PHP 8.2+ architecture. It bundles the full bot-registry expansion, four new bot categories, the cloud-infrastructure safety net, the on-demand IP refresh system, and a fully pluggable registry.
 
 ### Core changes
 
@@ -59,8 +61,9 @@ Version 3.0 is a complete rewrite of Bad Behaviour, modernizing the 10+ year old
 * **Structured JSON logging** — SIEM-ready logging with semantic result codes
 * **IPv6 Support** — full CIDR matching with binary comparison (no GMP required)
 * **Challenge System** — builtin proof-of-work, hCaptcha, reCAPTCHA v3, Cloudflare Turnstile
-* **Custom Bot Registries** — `RegistryInterface` + eight implementations + factory + presets + per-tenant swap
-* **Complete Bot Registry** — **100+ bots** across **11 categories** (Search, AI, Social, SEO, Archive, Monitoring, Feed, Shopping, Cloud, Security, Malicious)
+* **Custom Bot Registries** — `RegistryInterface` + seven implementations + factory + presets + per-tenant swap
+* **Complete Bot Registry** — **100+ bots** across **12 categories** (Search, AI, Social, SEO, Archive, Monitoring, Feed, Shopping, Cloud, Security, Malicious, Residential Proxy)
+* **On-Demand IP Range Refresh** — keeps bot IP feeds fresh without cron (see [OnDemandRefresher](#on-demand-ip-range-refresher))
 * **Legacy-Compatible Defaults** — **zero false positives on AJAX, JSON APIs, file uploads, curl/wget** — works like 2.x out of the box
 
 ### Custom registries (new pluggable system)
@@ -101,7 +104,7 @@ See [**Custom Bot Registries**](#custom-bot-registries) below for the full schem
 | Category | New additions |
 |---|---|
 | **search_engines** | `coccoc` (Vietnam #1), `mailru`/`Rambler` (Russia), `petal` (Huawei — promoted from SEO), `zum` (Korea), `stract`, `marginalia` (indie), `centrum`/`sklik` (Czech) |
-| **ai_crawlers** | `amazon_ai` (Amazonbot), `semantic_scholar` (Allen Institute), `diffbot` (knowledge graph), `brightdata` (**default `BLOCK`** — residential proxy network) |
+| **ai_crawlers** | `amazon_ai` (Amazonbot), `semantic_scholar` (Allen Institute), `diffbot` (knowledge graph) |
 | **social_crawlers** | `kakao` (KR), `line` (JP/TW/TH), `wechat` (CN), `notion` (link previews) |
 | **seo_crawlers** | `similarweb`, `seobility`, `botify`, `siteimprove`, `lumar`, `oncrawl`, `screaming_frog`, `contentking` |
 | **archive_crawlers** | `UKWA` (British Library), `BnF` (Gallica, France), `DNB` (Germany), `KB-NL` (Delpher, Netherlands) — all `allow` (legal-deposit archives) |
@@ -109,6 +112,7 @@ See [**Custom Bot Registries**](#custom-bot-registries) below for the full schem
 | **shopping_crawlers** | `google_shopping`, `bing_shopping`, `pinterest_shopping`, `facebook_catalog`, `shopify` — all `ALLOW` |
 | **cloud_infrastructure** | `cloudflare_health`, `aws_elb_health`, `google_cloud_health`, `azure_health`, `fastly_health` — all **HARD `ALLOW`** |
 | **security_scanners** | `qualys`, `detectify`, `rapid7`, `shodan`, `censys` — all `LOG_ONLY` |
+| **residential_proxy** | `brightdata` (Bright Data / Luminati) — **`BLOCK` by default** |
 
 ### UA matching improvements
 
@@ -123,7 +127,6 @@ See [**Custom Bot Registries**](#custom-bot-registries) below for the full schem
 *   **Fast path**: `is_cloud_infrastructure_ip()` runs **BEFORE** UA matching. Any IP in known cloud LB ranges short-circuits to `ALLOW` regardless of UA. **Reads the injected registry's `cloud_infrastructure()` method** so swapping the registry affects this check too (e.g., `human-only` preset removes the safety net — see warning below).
 *   `determine_action()` gains hard-blocks for explicitly-blocked categories, hard-allows for `cloud_infrastructure`, and per-category defaults for feed/shopping/monitoring/archive (verified-only).
 *   Result cache keyed by config fingerprint **and `spl_object_hash($registry)`** so swapping the registry cleanly invalidates cached results.
-*   DNS verification scheduled via `register_shutdown_function` so it doesn't add to request latency.
 
 > ⚠️ **Cloud-LB safety depends on your registry**. The `full` preset (shipped default) includes `cloudflare_health`, `aws_elb_health`, `google_cloud_health`, `azure_health`, `fastly_health`. If you build a `custom` registry or pick a preset that drops these without re-adding them, **the cloud-LB fast path becomes empty and your CDN probes will be evaluated against UA/behavior rules**. The shipped `config/bb_registry.php` force-includes `cloud_infrastructure` via `include_categories` as a safety net — keep that if you use any non-`full` preset.
 
@@ -132,7 +135,7 @@ See [**Custom Bot Registries**](#custom-bot-registries) below for the full schem
 | Gap | Solution |
 |-----|----------|
 | Spoofed UA + missing Client Hints | `ClientHintsDetector` — cross-validates `User-Agent` against `Sec-CH-UA`, `Sec-CH-UA-Platform`, `Sec-CH-UA-Mobile`, full version list |
-| Stale IP ranges | `IpFeedInterface` + `FeedRegistry` — pulls fresh ranges from Google, Bing, OpenAI, Anthropic, Apple, Perplexity, DuckDuckGo, Amazon, Cloudflare (cron-driven, **experimental**) |
+| Stale IP ranges | `IpFeedInterface` + `FeedRegistry` + `CloudIpRangeProvider` — pulls fresh ranges from Google, Bing, OpenAI, Anthropic, Apple, Perplexity, DuckDuckGo, Amazon, Cloudflare (cron-driven **or** on-demand) |
 | AI agents mimicking humans | `AgenticBehaviorDetector` — detects think-then-fetch bursts, non-linear navigation, precision targeting (no CSS/fonts/tracking) |
 | HEAD flooding + direct asset scraping | `HeadRequestDetector` + `AssetScrapingDetector` — flags site-mapping via HEAD and AI training scrapers hitting `/img1.png, /img2.png, …` without loading the HTML page that references them |
 | **CDN/LB probes blocked by mistake** | `BotDetector::is_cloud_infrastructure_ip()` — IP-range fast path BEFORE UA match; **never** blocks Cloudflare/AWS/GCP/Azure/Fastly probes (when registry contains the cloud bots) |
@@ -144,8 +147,9 @@ See [**Custom Bot Registries**](#custom-bot-registries) below for the full schem
 *   **`Bot\RegistryFactory`** — three entry points: `from_file()` (loads `config/bb_registry.php`), `from_array()` (build from config), `default()` (singleton `DefaultRegistry`).
 *   **`Bot\Registry\Presets`** — eight named presets (`full`, `minimal`, `verified-only`, `no-ai`, `no-seo`, `eu-only`, `human-only`, `custom`).
 *   **`Bot\RegistryTokens`** — single source of truth for `NOISE` tokens and `MIN_TOKEN_LENGTH` constants.
-*   **`Feeds\CloudIpRangeProvider`** — pulls fresh CIDRs from AWS/Cloudflare/Fastly/GCP official JSON feeds to prevent hardcoded CIDR drift. Caches via `CacheInterface` with 24h TTL; falls back to stale cache on fetch failure.
-*   **`bin/update-ip-ranges.php`** extended to refresh both bot-specific feeds and cloud-provider feeds, tagged by bot ID heuristically.
+*   **`Feeds\OnDemandRefresher`** — opportunistic IP range refresh that runs after the HTTP response is sent. Replaces `bin/update-ip-ranges.php` cron for shared hosting / PaaS deployments without scheduled-job support. See [On-Demand IP Range Refresher](#on-demand-ip-range-refresher) below.
+*   **`Feeds\CloudIpRangeProvider`** — pulls fresh CIDRs from AWS/Cloudflare/Fastly/GCP official JSON feeds. Caches via `CacheInterface` with 24h TTL; falls back to stale cache on fetch failure.
+*   **`bin/update-ip-ranges.php`** — CLI cron-driven refresh (alternative to on-demand). Extends to cover both bot-specific and cloud-provider feeds.
 *   **`BotCategory::label()`** and **`BotCategory::default_action_hint()`** helpers for dashboards and logging.
 
 ### AI Crawler Control
@@ -178,8 +182,42 @@ Global, per-minute, POST, and login endpoints with adapter-backed storage.
 - Adapter interface expanded with new required methods
 - Database schema updated with new columns (`bot_category`, `ja3`, `header_order_hash`, `asn`, `country`)
 - Custom adapters must implement new `CacheInterface` methods
+- **Integration shims moved** from repo root to `extensions/` — see [Repository Layout](#repository-layout) below
 
-> **Important**: Unlike typical 3.0 rewrites, **Bad Behaviour 3.0 defaults to legacy 2.x behavior**. Most new detection features (fingerprinting, JSON body inspection, multipart inspection, strict header checks, Client Hints validation, agentic detection) are **disabled by default**. The exceptions — **HEAD request detection**, **asset scraping detection**, and **cloud-infrastructure safety** — are enabled by default because they target clearly malicious patterns or catastrophic failure modes with negligible false-positive risk. Enable the others explicitly via configuration when needed.
+> **Important**: Unlike typical 3.0 rewrites, **Bad Behaviour 3.0 defaults to legacy 2.x behavior**. Most new detection features (fingerprinting, JSON body inspection, multipart inspection, strict header checks, Client Hints validation, agentic detection) are **disabled by default**. The exceptions — **HEAD request detection**, **asset scraping detection**, **on-demand IP refresh** (when enabled), and **cloud-infrastructure safety** — are enabled by default because they target clearly malicious patterns or catastrophic failure modes with negligible false-positive risk. Enable the others explicitly via configuration when needed.
+
+---
+
+## Repository Layout
+
+Integration shims live in `extensions/` (not `src/`) and are **not autoloaded by Composer**. Shims are application glue code, not library code — each host application explicitly opts in.
+
+```
+bad-behaviour/
+├── src/                          ← library code (composer-autoloaded, PSR-4)
+├── tests/                        ← PHPUnit (autoload-dev)
+├── config/                       ← shipped config defaults
+├── bin/                          ← CLI tools (diagnose, install, update-ip-ranges)
+└── extensions/                   ← NOT composer-autoloaded
+    ├── README.md
+    ├── mediawiki/
+    │   ├── bad-behaviour-mediawiki.php
+    │   └── INSTALL.md
+    ├── wackowiki/
+    │   └── INSTALL.md            ← no shim file; just inline instructions
+    └── generic/
+        └── example.php           ← documented copy-paste snippet
+```
+
+**Per-host install:**
+
+| Host | Install procedure | Shim file |
+|------|-------------------|-----------|
+| Generic PHP | Copy `extensions/generic/example.php` into your bootstrap | None |
+| WackoWiki | Inline the snippet from `extensions/wackowiki/INSTALL.md` into `index.php` | None |
+| MediaWiki | Copy `extensions/mediawiki/bad-behaviour-mediawiki.php` into `extensions/BadBehaviour/` | Required (MediaWiki hook contract) |
+
+See each host's `INSTALL.md` for the full procedure.
 
 ---
 
@@ -193,6 +231,7 @@ src/
 ├── Core/
 │   ├── BadBehaviour.php          # Main orchestrator
 │   ├── Result.php / ResultCode.php  # Semantic result objects
+│   ├── EnforcementAction.php     # ENFORCED | MONITORED | ALLOWED
 │   └── Interfaces/
 │       ├── AdapterInterface.php  # Host adapter contract
 │       ├── LoggerInterface.php   # PSR-3 compatible logging
@@ -212,10 +251,11 @@ src/
 │   └── AssetScrapingDetector.php # asset-only sessions + sequential patterns
 ├── Bot/
 │   ├── BotDefinition.php         # Immutable bot record
-│   ├── BotCategory.php           # 11 cases: SEARCH_ENGINE, AI_CRAWLER, SOCIAL_CRAWLER,
+│   ├── BotCategory.php           # 12 cases: SEARCH_ENGINE, AI_CRAWLER, SOCIAL_CRAWLER,
 │   │                             # SEO_CRAWLER, ARCHIVE_CRAWLER, MONITORING, MALICIOUS,
 │   │                             # UNKNOWN, FEED_READER, SHOPPING_CRAWLER,
-│   │                             # CLOUD_INFRASTRUCTURE, SECURITY_SCANNER
+│   │                             # CLOUD_INFRASTRUCTURE, SECURITY_SCANNER,
+│   │                             # RESIDENTIAL_PROXY
 │   ├── BotAction.php             # ALLOW, CHALLENGE, BLOCK, LOG_ONLY
 │   ├── RegistryInterface.php     # Public contract — all registry types implement this
 │   ├── RegistryFactory.php       # from_file() / from_array() / default()
@@ -241,8 +281,12 @@ src/
 │   └── WackoWikiAdapter.php      # WackoWiki integration
 ├── Feeds/                        # Dynamic IP range feeds
 │   ├── IpFeedInterface.php
+│   ├── FeedProviderInterface.php
 │   ├── FeedRegistry.php          # Bot-specific feeds (Google, Bing, OpenAI, etc.)
 │   ├── CloudIpRangeProvider.php  # Cloud infra CIDRs (AWS/Cloudflare/Fastly/GCP)
+│   ├── OnDemandRefresher.php     # Opportunistic IP refresh (replaces cron)
+│   ├── RefreshDecision.php       # Immutable decision from maybe_refresh()
+│   ├── RefreshResult.php         # Immutable result from do_refresh()
 │   ├── CachedFeedDecorator.php
 │   └── Adapters/
 │       ├── AbstractJsonFeed.php
@@ -257,7 +301,15 @@ src/
 │   ├── IpUtil.php                # IPv4/IPv6 CIDR matching
 │   ├── HeaderUtil.php            # Header normalization
 │   ├── UaParser.php              # Browser/OS/device/bot/http_tool parsing
-│   └── RequestPackage.php        # Immutable request DTO with AJAX/form helpers
+│   ├── RequestPackage.php        # Immutable request DTO with AJAX/form helpers
+│   ├── SafeConfigLoader.php      # Tolerant bb_config.php loader
+│   ├── SafeMode.php              # Safe-mode defaults (config missing/invalid)
+│   └── ErrorReporter.php         # Centralized error reporting with one-shot gates
+├── Config/
+│   ├── Schema.php                # Canonical config key → property mapping
+│   └── Diagnostics.php           # Records unknown keys, type coercions
+├── Cache/
+│   └── FileCache.php             # File-backed CacheInterface implementation
 └── Exception/
     ├── BlockedException.php
     ├── ChallengeRequiredException.php
@@ -275,9 +327,10 @@ src/
    composer require badbehaviour/badbehaviour
    ```
 
-2. Instantiate the library:
+2. Instantiate the library for your platform:
 
-**For Generic Applications (Laravel, Symfony, Slim, etc.):**
+#### For Generic Applications (Laravel, Symfony, Slim, etc.)
+
 ```php
 require 'vendor/autoload.php';
 
@@ -303,33 +356,54 @@ $registry = RegistryFactory::from_file();   // loads config/bb_registry.php if p
 $bb = new BadBehaviour($config, $registry);
 ```
 
-**For MediaWiki (e.g. `LocalSettings.php`):**
+A complete reference implementation is in `extensions/generic/example.php` in the package.
+
+#### For WackoWiki
+
+Inline the integration directly in `index.php` (no shim file required). Add this block immediately after `$db = new Settings();`:
+
 ```php
-require "$IP/vendor/autoload.php";
-
-use BadBehaviour\Core\BadBehaviour;
-use BadBehaviour\Adapter\MediaWikiAdapter;
-
-$db = wfGetDB(DB_MASTER);
-$adapter = new MediaWikiAdapter($db, $wgDBprefix, $wgEmergencyContact, $wgScript);
-$bb = new BadBehaviour(Configuration::from_array([], $adapter));
-$bb->run();
-```
-
-**For WackoWiki:**
-```php
-require 'vendor/autoload.php';
-
 use BadBehaviour\Core\BadBehaviour;
 use BadBehaviour\Adapter\WackoWikiAdapter;
 
-$adapter = new WackoWikiAdapter($db);
-$bb = BadBehaviour::withAdapter($adapter);
+$db = new Settings();
 
-$result = $bb->run();
-if ($result->is_actionable()) {
-    $bb->handle_result($result);
+if ($db->ext_bad_behaviour)
+{
+    $adapter = new WackoWikiAdapter($db);
+    $bb = BadBehaviour::withAdapter($adapter);
+
+    $result = $bb->run();
+
+    if ($result->is_actionable())
+    {
+        $bb->handle_result($result);
+    }
 }
+```
+
+See `extensions/wackowiki/INSTALL.md` for the full snippet and configuration instructions.
+
+#### For MediaWiki
+
+MediaWiki requires the `$wgExtensionFunctions` / `$wgHooks` registration pattern, so a shim file is required. See `extensions/mediawiki/INSTALL.md` for the full procedure:
+
+```bash
+cd /path/to/mediawiki
+composer require badbehaviour/badbehaviour
+
+mkdir -p extensions/BadBehaviour
+cp vendor/badbehaviour/badbehaviour/extensions/mediawiki/bad-behaviour-mediawiki.php \
+   extensions/BadBehaviour/
+cp vendor/badbehaviour/badbehaviour/config/bb_config.example.php \
+   extensions/BadBehaviour/bb_config.php
+```
+
+Add to `LocalSettings.php`:
+
+```php
+wfLoadExtension('BadBehaviour');
+require_once "$IP/extensions/BadBehaviour/bad-behaviour-mediawiki.php";
 ```
 
 ### Option 2: Single Entry Point (Any PHP App)
@@ -345,21 +419,11 @@ if (!\BadBehaviour\Bootstrap\check(['strict' => true])) {
 }
 ```
 
-### Option 3: Legacy Drop-In Usage
-
-Existing 2.x integrations continue to work unchanged — the legacy entry points now act as forwarding shims over the new OOP architecture.
-
-1. Upload the `badbehaviour` directory to your project.
-2. Include the legacy bootstrap file as you always have:
-   * MediaWiki: `include( './extensions/Bad-Behaviour/bad-behaviour-mediawiki.php' );`
-   * Generic: `require_once 'bad-behaviour-generic.php';`
-   * WackoWiki: `require_once 'bad-behaviour-wackowiki.php';`
-
 ---
 
 ## Custom Bot Registries
 
-The shipped `DefaultRegistry` covers ~100 verified bots across 11 categories. It's **read-only** and the **default** when no config file is present.
+The shipped `DefaultRegistry` covers ~100 verified bots across 12 categories. It's **read-only** and the **default** when no config file is present.
 
 For customization, drop a `config/bb_registry.php` (shipped with safe defaults — see below) or build a registry programmatically.
 
@@ -441,7 +505,7 @@ return [
     'host_patterns'       => ['bot.example.com'],         // optional
     'ip_ranges'           => ['10.0.0.0/8'],              // optional, CIDRs
     'verify_dns'          => true,                        // optional
-    'dns_suffixes' 		=> ['example.com'],              // optional, required if verify_dns=true
+    'dns_suffixes'        => ['example.com'],             // optional, required if verify_dns=true
     'robots_txt_token'    => 'MyBot',                     // optional
     'default_action'      => 'allow',                     // optional: allow|challenge|block|log_only
     'description'         => 'What this bot does',        // optional
@@ -533,6 +597,123 @@ Three safe patterns:
 
 ---
 
+## On-Demand IP Range Refresher
+
+The `OnDemandRefresher` keeps bot IP feeds fresh **without** requiring a cron job. It runs opportunistically: on a small fraction of requests, it checks whether the cached merged IP ranges are stale; if so, it fetches fresh data from upstream feeds in the background (after the response is sent to the client) and atomically swaps the cache.
+
+### When to use it
+
+| Deployment | Recommendation |
+|---|---|
+| Shared hosting, PaaS, containerized apps without cron access | ✅ **Use `OnDemandRefresher`** |
+| High-traffic sites with cron available | ⚠️ Prefer `bin/update-ip-ranges.php` cron — more efficient, runs on a known schedule |
+| Test environments, low-traffic internal apps | ❌ Either works; cron is simpler |
+
+### Configuration
+
+In `bb_config.php`:
+
+```php
+'on_demand_ip_refresh' => [
+    'enabled'                 => true,
+    'probability_denominator' => 1000,    // 1 in N requests triggers the check
+    'min_age_seconds'         => 21600,   // hard floor: 6h between refreshes
+    'lock_ttl'                => 600,     // cross-process mutex TTL: 10min
+    'cache_ttl'               => 604800,  // cache entry TTL: 7 days
+    'feed_timeout_seconds'    => 5,       // wall-clock budget per refresh
+    'bot_ids'                 => [],      // restrict scope; empty = all
+    'cloud_providers'         => [],      // restrict scope; empty = all
+],
+```
+
+### How it works (four gates)
+
+```
+Request arrives
+   │
+   ▼
+Gate 1: Probability ───── 1 in 1000 (configurable)
+   │ pass                       │ fail
+   ▼                            ▼
+Gate 2: Cooldown ────── lock exists?      → skip (another worker refreshed)
+   │ pass                       │ fail
+   ▼
+Gate 3: Staleness ───── cache age < 6h?   → skip (cache fresh enough)
+   │ pass                       │ fail
+   ▼
+Gate 4: Mutex ────────── lock acquired?   → skip (lost race)
+   │ pass
+   ▼
+Schedule background refresh
+   │
+   ▼
+After response sent: do_refresh()
+   ├── fetch bot feeds (Google, OpenAI, Anthropic, ...)
+   ├── fetch cloud feeds (AWS, Cloudflare, Fastly, GCP)
+   ├── dedup + write to 'bb:ip_ranges:merged'
+   └── release lock
+```
+
+### Cold-start handling
+
+On a fresh install with no cache, `install_once()` opportunistically fetches fresh data during the first request of a process (capped at 3 seconds). For guaranteed seeding on deployment, run `php bin/install-bb.php` from your install hook.
+
+### Latency impact
+
+| Path | Cost |
+|------|------|
+| Hot path (Gate 1 fails) | 1 `mt_rand()` call, ~1µs |
+| Cold path (Gate 1 passes, refresh scheduled) | 2 cache reads + 1 cache write for the lock, ~1ms |
+| Background fetch (after response sent) | 4–8 feed fetches × ~500ms = 2–4 seconds, in shutdown handler |
+
+The slow part (feed fetches) runs **after** the user has received their response — user-facing latency is unaffected.
+
+### Cache backend requirement
+
+The mutex lock must be in a **shared cache** across processes/hosts:
+
+| Backend | Behavior |
+|---------|----------|
+| Redis, Memcached, DB-backed cache | ✅ Works correctly (mutex is cluster-wide) |
+| File cache (`GenericAdapter` default) | ✅ Works per-host (each host refreshes independently, bounded by probability × staleness floor — cost is trivial) |
+
+### Programmatic access
+
+```php
+use BadBehaviour\Core\BadBehaviour;
+
+$bb = BadBehaviour::withAdapter($adapter);
+
+// Inspect: would the next request schedule a refresh?
+$decision = $bb->peek_refresh_decision();
+echo $decision->should_schedule ? 'would refresh' : 'would skip';
+echo ' (reason: ' . $decision->reason . ')';
+
+// Force: refresh now (admin button, test fixture, etc.)
+$result = $bb->force_refresh_now();
+echo "{$result->bot_count} bots, {$result->cidr_count} CIDRs, "
+   . round($result->elapsed_seconds, 2) . "s";
+
+// Status: is on-demand refresh configured?
+$bb->is_on_demand_refresh_enabled();   // bool
+
+// Diagnostics: full refresh state
+print_r($bb->diagnostics()['on_demand_refresh']);
+```
+
+### Tradeoffs vs cron
+
+| | OnDemandRefresher | Cron (`bin/update-ip-ranges.php`) |
+|---|---|---|
+| Setup | None (opt-in via config) | Cron entry required |
+| Latency | Background (no user impact) | None (off-band) |
+| Predictability | Probabilistic; refresh fires when traffic exists | Deterministic; fires on schedule |
+| Multi-host | Each host refreshes independently | One cron on one host (or one per host) |
+| Failure mode | Stale cache fallback (7 days) | Stale cache fallback (24h) |
+| Best for | Shared hosting, PaaS, "set and forget" | High-traffic, ops-friendly |
+
+---
+
 ## Configuration
 
 Bad Behaviour 3.0 uses a typed **PHP-array configuration file** (`config/bb_config.php`).
@@ -570,7 +751,7 @@ return [
 
     // ===== BOT CATEGORIES =====
     'bot_categories' => [
-        'blocked'   => ['malicious'],
+        'blocked'   => ['malicious', 'residential_proxy'],
         'log_only'  => ['security_scanner'],
         'challenge' => [],
         'allowed'   => [
@@ -582,7 +763,20 @@ return [
         ],
     ],
 
-    // ===== DYNAMIC IP RANGES =====
+    // ===== ON-DEMAND IP RANGE REFRESH =====
+    // Replaces bin/update-ip-ranges.php cron. Off by default.
+    'on_demand_ip_refresh' => [
+        'enabled'                 => false,
+        'probability_denominator' => 1000,
+        'min_age_seconds'         => 21600,    // 6 hours
+        'lock_ttl'                => 600,      // 10 minutes
+        'cache_ttl'               => 604800,   // 7 days
+        'feed_timeout_seconds'    => 5,
+        'bot_ids'                 => [],
+        'cloud_providers'         => [],
+    ],
+
+    // ===== DYNAMIC IP RANGES (cron-driven alternative to on-demand) =====
     'dynamic_ip_ranges' => [
         'enabled' => false,        // flip after cron is in place
         'ttl'     => 86400,
@@ -732,6 +926,19 @@ See [`CONFIGURATION.md`](docs/CONFIGURATION.md#configuration-profiles) for full 
 | `asset_only_session_threshold` | int | `20` | 🟢 **LOW** | Asset requests with no HTML loads per session |
 | `asset_pattern_threshold` | int | `100` | 🟢 **LOW** | Sequential asset URLs per IP per 5 min |
 
+#### On-Demand IP Range Refresh (`on_demand_ip_refresh`)
+
+| Setting | Type | Default | Risk | Tuning |
+|---------|------|---------|------|--------|
+| `enabled` | bool | `false` | 🟢 **LOW** | Master switch; opt in for shared hosting / PaaS |
+| `probability_denominator` | int | `1000` | 🟢 **LOW** | 1 in N requests triggers the staleness check; higher = less feed pressure |
+| `min_age_seconds` | int | `21600` | 🟢 **LOW** | Hard floor on refresh frequency (6h); see [OnDemandRefresher](#on-demand-ip-range-refresher) |
+| `lock_ttl` | int | `600` | 🟢 **LOW** | Cross-process mutex TTL (10min) |
+| `cache_ttl` | int | `604800` | 🟢 **LOW** | Cache entry TTL (7 days); stale fallback for unreachable feeds |
+| `feed_timeout_seconds` | int\|float | `5` | 🟢 **LOW** | Hard wall-clock budget for the entire refresh |
+| `bot_ids[]` | string[] | `[]` | 🟢 **LOW** | Restrict refresh scope to specific bot IDs; empty = all |
+| `cloud_providers[]` | string[] | `[]` | 🟢 **LOW** | Restrict refresh scope to specific providers; empty = all four |
+
 #### Dynamic IP Ranges (`dynamic_ip_ranges`)
 
 | Setting | Type | Default | Risk | When to Enable |
@@ -790,11 +997,11 @@ See [Dynamic IP Range Feeds](#dynamic-ip-range-feeds-experimental) for setup.
 
 ### Bot Categories (`bot_categories`)
 
-11 categories with four configurable behaviors:
+12 categories with four configurable behaviors:
 
 ```php
 'bot_categories' => [
-    'blocked'   => ['malicious'],
+    'blocked'   => ['malicious', 'residential_proxy'],
     'log_only'  => ['security_scanner'],
     'challenge' => [],
     'allowed'   => [
@@ -809,12 +1016,12 @@ See [Dynamic IP Range Feeds](#dynamic-ip-range-feeds-experimental) for setup.
 
 | Bucket | Default contents | Risk | Effect |
 |--------|------------------|------|--------|
-| `blocked[]` | `['malicious']` | 🟡 **MEDIUM** | Hard-block by category |
+| `blocked[]` | `['malicious', 'residential_proxy']` | 🟡 **MEDIUM** | Hard-block by category |
 | `log_only[]` | `['security_scanner']` | 🟢 **LOW** | Record only, never block |
 | `challenge[]` | `[]` | 🟡 **MEDIUM** | Force PoW/captcha |
 | `allowed[]` | feed/shopping/cloud/monitoring/archive | 🟢 **LOW** | Verified-only allow |
 
-#### Category reference (11 categories)
+#### Category reference (12 categories)
 
 | Category | Default action | Tunable via | Notes |
 |---|---|---|---|
@@ -828,6 +1035,7 @@ See [Dynamic IP Range Feeds](#dynamic-ip-range-feeds-experimental) for setup.
 | `shopping_crawler` | allow (verified-only) | `allowed[]` (default) | Google Shopping, FB Catalog, Shopify |
 | `cloud_infrastructure` | **HARD allow — never blocked** | n/a (always allowed) | Cloudflare, AWS, GCP, Azure, Fastly |
 | `security_scanner` | log_only | `log_only[]` (default) | Shodan, Qualys, Censys, Detectify, Rapid7 |
+| `residential_proxy` | block | `blocked[]` (default) | Bright Data, residential scraping networks |
 | `malicious` | hard block | `blocked[]` (default) | Known-bad actors |
 
 > ⚠️ **`cloud_infrastructure` is hard-coded as `ALLOW` in `BotDetector::determine_action()` and cannot be moved to `blocked[]` or `challenge[]`.** This is intentional — blocking these probes takes your origin offline. The setting exists only for completeness; the safety override always wins. If you build a custom registry that drops cloud bots, see [Custom Bot Registries → Cloud-LB safety](#cloud-lb-safety-with-custom-registries).
@@ -985,7 +1193,7 @@ de = "DE"
 
 ## Dynamic IP Range Feeds (Experimental)
 
-Hard-coded IP ranges go stale the moment a vendor adds a new region. Bad Behaviour ships two independent feed pipelines:
+Hard-coded IP ranges go stale the moment a vendor adds a new region. Bad Behaviour ships two independent feed pipelines, plus the on-demand refresher:
 
 ### A. Bot-specific feeds (`FeedRegistry`)
 
@@ -1019,21 +1227,13 @@ Pulls fresh ranges for **cloud infrastructure** (used by the BotDetector fast pa
 
 > Note: Azure is in the registry but its JSON endpoint shape differs from the others — currently it's documented as a TODO. The `azure_health` bot definition relies on the static ranges shipped with the registry.
 
-### Enabling
+### Refresh strategies
 
-In `bb_config.php`:
-```php
-'enable_dynamic_ip_ranges' => true,    // gate
-'dynamic_ip_ranges' => [
-    'enabled' => true,
-    'ttl'     => 86400,                 // 24h
-    'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
-],
-```
+You have two options for keeping feeds fresh:
 
-### Refreshing (cron)
+**Option 1: `OnDemandRefresher` (no cron required)** — See [On-Demand IP Range Refresher](#on-demand-ip-range-refresher) above. Recommended for shared hosting, PaaS, and "set and forget" deployments.
 
-Feeds are **not fetched on the request path** — they're too slow. Run the CLI script via cron:
+**Option 2: `bin/update-ip-ranges.php` cron** — For high-traffic sites with scheduled-job support:
 
 ```bash
 # Refresh every 6 hours
@@ -1053,7 +1253,7 @@ php bin/update-ip-ranges.php --ttl=43200
 
 1. **Caching boundaries** — file cache doesn't share across multi-server deployments; use the MediaWiki adapter's WAN cache for production.
 2. **Feed shape changes** — vendors occasionally add new fields; parsers must be tolerant.
-3. **Cold-start latency** — first request after TTL expiry triggers fetches unless cron runs in time.
+3. **Cold-start latency** — first request after TTL expiry triggers fetches unless cron runs in time (or on-demand refresh has fired).
 4. **CA bundle portability** — auto-detection works on Debian/RHEL/Homebrew but not on stripped-down containers.
 
 Once these are resolved the flag will be dropped in a 3.x point release.
@@ -1132,7 +1332,7 @@ If your CDN isn't on the list, [open an issue](https://github.com/Bad-Behaviour/
 
 ## Feed Readers, Shopping Crawlers, Security Scanners
 
-Three new categories ship with conservative defaults. You usually want them as-is, but here's the rationale:
+Three categories ship with conservative defaults. You usually want them as-is, but here's the rationale:
 
 ### Feed Readers — default `allow`
 
@@ -1152,6 +1352,29 @@ If you want to challenge them (e.g., they hammer you), add `'security_scanner'` 
 'bot_categories' => [
     'challenge' => ['security_scanner'],
 ],
+```
+
+---
+
+## Residential Proxy Networks — default `block`
+
+Bright Data (formerly Luminati) and similar residential proxy networks route traffic through real residential IP addresses, making them invisible to IP-based detection. The `residential_proxy` category default is `BLOCK` because the only legitimate use of these networks is scraping at scale — exactly what you're trying to prevent.
+
+If you legitimately use Bright Data or a similar service for testing, add the specific bot to `bot_categories.allowed[]` or use the `exclude_bots` registry filter:
+
+```php
+'bot_categories' => [
+    'blocked' => [],   // override the default
+],
+```
+
+Or whitelist specific bots in `bb_registry.php`:
+
+```php
+return [
+    'preset' => 'full',
+    'exclude_bots' => ['brightdata'],   // remove from default block list
+];
 ```
 
 ---
@@ -1294,15 +1517,18 @@ class MyCustomAdapter implements AdapterInterface
     public function get_whitelist(): array;
     public function get_email(): string;
     public function get_relative_path(): string;
-    public function get_table_schema(string $table_name): string;
+    public function get_table_schema(string $table_name): string|array;
 
-    public function query(string $sql): bool;
     public function log_request(RequestPackage $package, Result $result): void;
+    public function query(string $sql): bool;
 
     public function increment_counter(string $key, int $window): int;
     public function get_counter(string $key): int;
+    public function delete(string $key): bool;
+
     public function get_behavior_profile(string $session_id): ?array;
     public function save_behavior_profile(string $session_id, array $profile, int $ttl): bool;
+
     public function add_to_set(string $key, string $value, int $ttl): bool;
     public function get_set(string $key): array;
 
@@ -1312,6 +1538,22 @@ class MyCustomAdapter implements AdapterInterface
 }
 ```
 
+For adapters that also need cache support (recommended for rate limiting, behavioral analysis, and on-demand IP refresh), implement `CacheInterface` too:
+
+```php
+use BadBehaviour\Core\Interfaces\CacheInterface;
+
+class MyCustomAdapter implements AdapterInterface, CacheInterface
+{
+    // ... AdapterInterface methods ...
+
+    public function get(string $key): mixed;
+    public function set(string $key, mixed $value, int $ttl): bool;
+}
+```
+
+Pass the adapter as both `$adapter` and `$cache` to the constructor — or just as `$adapter` if it implements both interfaces (BadBehaviour auto-detects).
+
 ---
 
 ## Result Codes (Semantic, Not Hex)
@@ -1319,9 +1561,23 @@ class MyCustomAdapter implements AdapterInterface
 | Code | HTTP | Description |
 |------|------|-------------|
 | `allowed` | 200 | Request permitted |
+| `monitored.bot` | 200 | Would have blocked, but in monitor-only mode |
+| `monitored.ai_crawler` | 200 | Would have blocked AI crawler, but monitor-only |
+| `monitored.seo_crawler` | 200 | Would have blocked SEO crawler, but monitor-only |
+| `monitored.malicious_ua` | 200 | Would have blocked malicious UA, but monitor-only |
+| `monitored.attack_pattern` | 200 | Would have blocked attack, but monitor-only |
+| `monitored.dnsbl` | 200 | Would have blocked DNSBL match, but monitor-only |
+| `monitored.httpbl` | 200 | Would have blocked http:BL match, but monitor-only |
+| `monitored.behavioral` | 200 | Would have blocked behavioral anomaly, but monitor-only |
+| `monitored.fingerprint` | 200 | Would have blocked fingerprint, but monitor-only |
+| `monitored.rate_limit` | 200 | Would have blocked rate limit, but monitor-only |
+| `monitored.custom_rule` | 200 | Would have blocked custom rule, but monitor-only |
+| `monitored.geoip` | 200 | Would have blocked GeoIP match, but monitor-only |
+| `monitored.challenge` | 200 | Would have challenged, but monitor-only |
 | `blocked.bot` | 403 | Known bot blocked |
 | `blocked.ai_crawler` | 403 | AI crawler blocked |
 | `blocked.seo_crawler` | 403 | SEO crawler blocked |
+| `blocked.residential_proxy` | 403 | Residential proxy network blocked |
 | `blocked.malicious_ua` | 403 | Malicious User-Agent |
 | `blocked.attack_pattern` | 403 | Attack payload detected |
 | `blocked.dnsbl` | 403 | DNSBL match |
@@ -1333,8 +1589,30 @@ class MyCustomAdapter implements AdapterInterface
 | `blocked.geoip` | 403 | GeoIP block |
 | `challenge.required` | 403 | Challenge required |
 | `challenge.failed` | 403 | Challenge failed |
+| `error.internal` | 500 | Internal error (BadBehaviour caught and logged) |
+| `error.configuration` | 500 | Configuration error |
 
-The `metadata` field on every `Result` includes `bot_category` (string) and `bot_verified` (bool) — use these to log which category triggered a block.
+The `metadata` field on every `Result` includes `bot_category` (string), `bot_verified` (bool), `rule_id` (string|null, populated by `action: 'log'` custom rules), `original_code` (string|null, present on monitored results), and `monitor_only` (bool, present on monitored results). The `enforcement` field is one of `ENFORCED`, `MONITORED`, `ALLOWED` — use this to distinguish "would have blocked" from "actually blocked".
+
+**Result decision methods** — the right way to handle a Result:
+
+```php
+$result = $bb->run();
+
+if ($result->is_actionable()) {
+    // ENFORCED block or challenge — serve 403
+    $bb->handle_result($result);
+}
+// ALLOWED or MONITORED — request reaches the application normally
+```
+
+| Method | `ALLOWED` | `MONITORED` | `ENFORCED` |
+|--------|:---------:|:-----------:|:----------:|
+| `is_actionable()` | ❌ | ❌ | ✅ |
+| `is_purely_allowed()` | ✅ | ❌ | ❌ |
+| `reaches_application()` | ✅ | ✅ | ❌ |
+| `is_enforced_block()` | ❌ | ❌ | ✅ |
+| `is_monitored()` | ❌ | ✅ | ❌ |
 
 ---
 

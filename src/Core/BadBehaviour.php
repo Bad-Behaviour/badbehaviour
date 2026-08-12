@@ -120,10 +120,7 @@ class BadBehaviour
 		// === NEW: BlacklistDetector receives a closure bound to this
 		// instance's monitor-only state, so it can gate the ua_is_bot
 		// short-circuit when the library is effectively in monitor-only mode.
-		$this->blacklist_detector = new BlacklistDetector(
-			$this->config,
-			is_monitor_only: fn(): bool => $this->is_monitor_only_effective(),
-		);
+		$this->blacklist_detector = new BlacklistDetector($this->config);
 
 		$this->behavioral_detector = new BehavioralDetector($this->config, $this->adapter);
 		$this->fingerprint_detector = new FingerprintDetector($this->config, $this->adapter);
@@ -881,7 +878,12 @@ class BadBehaviour
 			], 'custom_rules_check_failure');
 		}
 
-		// 3. Known Bots (always-on — BotDetector only blocks verified-spoof attempts)
+		// 3. Known Bots (always-on — BotDetector is the SOLE arbiter for bot classification)
+		//
+		// If this returns a result (allow/challenge/block), we're done.
+		// If this returns null, the bot is either unknown or verification
+		// failed. In either case, BlacklistDetector MUST NOT make a bot
+		// classification decision — it only detects attack patterns.
 		try {
 			if ($result = $this->bot_detector->detect($package)) return $result;
 		} catch (\Throwable $e) {
@@ -915,9 +917,13 @@ class BadBehaviour
 		}
 
 		// 5. Blacklist (attacks, malicious UA) (always-on — basic attack patterns)
-		// NOTE: BlacklistDetector internally gates its `ua_is_bot` short-circuit
-		// behind is_monitor_only_effective(). Other tiers (raw URI, technical
-		// anomalies, contextual patterns, credential leaks, etc.) still run.
+		//
+		// BlacklistDetector detects: raw XSS, SQL injection, path traversal,
+		// credential leaks, technical anomalies. It does NOT classify bots.
+		// All bot classification is handled by BotDetector above. The old
+		// ua_is_bot short-circuit was removed because it produced false
+		// positives on legitimate search engines (YandexBot, bingbot,
+		// Baiduspider all match /bot|spider/i in the UA).
 		try {
 			if ($result = $this->blacklist_detector->detect($package)) return $result;
 		} catch (\Throwable $e) {

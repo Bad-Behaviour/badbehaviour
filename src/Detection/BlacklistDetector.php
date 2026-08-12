@@ -9,8 +9,6 @@ use BadBehaviour\Util\RequestPackage;
 use BadBehaviour\Core\Result;
 use BadBehaviour\Core\ResultCode;
 use BadBehaviour\Util\ErrorReporter;
-use Closure;
-use Throwable;
 
 /**
  * Five-tier blacklist detector.
@@ -39,21 +37,6 @@ use Throwable;
  */
 final class BlacklistDetector
 {
-    /**
-     * Monitor-only predicate.
-     *
-     * Returns true when the library is in effective monitor-only mode.
-     * Invoked once per detect() call via check_monitor_only().
-     *
-     * Invariants (enforced by the constructor and `readonly`):
-     *   - Always a Closure (never null, never a string/array callable)
-     *   - Cannot be reassigned after construction
-     *   - Invocation is wrapped in try/catch — never throws out of detect()
-     *
-     * @var Closure(): bool
-     */
-    private readonly Closure $is_monitor_only;
-
     private readonly Configuration $config;
 
     // ── Tier 0.5: Raw URI attack patterns ─────────────────────────────────────
@@ -269,115 +252,11 @@ final class BlacklistDetector
 
     /**
      * @param Configuration $config
-     * @param (callable(): bool)|null $is_monitor_only Optional predicate
-     *        returning true when the library is in effective monitor-only
-     *        mode. When true, the `ua_is_bot` short-circuit in detect()
-     *        is suppressed.
-     *
-     *        BadBehaviour passes:
-     *            is_monitor_only: fn(): bool => $this->is_monitor_only_effective()
-     *
-     *        Tests can pass any callable returning bool.
-     *        Default: a closure that always returns false (i.e., "never
-     *        monitor-only"), preserving the original behavior before
-     *        monitor-only mode existed.
      */
     public function __construct(
         Configuration $config,
-        ?callable $is_monitor_only = null,
     ) {
         $this->config = $config;
-
-        // Closure::fromCallable() normalizes ANY callable type into a Closure:
-        //   - Closures (identity)
-        //   - Strings  (function names)
-        //   - Arrays   ([$obj, 'method'] or ['Class', 'method'])
-        //   - Invokable objects
-        //
-        // The result is *always* a Closure — never null, never a string.
-        // Combined with the `readonly` modifier, this guarantees the
-        // property cannot be null/uninitialized at any point after construction.
-        //
-        // If the caller passes a non-callable (e.g., a malformed array),
-        // Closure::fromCallable() throws TypeError immediately — a loud
-        // failure at construction time rather than a silent "undefined method"
-        // at detection time.
-        $this->is_monitor_only = $is_monitor_only !== null
-            ? Closure::fromCallable($is_monitor_only)
-            : static fn(): bool => false;
-    }
-
-    /**
-     * Safely invoke the monitor-only predicate.
-     *
-     * This is the ONLY place the predicate is invoked. All error paths are
-     * handled here so detect() never has to deal with Throwable from the
-     * predicate itself.
-     *
-     * === FAILURE SEMANTICS ===
-     *
-     *   - Normal return (bool): used as-is.
-     *   - Non-bool return: coerced to bool via (bool) cast, logged once.
-     *   - Throws Throwable: returns TRUE (assume monitor-only).
-     *
-     * Returning TRUE on failure is the safe choice:
-     *
-     *   - TRUE means "suppress the ua_is_bot short-circuit" — i.e., let
-     *     the request through to other detectors instead of blocking here.
-     *   - If the predicate is broken, we'd rather MISS a few bots than
-     *     BLOCK real users. Missing a bot = a request that reaches
-     *     BotDetector / RateLimit / DNSBL and still gets caught there.
-     *     Blocking a real user = a 403 for a legitimate browser.
-     *
-     * The error is logged via ErrorReporter with a one-shot tag so we
-     * don't spam the log on every request when the predicate is broken.
-     *
-     * @return bool true = monitor-only mode (suppress short-circuit)
-     */
-    private function check_monitor_only(): bool
-    {
-        $predicate = $this->is_monitor_only;
-
-        try {
-            $result = $predicate();
-
-            // Coerce non-bool returns to bool. A predicate returning
-            // int|string|null would otherwise silently misbehave.
-            if (!is_bool($result)) {
-                if (!self::$failure_logged) {
-                    self::$failure_logged = true;
-                    ErrorReporter::error(
-                        null,
-                        'BlacklistDetector: monitor-only predicate returned non-bool',
-                        [
-                            'actual_type' => get_debug_type($result),
-                            'hint'        => 'Predicate must return bool; coerced via (bool) cast',
-                        ],
-                        'blacklist_predicate_non_bool'
-                    );
-                }
-                return (bool) $result;
-            }
-
-            return $result;
-        } catch (Throwable $e) {
-            // Predicate threw. Fail OPEN (assume monitor-only = don't block
-            // via ua_is_bot short-circuit). Log once per process.
-            if (!self::$failure_logged) {
-                self::$failure_logged = true;
-                ErrorReporter::error(
-                    null,
-                    'BlacklistDetector: monitor-only predicate threw',
-                    [
-                        'exception_class' => $e::class,
-                        'error'           => $e->getMessage(),
-                        'hint'            => 'Failing OPEN: assume monitor-only mode to avoid FPs',
-                    ],
-                    'blacklist_predicate_threw'
-                );
-            }
-            return true;
-        }
     }
 
     public function detect(RequestPackage $package): ?Result
@@ -396,40 +275,6 @@ final class BlacklistDetector
                 'Empty or invalid User-Agent',
                 $package
             );
-        }
-
-        // === ua_is_bot short-circuit — GATED by monitor-only ===
-        //
-        // In monitor-only mode, BotDetector is the single source of truth
-        // for bot classification. It already applies correct per-category
-        // actions (verified search engines → ALLOW, AI crawlers → CHALLENGE,
-        // residential proxies → BLOCK). BlacklistDetector does NOT also fire
-        // here, because:
-        //
-        //   1. BotDetector runs FIRST in the pipeline and returns early on
-        //      a match, so we never reach this code path for known bots.
-        //   2. The only bots that reach BlacklistDetector are ones the
-        //      registry did NOT recognize (and thus were left to fall through).
-        //   3. For those unknown bots, "ua_is_bot = true" is too broad a
-        //      signal — it triggers on any UA matching /bot|crawler|spider|.../i,
-        //      which fires for legitimate regional search engines (Baidu, Sogou,
-        //      Applebot) that the 'minimal' preset doesn't include.
-        //
-        // check_monitor_only() handles all error cases (closure throws,
-        // returns non-bool, etc.) by returning TRUE (assume monitor-only).
-        // See that method's docblock for the failure-semantics rationale.
-        if (!$this->check_monitor_only()) {
-            if ($package->ua_is_bot) {
-                return Result::block(
-                    ResultCode::BLOCKED_MALICIOUS_UA,
-                    'Bot detected by UA parser',
-                    $package,
-                    [
-                        'device_type' => $package->ua_device,
-                        'browser'     => $package->ua_browser,
-                    ]
-                );
-            }
         }
 
         $is_http_tool = $package->is_http_tool();

@@ -52,32 +52,35 @@ class IpUtil
 		}
 
 		if (self::is_ipv6($ip)) {
+			// IPv6 logic (already correct)
 			$ip_bin = @inet_pton($ip);
 			$net_bin = @inet_pton($net);
+			if ($ip_bin === false || $net_bin === false) return false;
 
-			if ($ip_bin === false || $net_bin === false) {
-				return false;
-			}
-
-			// Compare bit by bit up to mask length
 			for ($i = 0; $i < $mask; $i++) {
 				$byte_idx = $i >> 3;
 				$bit_idx = 7 - ($i & 7);
-
-				$ip_bit = (ord($ip_bin[$byte_idx]) >> $bit_idx) & 1;
-				$net_bit = (ord($net_bin[$byte_idx]) >> $bit_idx) & 1;
-
-				if ($ip_bit !== $net_bit) {
+				if ((ord($ip_bin[$byte_idx]) >> $bit_idx & 1) !== (ord($net_bin[$byte_idx]) >> $bit_idx & 1)) {
 					return false;
 				}
 			}
 			return true;
 		}
 
+		// IPv4 — FIX: handle 64-bit signed integer issue
 		$mask = $mask ?: 32;
 		$ip_long = ip2long($ip);
 		$net_long = ip2long($net);
-		$mask_long = -1 << (32 - $mask);
+
+		if ($ip_long === false || $net_long === false) {
+			return false;
+		}
+
+		// Convert to unsigned 32-bit to avoid negative number issues
+		$ip_long = $ip_long & 0xFFFFFFFF;
+		$net_long = $net_long & 0xFFFFFFFF;
+		$mask_long = $mask === 0 ? 0 : ((0xFFFFFFFF << (32 - $mask)) & 0xFFFFFFFF);
+
 		return ($ip_long & $mask_long) === ($net_long & $mask_long);
 	}
 

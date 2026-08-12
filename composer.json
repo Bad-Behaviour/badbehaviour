@@ -52,7 +52,18 @@
 		"test:coverage:clover": "phpunit --coverage-clover build/coverage/clover.xml",
 		"static-analysis": "phpstan analyse src tests --level=5",
 		"cs-check": "phpcs src tests",
-		"cs-fix": "phpcbf src tests"
+		"cs-fix": "phpcbf src tests",
+		"diagnose": "php bin/diagnose.php",
+		"schema": "php bin/test-config-schema.php"
+	},
+	"archive": {
+		"exclude": [
+			"tests/**",
+			"extensions/**",
+			"docs/**",
+			".github/**",
+			".gitignore"
+		]
 	},
 	"config": {
 		"allow-plugins": {

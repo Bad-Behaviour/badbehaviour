@@ -74,20 +74,109 @@ A side-by-side reference for the most common keys:
 
 ### 2. Entry Points
 
-**Old:** Multiple entry files (`bad-behaviour-generic.php`, etc.) with global state.
-**New:** Single `Bootstrap.php` with functional API, or OOP `BadBehaviour::withAdapter($adapter)`.
+#### Generic / Custom PHP Applications
 
 ```php
-// Old (still works — legacy shim)
-require_once 'bad-behaviour-generic.php';
-
 // New (recommended)
 require 'vendor/autoload.php';
-\BadBehaviour\Bootstrap::run();
+use BadBehaviour\Core\BadBehaviour;
+use BadBehaviour\Adapter\GenericAdapter;
 
-// Or OOP:
+$adapter = new GenericAdapter();
 $bb = BadBehaviour::withAdapter($adapter);
-$bb->run();
+$result = $bb->run();
+
+if ($result->is_actionable()) {
+    $bb->handle_result($result);
+    // handle_result() exits; execution does not return.
+}
+
+// Or via the functional API:
+\BadBehaviour\Bootstrap::run();   // uses GenericAdapter by default
+```
+
+A documented copy-paste snippet is available at `extensions/generic/example.php` in the package.
+
+#### WackoWiki
+
+The integration is **inlined directly into `index.php`** — no shim file required. Add this block immediately after `$db = new Settings();`:
+
+```php
+use BadBehaviour\Core\BadBehaviour;
+use BadBehaviour\Adapter\WackoWikiAdapter;
+
+$db = new Settings();
+
+if ($db->ext_bad_behaviour)
+{
+    $adapter = new WackoWikiAdapter($db);
+    $bb = BadBehaviour::withAdapter($adapter);
+
+    $result = $bb->run();
+
+    if ($result->is_actionable())
+    {
+        $bb->handle_result($result);
+    }
+}
+
+// ... rest of index.php unchanged
+```
+
+The legacy `bad-behaviour-wackowiki.php` shim from 2.x and 3.0-pre has been removed. See `extensions/wackowiki/INSTALL.md` for the full inline snippet and configuration instructions.
+
+#### MediaWiki
+
+The integration still uses a shim because MediaWiki requires the `$wgExtensionFunctions` / `$wgHooks` registration pattern — there is no "inline this into LocalSettings.php" equivalent. The shim has moved to `extensions/mediawiki/`.
+
+**Install procedure:**
+
+```bash
+cd /path/to/mediawiki
+composer require bad-behaviour/badbehaviour
+
+# Copy the shim into your extension directory
+mkdir -p extensions/BadBehaviour
+cp vendor/bad-behaviour/badbehaviour/extensions/mediawiki/bad-behaviour-mediawiki.php \
+   extensions/BadBehaviour/
+
+# Copy or create the config
+cp vendor/bad-behaviour/badbehaviour/config/bb_config.example.php \
+   extensions/BadBehaviour/bb_config.php
+chmod 600 extensions/BadBehaviour/bb_config.php
+```
+
+Add to `LocalSettings.php`:
+
+```php
+wfLoadExtension('BadBehaviour');
+require_once "$IP/extensions/BadBehaviour/bad-behaviour-mediawiki.php";
+
+// Optional: enable debug footer
+$wgBadBehaviourTimer = true;
+```
+
+The shim is **not autoloaded by Composer** — it is guarded with `if (!defined('MEDIAWIKI')) return;` and `BB_3_LOADED` so accidental inclusion from non-MediaWiki contexts is a silent no-op. See `extensions/mediawiki/INSTALL.md` for the full guide.
+
+### 2a. Integration Shims — Repository Layout (3.0+)
+
+Integration shims are **application glue code, not library code**, so they live in `extensions/` (not `src/`) and are **not autoloaded by Composer**. This keeps the library namespace clean and gives each host application explicit control over when and how the integration runs.
+
+```
+bad-behaviour/
+├── src/                          ← library code (composer-autoloaded, PSR-4)
+├── tests/                        ← PHPUnit (autoload-dev)
+├── config/                       ← shipped config defaults
+├── bin/                          ← CLI tools (diagnose, install, update-ip-ranges)
+└── extensions/                   ← NOT composer-autoloaded
+    ├── README.md                 ← explains the directory's purpose
+    ├── mediawiki/
+    │   ├── bad-behaviour-mediawiki.php
+    │   └── INSTALL.md
+    ├── wackowiki/
+    │   └── INSTALL.md            ← no shim file; just inline instructions
+    └── generic/
+        └── example.php           ← documented copy-paste snippet
 ```
 
 ### 3. Result Codes
@@ -573,21 +662,83 @@ mysql -u user -p dbname < vendor/bad-behaviour/bad-behaviour/migrations/mysql_up
 sqlite3 data/wacko.db < vendor/bad-behaviour/bad-behaviour/migrations/sqlite_upgrade_3.0.sql
 ```
 
-### 4. Update Legacy Entry Points (if used)
+### 4. Update Legacy Entry Points
+
+The migration from 2.x and 3.0-pre entry points to 3.0+ is **host-specific**. Pick your host:
+
+#### If you're on WackoWiki
+
+The legacy shim is removed entirely. Inline the integration directly in `index.php`:
 
 ```php
-// Old (still works as a shim)
+// REMOVE this line (if present):
 require_once 'bad-behaviour-wackowiki.php';
 
-// New (recommended)
-require 'vendor/autoload.php';
+// ADD this block after `$db = new Settings();`:
 use BadBehaviour\Core\BadBehaviour;
 use BadBehaviour\Adapter\WackoWikiAdapter;
 
-$adapter = new WackoWikiAdapter($db);
-$bb = BadBehaviour::withAdapter($adapter);
-$bb->run();
+if ($db->ext_bad_behaviour)
+{
+    $adapter = new WackoWikiAdapter($db);
+    $bb = BadBehaviour::withAdapter($adapter);
+
+    $result = $bb->run();
+
+    if ($result->is_actionable())
+    {
+        $bb->handle_result($result);
+    }
+}
 ```
+
+Place the block BEFORE any routing/auth/lock checks in `index.php`. Blocked requests must never reach the engine, the admin panel, or the installer.
+
+The legacy INI config file `config/bb_settings.conf` is no longer read — copy the equivalent values into `config/bb_config.php` (which WackoWiki's `WackoWikiAdapter` reads from `CONFIG_DIR`).
+
+#### If you're on MediaWiki
+
+Update your `require_once` path to point at the new shim location:
+
+```php
+// Old:
+require_once "$IP/extensions/BadBehaviour/bad-behaviour-mediawiki.php";
+
+// New (same path, but the file moved inside the package):
+require_once "$IP/extensions/BadBehaviour/bad-behaviour-mediawiki.php";
+// ↑ The file at this path is now a copy of vendor/bad-behaviour/badbehaviour/extensions/mediawiki/bad-behaviour-mediawiki.php
+```
+
+After `composer update`, re-copy the shim from the new package location:
+
+```bash
+cp vendor/bad-behaviour/badbehaviour/extensions/mediawiki/bad-behaviour-mediawiki.php \
+   extensions/BadBehaviour/
+```
+
+#### If you're on a custom PHP application
+
+Replace any shim include with the explicit OOP pattern:
+
+```php
+// Old:
+require_once 'bad-behaviour-generic.php';
+
+// New:
+require 'vendor/autoload.php';
+use BadBehaviour\Core\BadBehaviour;
+use BadBehaviour\Adapter\GenericAdapter;
+
+$adapter = new GenericAdapter();
+$bb = BadBehaviour::withAdapter($adapter);
+$result = $bb->run();
+
+if ($result->is_actionable()) {
+    $bb->handle_result($result);
+}
+```
+
+A complete reference implementation is in `extensions/generic/example.php`.
 
 ### 5. Whitelist Format (Unchanged)
 
@@ -745,26 +896,6 @@ Log format (when your adapter persists results):
 | Agentic detection false positives | Require session cookies; monitor for power-user patterns |
 | Origin marked unhealthy by CDN | Check that cloud LB ranges are NOT in `custom_rules` block list — see [PERFORMANCE.md → Trust the cloud fast path](PERFORMANCE.md#trust-the-cloud-fast-path) |
 | HEAD requests from monitoring blocked | Add monitoring path prefixes to `head_referer_exempt_paths` |
-
----
-
-## Rollback Plan
-
-```bash
-# 1. Restore code
-rm -rf vendor/bad-behaviour
-mv vendor/bad-behaviour.bak vendor/bad-behaviour
-
-# 2. Restore config
-mv config/bb_settings.conf.bak config/bb_settings.conf
-
-# 3. Restore DB (if migrated)
-# Restore from backup or drop new columns:
-ALTER TABLE `prefix_bad_behaviour`
-    DROP COLUMN status_code, status_message, support_key,
-    bot_category, bot_verified, ja3, h2_hash, header_order_hash,
-    asn, country, request_time_ms;
-```
 
 ---
 

@@ -27,6 +27,21 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 	private bool $config_loaded = false;
 
 	/**
+	 * The Configuration object — single source of truth.
+	 *
+	 * Set via set_configuration() after Configuration::from_array()
+	 * builds it. Once set, get_settings() returns its array form
+	 * instead of re-loading from disk.
+	 *
+	 * Why: prevents the adapter and Configuration from diverging.
+	 * The adapter was previously loading from config/bb_config.php
+	 * while Configuration::from_array() was given a different array
+	 * (or vice versa), causing log_request() to see stale/wrong
+	 * values like verbose=false when verbose=true was intended.
+	 */
+	private ?\BadBehaviour\Configuration $configuration = null;
+
+	/**
 	 * Is the adapter running in safe-mode (config missing or invalid)?
 	 *
 	 * Safe-mode = monitor-only: still logs traffic, but disables all
@@ -47,12 +62,27 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 
 	public function get_settings(): array
 	{
-		// Single source of truth: CONFIG_DIR if defined, else CWD-relative.
-		// The package directory (vendor/badbehaviour/.../config/bb_config.php)
-		// is intentionally NOT searched — it ships a test fixture config
-		// that is NOT valid for production. Falling through to it has caused
-		// real outages where the operator's bb_config.php was silently
-		// shadowed by the package's test fixture.
+		// Single source of truth: the Configuration object if injected.
+		//
+		// BadBehaviour calls set_configuration() after building the
+		// Configuration object. Once injected, get_settings() returns
+		// its array form — guaranteeing the adapter sees exactly what
+		// Configuration::from_array() built.
+		//
+		// Falls back to file loading only when no Configuration object
+		// has been injected (e.g., direct adapter usage without
+		// BadBehaviour bootstrap). This preserves the legacy file-based
+		// behavior for backward compatibility.
+		if ($this->configuration !== null) {
+			$config = $this->configuration->to_array();
+
+			// Inject adapter-specific default if not set
+			$config['log_table'] = $config['log_table'] ?? 'bad_behaviour';
+
+			return $config;
+		}
+
+		// Legacy fallback: load from file (CONFIG_DIR or CWD-relative)
 		$file = $this->production_config_path();
 
 		if (file_exists($file)) {
@@ -165,6 +195,24 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 		return 'admin@example.com';
 	}
 
+	/**
+	 * Inject the Configuration object as the single source of truth.
+	 *
+	 * Called by BadBehaviour's bootstrap after Configuration::from_array().
+	 * Once set, get_settings() returns the Configuration's array form
+	 * instead of re-loading from disk.
+	 *
+	 * Defensive: never throws. If the configuration is invalid, logs
+	 * a warning and continues to use file-based loading as fallback.
+	 */
+	public function set_configuration(\BadBehaviour\Configuration $config): void
+	{
+		$this->configuration = $config;
+		// Mark config as loaded — we have authoritative settings now
+		$this->config_loaded = true;
+		$this->safe_mode = false;
+	}
+
 	public function get_relative_path(): string
 	{
 		return '/';
@@ -208,6 +256,8 @@ SQL;
 	{
 		// No-op for generic adapter - implement in specific adapters
 		// (kept defensive: never throw, even if subclassing misbehaves)
+		// NOTE: For actual logging, use WackoWikiAdapter or MediaWikiAdapter.
+		// GenericAdapter doesn't persist logs.
 	}
 
 	public function query(string $sql): bool

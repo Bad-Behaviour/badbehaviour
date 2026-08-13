@@ -78,6 +78,23 @@ class BadBehaviour
 	) {
 		$this->config = $config;
 		$this->adapter = $config->adapter ?? throw new \InvalidArgumentException('Adapter is required');
+
+		// Inject the Configuration object into the adapter so get_settings()
+		// returns the same values Configuration::from_array() built.
+		// This prevents the adapter from re-loading from disk and getting
+		// different/stale values.
+		if (method_exists($this->adapter, 'set_configuration')) {
+			try {
+				$this->adapter->set_configuration($config);
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter,
+					'Failed to inject Configuration into adapter',
+					['error' => $e->getMessage()],
+					'adapter_set_configuration_failed'
+					);
+			}
+		}
+
 		$this->logger = $config->logger;
 		// Cache resolution priority:
 		//   1. explicit constructor argument (testing/manual override)

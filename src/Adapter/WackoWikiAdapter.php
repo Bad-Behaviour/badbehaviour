@@ -22,6 +22,15 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 	private bool $safe_mode = false;
 	private bool $config_loaded = false;
 
+	/**
+	 * The Configuration object — single source of truth.
+	 *
+	 * Set via set_configuration() after Configuration::from_array()
+	 * builds it. Once set, get_settings() returns its array form
+	 * instead of re-loading from disk.
+	 */
+	private ?\BadBehaviour\Configuration $configuration = null;
+
 	public function __construct($db)
 	{
 		$this->db = $db;
@@ -55,16 +64,30 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 
 	public function get_settings(): array
 	{
-		// Single source of truth: CONFIG_DIR/bb_config.php.
+		// Single source of truth: the Configuration object if injected.
 		//
-		// The package directory (vendor/badbehaviour/.../config/bb_config.php)
-		// is intentionally NOT searched. It exists as a unit-test fixture
-		// and has caused production outages where the operator's
-		// bb_config.php was silently shadowed by the package's test fixture.
+		// BadBehaviour calls set_configuration() after building the
+		// Configuration object. Once injected, get_settings() returns
+		// its array form — guaranteeing the adapter sees exactly what
+		// Configuration::from_array() built.
 		//
-		// CWD-relative lookup is also excluded: in a web request, CWD is
-		// the FPM pool's working directory, which is unrelated to the
-		// application's config location and would be silently wrong.
+		// This prevents the divergence bug where the adapter loaded from
+		// disk (with different values) while Configuration was built from
+		// a different array, causing log_request() to use wrong values.
+		//
+		// Falls back to file loading only when no Configuration object
+		// has been injected (legacy behavior for backward compatibility).
+		if ($this->configuration !== null) {
+			$config = $this->configuration->to_array();
+
+			// INJECT adapter-specific setting that must NOT come from config
+			$prefix = $this->db->table_prefix ?? '';
+			$config['log_table'] = $prefix . 'bad_behaviour';
+
+			return $config;
+		}
+
+		// Legacy fallback: load from file (CONFIG_DIR/bb_config.php)
 		$file = $this->production_config_path();
 
 		if ($file !== null) {
@@ -188,6 +211,20 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		}
 
 		return $parsed;
+	}
+
+	/**
+	 * Inject the Configuration object as the single source of truth.
+	 *
+	 * Called by BadBehaviour's bootstrap after Configuration::from_array().
+	 * Once set, get_settings() returns the Configuration's array form
+	 * instead of re-loading from disk.
+	 */
+	public function set_configuration(\BadBehaviour\Configuration $config): void
+	{
+		$this->configuration = $config;
+		$this->config_loaded = true;
+		$this->safe_mode = false;
 	}
 
 	// =========================================================================

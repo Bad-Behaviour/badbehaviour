@@ -86,9 +86,15 @@ $verbose = isset($opts['verbose']);
 fwrite(STDOUT, "[install-bb] Bootstrapping BadBehaviour...\n");
 
 try {
-    // Try MediaWiki first (most common install path); fall back to
-    // WackoWiki; fall back to Generic. In practice, host applications
-    // should call Configuration::from_file() with their adapter.
+    // Use GenericAdapter as the default — this script must work
+    // independently of any specific host application's adapter.
+    // Operators using a custom adapter (WackoWiki, MediaWiki, etc.)
+    // should subclass this script or pre-populate the cache via their
+    // own bootstrap; this one is intentionally adapter-agnostic.
+    //
+    // Note: GenericAdapter::get() returns null (in-memory stub),
+    // so any readback-based reporting would silently fail. We use
+    // $result->started_at for timestamps instead — see below.
     $adapter = new GenericAdapter();
     $config = Configuration::from_array(
         $adapter->get_settings(),
@@ -144,7 +150,15 @@ ERR
 // === Check if cache already exists and is fresh ===
 
 if (!$force) {
-    $cached = $cache->get(OnDemandRefresher::CACHE_KEY_MERGED);
+    try {
+        $cached = $cache->get(OnDemandRefresher::CACHE_KEY_MERGED);
+    } catch (\Throwable $e) {
+        // Some adapters (GenericAdapter) return null from get() without
+        // throwing; others (WackoWikiAdapter, MediaWikiAdapter) might
+        // throw on backend failures. Treat both as "no cache".
+        $cached = null;
+    }
+
     if ($cached !== null && is_array($cached) && isset($cached['fetched'])) {
         $age = time() - (int)$cached['fetched'];
         $floor = $config->on_demand_ip_refresh_min_age_seconds;
@@ -262,8 +276,36 @@ fwrite(STDOUT, sprintf(
 ));
 
 if ($result->cache_written) {
-    $payload = $cache->get(OnDemandRefresher::CACHE_KEY_MERGED);
-    $fetched_at = is_array($payload) ? ($payload['fetched'] ?? '?') : '?';
+    // === Timestamp source: $result->started_at ===
+    //
+    // OnDemandRefresher::do_refresh() sets started_at = now() - elapsed
+    // at construction time, so it's the timestamp at which the refresh
+    // began. We use it instead of reading the cache back because:
+    //
+    //   1. GenericAdapter::get() returns null (in-memory stub). Reading
+    //      back via $cache->get() would always show the cache as empty
+    //      even when it was just written.
+    //
+    //   2. Adapters that DO support get() might unwrap payloads
+    //      (WackoWikiAdapter returns $data['value'], not $data itself),
+    //      have schema drift in their on-disk format, or have clock-
+    //      granularity races between set() and get().
+    //
+    //   3. $result->started_at is always set when do_refresh() is
+    //      called, regardless of which adapter backs the cache.
+    //
+    //   4. It's accurate to within the refresh's elapsed time — for a
+    //      9-second refresh, the actual cache write happened up to 9
+    //      seconds after started_at. Close enough for an operator
+    //      checking whether the seed worked.
+    //
+    // If for some reason started_at is 0 or missing, fall back to the
+    // current time (the script just finished writing, so now() is a
+    // reasonable upper bound).
+    $fetched_at = $result->started_at > 0
+        ? $result->started_at
+        : time();
+
     fwrite(STDOUT, "[install-bb] Cache written (fetched_at={$fetched_at}).\n");
 } else {
     fwrite(STDOUT, "[install-bb] Cache NOT written (no data to write).\n");

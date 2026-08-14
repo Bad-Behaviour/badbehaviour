@@ -21,10 +21,23 @@ use PHPUnit\Framework\TestCase;
  *
  *   1. keep_bots (whitelist by bot ID)
  *   2. exclude_bots (blacklist by bot ID)
- *   3. include_categories (categories that may pass; null = no constraint)
- *   4. exclude_categories (categories that may not pass)
+ *   3. include_categories (STRICT whitelist by category — opt-in only)
+ *   4. exclude_categories (blacklist by category)
  *
- * Precedence (documented in the class docblock):
+ * === SEMANTICS ===
+ *
+ * include_categories is a STRICT WHITELIST when used directly with
+ * FilteredRegistry. If you set include_categories to ['cloud_infrastructure'],
+ * every bot NOT in that category is dropped — including Googlebot, GPTBot,
+ * etc.
+ *
+ * For the common "make sure these categories are present" intent (the
+ * safety-net pattern), use RegistryFactory::from_array() with the
+ * `include_categories` config key, which performs an ADDITIVE merge
+ * via MergedRegistry instead of strict whitelisting.
+ *
+ * === PRECEDENCE ===
+ *
  *   keep_bots  →  exclude_bots  →  include_categories  →  exclude_categories
  *
  * A bot must pass ALL active filters to appear in the filtered registry.
@@ -215,7 +228,7 @@ final class FilteredRegistryTest extends TestCase
 	}
 
 	// ============================================================
-	// 4. Category include-filter
+	// 4. Category include-filter (STRICT WHITELIST)
 	// ============================================================
 
 	public function test_include_categories_keeps_only_listed_categories(): void
@@ -255,6 +268,41 @@ final class FilteredRegistryTest extends TestCase
 
 		$this->assertCount(0, $filtered->all(),
 			'include_categories=[] must produce an empty registry (allowlist contains nothing)');
+	}
+
+	/**
+	 * Documents the strict-whitelist semantic of include_categories when
+	 * used directly with FilteredRegistry.
+	 *
+	 * This is the CORRECT behavior for FilteredRegistry in isolation —
+	 * include_categories is a gate, not a merge.
+	 *
+	 * For the additive merge semantic, use RegistryFactory::from_array()
+	 * with the include_categories config key. See RegistryFactoryTest.
+	 */
+	public function test_include_categories_drops_everything_not_listed_strict_whitelist(): void
+	{
+		$inner = $this->make_inner();
+
+		// Only cloud_infrastructure in the whitelist
+		$filtered = new FilteredRegistry(
+			$inner,
+			include_categories: ['cloud_infrastructure'],
+		);
+
+		// ONLY cloud bots pass
+		$this->assertTrue($filtered->has('cloudflare_health'));
+		$this->assertTrue($filtered->has('aws_elb_health'));
+		$this->assertCount(2, $filtered->all(),
+			'Strict whitelist: only 2 cloud bots, every other bot dropped');
+
+		// Every non-cloud bot is dropped — this is the documented semantic
+		$this->assertFalse($filtered->has('googlebot'),
+			'Strict whitelist semantic: googlebot (search_engine) DROPPED');
+		$this->assertFalse($filtered->has('gptbot'),
+			'Strict whitelist semantic: gptbot (ai_crawler) DROPPED');
+		$this->assertFalse($filtered->has('semrush'),
+			'Strict whitelist semantic: semrush (seo_crawler) DROPPED');
 	}
 
 	// ============================================================
@@ -399,6 +447,24 @@ final class FilteredRegistryTest extends TestCase
 		$this->assertCount(0, $filtered->seo_crawlers());
 	}
 
+	public function test_per_category_accessors_with_strict_include_whitelist(): void
+	{
+		$inner = $this->make_inner();
+		$filtered = new FilteredRegistry(
+			$inner,
+			include_categories: ['search_engine'],
+		);
+
+		// search_engines() returns the 2 search engine bots
+		$this->assertCount(2, $filtered->search_engines());
+
+		// All other category accessors return empty (strict whitelist)
+		$this->assertCount(0, $filtered->ai_crawlers());
+		$this->assertCount(0, $filtered->social_crawlers());
+		$this->assertCount(0, $filtered->seo_crawlers());
+		$this->assertCount(0, $filtered->cloud_infrastructure());
+	}
+
 	// ============================================================
 	// 8. find_by_ua / find_by_tokens are filter-aware
 	// ============================================================
@@ -433,6 +499,26 @@ final class FilteredRegistryTest extends TestCase
 
 		$this->assertNotContains('gptbot', $matches);
 		$this->assertNotContains('claude', $matches);
+	}
+
+	public function test_find_by_ua_respects_strict_whitelist(): void
+	{
+		$inner = $this->make_inner();
+		$filtered = new FilteredRegistry(
+			$inner,
+			include_categories: ['cloud_infrastructure'],
+		);
+
+		// UA matching googlebot/facebook should return NOTHING because
+		// those bots are filtered out by the strict whitelist
+		$matches = $filtered->find_by_ua('Mozilla/5.0 (compatible; Googlebot/2.1)');
+		$this->assertEmpty($matches,
+			'Strict whitelist: find_by_ua returns nothing for non-whitelisted bots');
+
+		// UA matching cloudflare_health should return it
+		$matches = $filtered->find_by_ua('Cloudflare-Healthcheck/1.0');
+		$this->assertContains('cloudflare_health', $matches,
+			'Strict whitelist: find_by_ua returns whitelisted bots');
 	}
 
 	// ============================================================
@@ -584,6 +670,47 @@ final class FilteredRegistryTest extends TestCase
 
 		$this->assertSame(sortAndKey($first), sortAndKey($second),
 			'all() must be deterministic across calls (internal cache is stable)');
+	}
+
+	// ============================================================
+	// 14. Strict-whitelist footgun documentation
+	// ============================================================
+
+	/**
+	 * Documents the failure mode that motivated the RegistryFactory change.
+	 *
+	 * The shipped config/bb_registry.php used:
+	 *   include_categories => ['cloud_infrastructure']
+	 * expecting a "safety net" that ADDED cloud bots to whatever the
+	 * preset selected. But FilteredRegistry's include_categories is a
+	 * STRICT WHITELIST — it DROPS every bot not in the list.
+	 *
+	 * Result: BotDetector's registry contained only 5 cloud bots instead
+	 * of ~100. Production deployments saw almost nothing blocked.
+	 *
+	 * This test encodes the strict-whitelist semantic so anyone who tries
+	 * to use FilteredRegistry directly for a safety-net pattern will see
+	 * a clear test failure pointing to RegistryFactory::from_array().
+	 *
+	 * See RegistryFactoryTest::test_shipped_file_pattern_yields_full_registry()
+	 * for the RegistryFactory-level test that verifies the FIX.
+	 */
+	public function test_direct_filtered_registry_with_only_cloud_yields_empty_real_registry(): void
+	{
+		$default = new DefaultRegistry();
+		$real_count = $default->count();
+
+		$filtered = new FilteredRegistry(
+			$default,
+			include_categories: ['cloud_infrastructure'],
+		);
+
+		// Direct use of FilteredRegistry with include_categories is the
+		// footgun pattern. Registry count drops to ~5 (cloud only).
+		$this->assertLessThan(10, $filtered->count(),
+			'Direct FilteredRegistry with include_categories=[cloud_infra] yields ~5 bots (footgun)');
+		$this->assertGreaterThan($filtered->count(), $real_count,
+			'Inner registry has many more bots than the filtered strict whitelist');
 	}
 }
 

@@ -32,15 +32,11 @@ use PHPUnit\Framework\TestCase;
  *
  *   A. FILTER EXECUTION ORDER (documented):
  *      1. Load preset base (or empty for 'custom')
- *      2. Apply exclude_categories
- *      3. Apply include_categories (ADDITIVE per docs, EXCLUSIVE in current impl)
- *      4. Apply exclude_bots
- *      5. Merge additions (custom bots on top, last-wins)
- *
- *      NOTE: In the current implementation, include_categories acts as
- *      an EXCLUSIVE filter (only listed categories pass), not the
- *      "re-add overrides exclude" semantic the docblock claims. These
- *      tests document the ACTUAL behavior.
+ *      2. Apply exclude_categories (subtractive)
+ *      3. Apply exclude_bots (subtractive)
+ *      4. Apply include_categories (ADDITIVE merge from full registry)
+ *      5. Apply only_categories (strict whitelist — opt-in)
+ *      6. Merge additions (custom bots on top, last-wins)
  *
  *   B. NEVER THROW on bad input — fall back to safe defaults. This is
  *      the most important contract: bb_registry.php is operator-controlled
@@ -84,49 +80,106 @@ final class RegistryFactoryTest extends TestCase
             'Step 2: exclude_categories applied after preset');
     }
 
+    public function test_order_step_2b_exclude_bots_drops_after_exclude_categories(): void
+    {
+        $registry = RegistryFactory::from_array([
+            'preset'             => 'minimal',
+            'exclude_categories' => ['seo_crawler'],
+            'exclude_bots'       => ['petal'],
+        ]);
+
+        $this->assertFalse($registry->has('petal'),
+            'Step 2b: exclude_bots applied after exclude_categories');
+    }
+
     /**
-     * Current implementation reality:
-     *   exclude_categories and include_categories are BOTH applied in
-     *   the same FilteredRegistry. Within that filter:
-     *     - include runs FIRST (bot must be in include list)
-     *     - exclude runs SECOND (bot must NOT be in exclude list)
-     *   If a category is in BOTH, the exclude wins (bot gets dropped).
+     * include_categories is ADDITIVE: it merges bots from a fresh
+     * DefaultRegistry whose category matches, without restricting
+     * the current selection.
      *
-     * This test documents that the current implementation does NOT
-     * match the docblock's "include overrides exclude" promise.
-     * If production is fixed to make include additive, flip this.
+     * Use case: "I want minimal preset, but I also want to make sure
+     * cloud_infrastructure bots are always present (safety net)."
+     *
+     * Implementation: builds a FilteredRegistry view of DefaultRegistry
+     * restricted to the requested categories, then MergedRegistrys it
+     * on top of the current selection.
      */
-    public function test_order_step_3_include_categories_excludes_other_categories(): void
+    public function test_order_step_4_include_categories_is_additive(): void
     {
-        // include_categories acts as an EXCLUSIVE filter: only bots
-        // whose category is in the list pass.
+        // minimal preset ships ~30 bots. Adding include_categories =>
+        // ['cloud_infrastructure'] should ADD cloud bots, not restrict
+        // the minimal selection to only cloud.
         $registry = RegistryFactory::from_array([
             'preset'             => 'minimal',
-            'include_categories' => ['search_engine'],
+            'include_categories' => ['cloud_infrastructure'],
         ]);
 
+        // Minimal bots still present (include_categories did not drop them)
         $this->assertTrue($registry->has('googlebot'),
-            'Bots in include_categories must be present');
-        $this->assertFalse($registry->has('facebook'),
-            'Bots NOT in include_categories must be dropped (exclusive filter)');
-        $this->assertFalse($registry->has('cloudflare_health'),
-            'Cloud infrastructure not in include_categories → dropped');
+            'include_categories is additive: googlebot (from minimal) still present');
+        $this->assertTrue($registry->has('gptbot'),
+            'include_categories is additive: gptbot (from minimal) still present');
+        $this->assertTrue($registry->has('facebook'),
+            'include_categories is additive: facebook (from minimal) still present');
+
+        // Cloud bots added from full registry
+        $this->assertTrue($registry->has('cloudflare_health'),
+            'include_categories is additive: cloudflare_health added from full registry');
+        $this->assertGreaterThan(0, count($registry->cloud_infrastructure()),
+            'include_categories is additive: cloud_infrastructure category populated');
     }
 
-    public function test_order_step_4_exclude_bots_drops_after_categories(): void
+    /**
+     * include_categories can FORCE-INCLUDE a category that was previously
+     * excluded. This is the safety-net pattern that the shipped file uses.
+     */
+    public function test_order_step_4b_include_categories_force_includes_excluded_category(): void
     {
+        // Exclude cloud_infrastructure, then force-include it back via
+        // include_categories. The merge in step 4 should restore it.
         $registry = RegistryFactory::from_array([
             'preset'             => 'minimal',
-            'exclude_bots'       => ['gptbot', 'claude'],
+            'exclude_categories' => ['cloud_infrastructure'],
+            'include_categories' => ['cloud_infrastructure'],
         ]);
 
-        $this->assertFalse($registry->has('gptbot'));
-        $this->assertFalse($registry->has('claude'));
-        $this->assertTrue($registry->has('perplexity'),
-            'Step 4 only drops the bots in exclude_bots, not the whole category');
+        $this->assertNotEmpty($registry->cloud_infrastructure(),
+            'include_categories force-includes a category previously excluded');
+        $this->assertTrue($registry->has('cloudflare_health'),
+            'cloudflare_health restored by include_categories after exclude');
     }
 
-    public function test_order_step_5_additions_merged_on_top(): void
+    /**
+     * only_categories is a STRICT whitelist (opt-in). It restricts the
+     * registry to ONLY bots in the listed categories.
+     *
+     * Use case: closed intranet with only monitoring + cloud_infrastructure.
+     * For the common "make sure these are present" intent, use
+     * include_categories (additive) instead.
+     */
+    public function test_order_step_5_only_categories_is_strict_whitelist(): void
+    {
+        $registry = RegistryFactory::from_array([
+            'preset'         => 'full',
+            'only_categories' => ['monitoring', 'cloud_infrastructure'],
+        ]);
+
+        // Bots in only_categories whitelist
+        $this->assertTrue($registry->has('cloudflare_health'),
+            'only_categories: cloudflare_health (in whitelist) present');
+
+        // Bots NOT in only_categories — dropped
+        $this->assertFalse($registry->has('googlebot'),
+            'only_categories strict: googlebot (search_engine) DROPPED');
+        $this->assertFalse($registry->has('gptbot'),
+            'only_categories strict: gptbot (ai_crawler) DROPPED');
+
+        // Registry count should be small (only 2 categories × bots)
+        $this->assertLessThan(15, $registry->count(),
+            'only_categories strict: registry count is small (whitelist only)');
+    }
+
+    public function test_order_step_6_additions_merged_on_top(): void
     {
         $registry = RegistryFactory::from_array([
             'preset'    => 'minimal',
@@ -140,21 +193,21 @@ final class RegistryFactoryTest extends TestCase
         ]);
 
         $this->assertTrue($registry->has('internal_bot'),
-            'Step 5: additions must appear in the merged registry');
+            'Step 6: additions must appear in the merged registry');
     }
 
     public function test_order_full_pipeline_produces_correct_registry(): void
     {
         // Exercise every step at once and verify the final composition.
         //
-        // Step 3 (include_categories) is EXCLUSIVE in current implementation,
-        // so we deliberately do NOT include include_categories in this test.
-        // The cloud_infrastructure safety relies on the minimal preset
-        // shipping cloud bots, not on include_categories re-adding them.
+        // Step 4 (include_categories) is ADDITIVE in current implementation,
+        // so we can safely include it. The cloud_infrastructure safety net
+        // works via additive merge, not via preset-restoration.
         $registry = RegistryFactory::from_array([
             'preset'             => 'minimal',
             'exclude_categories' => ['seo_crawler', 'social_crawler'],
             'exclude_bots'       => ['petal'],
+            'include_categories' => ['cloud_infrastructure'],
             'additions'          => [
                 'my_internal_monitor' => [
                     'name'                => 'My Internal Monitor',
@@ -172,15 +225,26 @@ final class RegistryFactoryTest extends TestCase
         $this->assertSame([], $registry->seo_crawlers());
         $this->assertSame([], $registry->social_crawlers());
 
-        // Cloud infra present (was always in minimal, not dropped by exclude)
+        // Step 4: cloud_infrastructure added via additive merge
         $this->assertNotEmpty($registry->cloud_infrastructure());
+        $this->assertTrue($registry->has('cloudflare_health'),
+            'Step 4: cloud_infra bots added via include_categories');
 
-        // Step 4: petal excluded (minimal doesn't include petal anyway,
+        // Step 2b: petal excluded (minimal doesn't include petal anyway,
         // but the configuration is honored)
         $this->assertFalse($registry->has('petal'));
 
-        // Step 5: additions present
+        // Step 6: additions present
         $this->assertTrue($registry->has('my_internal_monitor'));
+
+        // Final composition check: count is minimal (~30) + cloud (~5)
+        // + addition (1) — but excludes seo_crawler and social_crawler bots
+        $expected_min = 30;  // minimal preset base
+        $expected_max = 50;  // reasonable upper bound
+        $this->assertGreaterThanOrEqual($expected_min, $registry->count(),
+            'Full pipeline: count includes minimal + cloud (additive) + addition');
+        $this->assertLessThanOrEqual($expected_max, $registry->count(),
+            'Full pipeline: count is bounded (no accidental explosion)');
     }
 
     // ============================================================
@@ -225,6 +289,20 @@ final class RegistryFactoryTest extends TestCase
         $this->assertFalse($registry->has('claude'));
     }
 
+    public function test_non_array_include_categories_string_is_coerced(): void
+    {
+        // String CSV form is supported and treated as additive merge
+        $registry = RegistryFactory::from_array([
+            'preset'             => 'minimal',
+            'include_categories' => 'cloud_infrastructure',
+        ]);
+
+        $this->assertTrue($registry->has('googlebot'),
+            'include_categories as string: additive merge, googlebot (minimal) present');
+        $this->assertTrue($registry->has('cloudflare_health'),
+            'include_categories as string: cloud_infra added');
+    }
+
     public function test_empty_config_is_valid(): void
     {
         $registry = RegistryFactory::from_array([]);
@@ -234,29 +312,34 @@ final class RegistryFactoryTest extends TestCase
     public function test_invalid_categories_values_are_tolerated(): void
     {
         // Bogus category names that don't match any BotCategory enum value
-        // must not crash. The behavior depends on whether include_categories
-        // is also set:
+        // must not crash. The behavior depends on which filter uses them:
         //
-        //   - With include_categories: acts as exclusive filter.
-        //     No bot matches 'not_a_real_category' → all bots filtered out.
-        //   - With only exclude_categories: acts as no-op (no match).
-        $registry_no_include = RegistryFactory::from_array([
+        //   - exclude_categories with bogus value: no-op (no bot matches)
+        //   - include_categories with bogus value: no-op (no bot added)
+        //   - only_categories with bogus value: no-op (empty registry)
+        $registry_exclude = RegistryFactory::from_array([
             'preset'             => 'minimal',
             'exclude_categories' => ['not_a_real_category'],
         ]);
 
-        $this->assertTrue($registry_no_include->has('googlebot'),
+        $this->assertTrue($registry_exclude->has('googlebot'),
             'Bogus exclude_categories is a no-op filter');
 
-        // With include_categories, only matching categories pass.
-        // 'also_bogus' matches no real category → empty registry.
-        $registry_with_include = RegistryFactory::from_array([
+        $registry_include = RegistryFactory::from_array([
             'preset'             => 'minimal',
             'include_categories' => ['also_bogus'],
         ]);
 
-        $this->assertFalse($registry_with_include->has('googlebot'),
-            'With include_categories matching nothing, registry is empty');
+        $this->assertTrue($registry_include->has('googlebot'),
+            'Bogus include_categories adds nothing (but does not drop minimal bots)');
+
+        $registry_only = RegistryFactory::from_array([
+            'preset'         => 'minimal',
+            'only_categories' => ['yet_another_bogus'],
+        ]);
+
+        $this->assertSame(0, $registry_only->count(),
+            'Bogus only_categories: empty registry (whitelist matches nothing)');
     }
 
     // ... [keep tests 7-12 unchanged]
@@ -304,6 +387,80 @@ final class RegistryFactoryTest extends TestCase
             implode(', ', $missing) . '. Blocking CDN/LB probes takes origin offline.');
     }
 
+    /**
+     * include_categories with 'cloud_infrastructure' must ADD cloud bots
+     * even when the preset would otherwise exclude them.
+     *
+     * Regression guard for the silent production breakage where the
+     * shipped config/bb_registry.php used include_categories =>
+     * ['cloud_infrastructure'] expecting it to be a safety net, but the
+     * old implementation treated it as a strict whitelist that dropped
+     * every other bot.
+     *
+     * The new implementation: include_categories is ADDITIVE. This test
+     * verifies that contract directly.
+     */
+    public function test_include_categories_adds_cloud_infrastructure_safely(): void
+    {
+        // Start from a restrictive scenario: exclude cloud_infra, then
+        // force-include it back via include_categories. The merge must
+        // restore the cloud bots WITHOUT dropping the rest of minimal.
+        $registry = RegistryFactory::from_array([
+            'preset'             => 'minimal',
+            'exclude_categories' => ['cloud_infrastructure'],
+            'include_categories' => ['cloud_infrastructure'],
+        ]);
+
+        // Cloud bots present (added by include_categories)
+        $this->assertNotEmpty($registry->cloud_infrastructure(),
+            'include_categories restored cloud_infrastructure after exclude');
+
+        // Other minimal bots still present (NOT dropped by include_categories)
+        $this->assertTrue($registry->has('googlebot'),
+            'googlebot still present (include_categories is additive, not restrictive)');
+        $this->assertTrue($registry->has('gptbot'),
+            'gptbot still present (include_categories is additive, not restrictive)');
+
+        // Count should be reasonable: minimal (~30) + cloud (~5) ≈ 35
+        $this->assertGreaterThanOrEqual(30, $registry->count(),
+            'Count reflects minimal + cloud merge, not just one of them');
+    }
+
+    /**
+     * Regression test: the OLD shipped config/bb_registry.php used
+     * include_categories => ['cloud_infrastructure'] expecting safety-net
+     * behavior, but the old implementation interpreted this as a strict
+     * whitelist and dropped every other bot. This test verifies the
+     * NEW additive behavior produces a reasonable registry.
+     */
+    public function test_shipped_file_pattern_yields_full_registry(): void
+    {
+        // This is the exact pattern the shipped config/bb_registry.php
+        // used (before the fix). With the new additive semantic, this
+        // must produce a registry with ALL minimal bots PLUS cloud bots,
+        // not just cloud bots.
+        $registry = RegistryFactory::from_array([
+            'preset'             => 'full',
+            'include_categories' => ['cloud_infrastructure'],
+        ]);
+
+        // ALL major bot categories should be present
+        $this->assertNotEmpty($registry->search_engines(),
+            'search_engine bots present (include_categories is additive)');
+        $this->assertNotEmpty($registry->ai_crawlers(),
+            'ai_crawler bots present (include_categories is additive)');
+        $this->assertNotEmpty($registry->social_crawlers(),
+            'social_crawler bots present (include_categories is additive)');
+        $this->assertNotEmpty($registry->seo_crawlers(),
+            'seo_crawler bots present (include_categories is additive)');
+        $this->assertNotEmpty($registry->cloud_infrastructure(),
+            'cloud_infrastructure bots present (safety net)');
+
+        // Spot-check: count is roughly the full preset count
+        $this->assertGreaterThan(80, $registry->count(),
+            'Full preset + additive cloud_infra yields ~100+ bots, not ~5');
+    }
+
     public static function presetCloudSafetyProvider(): array
     {
         return [
@@ -317,23 +474,25 @@ final class RegistryFactoryTest extends TestCase
     }
 
     // ============================================================
-    // 11. Composition operators (documented current behavior)
+    // 11. Composition operators (documented additive behavior)
     // ============================================================
 
     /**
-     * Current implementation reality:
-     *   include_categories and exclude_categories are applied in the SAME
-     *   FilteredRegistry. Within that filter:
-     *     - include runs first (must match)
-     *     - exclude runs second (must NOT match)
-     *   So exclude_categories wins over include_categories when both
-     *   contain the same category.
+     * include_categories is ADDITIVE: it merges bots from the full
+     * registry, not restricts the current selection.
      *
-     * The docblock claims "include overrides exclude" — this test
-     * documents that the current implementation does the OPPOSITE.
-     * When production is fixed, flip this test.
+     * Previous implementation (and the test name "test_include_categories_does_not_re_add_excluded_category")
+     * documented that exclude_categories wins over include_categories.
+     * That semantic was a footgun: it meant the shipped file's safety-net
+     * pattern (`include_categories => ['cloud_infrastructure']`) silently
+     * dropped every other bot from BotDetector.
+     *
+     * The new implementation: include_categories ADDS from a fresh
+     * DefaultRegistry. So a category excluded in step 2 can be re-added
+     * by include_categories in step 4. This is the actual safety-net
+     * semantic users expect.
      */
-    public function test_include_categories_does_not_re_add_excluded_category(): void
+    public function test_include_categories_re_adds_excluded_category_via_additive_merge(): void
     {
         $registry = RegistryFactory::from_array([
             'preset'             => 'full',
@@ -341,21 +500,84 @@ final class RegistryFactoryTest extends TestCase
             'include_categories' => ['ai_crawler'],
         ]);
 
-        $this->assertEmpty($registry->ai_crawlers(),
-            'exclude_categories wins over include_categories in current implementation');
+        $this->assertNotEmpty($registry->ai_crawlers(),
+            'include_categories ADDS ai_crawler back (additive merge from DefaultRegistry)');
+        $this->assertTrue($registry->has('gptbot'),
+            'gptbot restored by include_categories after exclude');
     }
 
-    public function test_include_categories_cannot_force_include_a_category_excluded_via_preset(): void
+    /**
+     * include_categories can ADD a category that the preset stripped out.
+     *
+     * 'no-ai' preset drops AI crawlers. With the new additive semantic,
+     * adding include_categories => ['ai_crawler'] restores them via
+     * merge from DefaultRegistry — even though the preset base has none.
+     */
+    public function test_include_categories_restores_category_stripped_by_preset(): void
     {
-        // 'no-ai' preset drops AI crawlers. With current implementation,
-        // adding include_categories=['ai_crawler'] AFTER the preset
-        // cannot restore them — they're gone from the base.
         $registry = RegistryFactory::from_array([
             'preset'             => 'no-ai',
             'include_categories' => ['ai_crawler'],
         ]);
 
-        $this->assertEmpty($registry->ai_crawlers(),
-            "'no-ai' preset strips AI crawlers from the base; include_categories cannot restore them");
+        $this->assertNotEmpty($registry->ai_crawlers(),
+            "include_categories restores ai_crawler even from 'no-ai' preset (additive merge)");
+        $this->assertTrue($registry->has('gptbot'),
+            "gptbot present after include_categories restores ai_crawler from 'no-ai'");
+    }
+
+    /**
+     * only_categories DOES override include_categories when both are
+     * set. only_categories is applied AFTER include_categories and is
+     * an exclusive filter.
+     *
+     * This is intentional: only_categories is the explicit "whitelist
+     * mode" and should win over the additive include_categories.
+     */
+    public function test_only_categories_overrides_include_categories(): void
+    {
+        $registry = RegistryFactory::from_array([
+            'preset'             => 'minimal',
+            'include_categories' => ['ai_crawler', 'cloud_infrastructure'],
+            'only_categories'    => ['monitoring', 'cloud_infrastructure'],
+        ]);
+
+        // only_categories whitelist applied (monitoring + cloud only)
+        $this->assertTrue($registry->has('cloudflare_health'),
+            'cloud_infrastructure in only_categories: present');
+        $this->assertFalse($registry->has('googlebot'),
+            'googlebot not in only_categories: DROPPED despite include_categories');
+        $this->assertFalse($registry->has('gptbot'),
+            'gptbot not in only_categories: DROPPED despite include_categories');
+
+        // Registry is strictly the only_categories whitelist
+        $this->assertLessThan(15, $registry->count(),
+            'only_categories is final say: registry is small (whitelist only)');
+    }
+
+    /**
+     * additions override everything else (last-wins semantics in
+     * MergedRegistry). An addition with the same ID as an included bot
+     * replaces it.
+     */
+    public function test_additions_override_included_bots(): void
+    {
+        $registry = RegistryFactory::from_array([
+            'preset'    => 'minimal',
+            'additions' => [
+                'googlebot' => [
+                    'name'                => 'Custom Googlebot Override',
+                    'user_agent_patterns' => ['CustomGooglebot'],
+                    'category'            => 'search_engine',
+                ],
+            ],
+        ]);
+
+        $bot = $registry->get('googlebot');
+        $this->assertNotNull($bot);
+        $this->assertSame('Custom Googlebot Override', $bot->name,
+            'additions with same ID override the merged registry entry (last-wins)');
+        $this->assertSame(['CustomGooglebot'], $bot->user_agent_patterns,
+            'Override replaces user_agent_patterns, not merges');
     }
 }

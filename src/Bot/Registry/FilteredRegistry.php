@@ -17,24 +17,32 @@ use BadBehaviour\Bot\RegistryTokens;
  *     then filter results (no second cache layer needed — inner registry's
  *     results are already efficient)
  *
- * Use cases:
- *   - Apply `exclude_bots` from config to a default registry
- *   - Build `minimal`/`verified-only`/`no-ai` style subsets
- *   - Drop a category (e.g., "no SEO crawlers in my registry")
+ * === SEMANTICS ===
  *
- * === EXAMPLE ===
+ *   - keep_bots:              WHITELIST by ID. When non-empty, SOLE gate.
+ *   - exclude_bots:           Blacklist by ID. Drops specific bots.
+ *   - include_categories:     STRICT WHITELIST by category. When non-empty,
+ *                             ONLY bots in these categories pass.
+ *   - exclude_categories:     Drops bots in these categories.
  *
- * ```php
- * $filtered = new FilteredRegistry(
- *     inner: new DefaultRegistry(),
- *     exclude_bots: ['petal', 'brightdata'],
- *     exclude_categories: ['seo_crawler'],
- * );
- * ```
+ * === WHEN TO USE include_categories ===
+ *
+ * include_categories is a STRICT WHITELIST. If you set it to
+ * ['cloud_infrastructure'], every bot NOT in that category is dropped —
+ * including Googlebot, GPTBot, etc. This is rarely what you want.
+ *
+ * The common intent ("make sure cloud_infrastructure is always present
+ * even after I've filtered aggressively") requires ADDITIVE merging,
+ * not strict whitelisting. Use RegistryFactory::from_array() with
+ * `include_categories` (which does additive merge) rather than
+ * constructing FilteredRegistry directly with include_categories.
+ *
+ * For genuine whitelist use cases (closed intranets, minimal curated
+ * subsets), use RegistryFactory's `only_categories` config key.
  *
  * === FILTER PRECEDENCE (applied to each bot) ===
  *
- *   1. Keep-list (whitelist) — bot must be in this list to pass.
+ *   1. Keep-list (whitelist by ID) — bot must be in this list to pass.
  *      When the keep-list is non-empty, it is the SOLE gate: bots
  *      in the keep-list pass unconditionally (immune to exclude_bots
  *      and category filters), and bots NOT in the keep-list are
@@ -42,7 +50,8 @@ use BadBehaviour\Bot\RegistryTokens;
  *      just admission.
  *
  *   2. Exclude-list — bot must NOT be in this list
- *   3. Category include — bot's category must be in this list (if set)
+ *   3. Category include — bot's category must be in this list (if set).
+ *      STRICT WHITELIST — drops everything else. See note above.
  *   4. Category exclude — bot's category must NOT be in this list
  *
  * Steps 2-4 only run when the keep-list is empty (or the bot wasn't
@@ -52,6 +61,23 @@ use BadBehaviour\Bot\RegistryTokens;
  * be undermined by a broader blacklist).
  *
  * A bot must pass ALL active filters.
+ *
+ * === EXAMPLE ===
+ *
+ * ```php
+ * // Drop SEO crawlers and specific bots (additive thinking)
+ * $filtered = new FilteredRegistry(
+ *     inner: new DefaultRegistry(),
+ *     exclude_bots: ['petal', 'brightdata'],
+ *     exclude_categories: ['seo_crawler'],
+ * );
+ *
+ * // Strict whitelist — only these categories
+ * $minimal = new FilteredRegistry(
+ *     inner: new DefaultRegistry(),
+ *     include_categories: ['search_engine', 'cloud_infrastructure'],
+ * );
+ * ```
  */
 class FilteredRegistry implements RegistryInterface
 {

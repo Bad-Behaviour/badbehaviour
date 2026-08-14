@@ -88,6 +88,39 @@ foreach ($required_keys as $key) {
 }
 echo "\n";
 
+echo "=== Registry filter keys ===\n";
+
+$registry_keys = [
+	'include_categories' => 'ADDITIVE merge from full registry (safety net pattern)',
+	'exclude_categories' => 'Subtractive — drops these categories from preset',
+	'only_categories'    => 'STRICT whitelist — drops everything else (rare)',
+	'exclude_bots'       => 'Subtractive — drops specific bot IDs',
+	'additions'          => 'Custom bots merged on top',
+];
+
+foreach ($registry_keys as $key => $description) {
+	$exists = array_key_exists($key, $flat);
+	$value = $flat[$key] ?? 'NOT SET';
+	$marker = $exists ? '✓ SET' : '  --';
+	echo sprintf("  %s  %-20s %s\n", $marker, $key, $description);
+	if ($exists && $key === 'include_categories') {
+		echo "      → include_categories is ADDITIVE (merges bots from full registry).\n";
+		echo "        Common use: 'include_categories' => ['cloud_infrastructure']\n";
+		echo "        to add back cloud probes after aggressive filtering.\n";
+	}
+}
+
+echo "\n=== Required keys check ===\n";
+foreach ($required_keys as $key) {
+	$exists = array_key_exists($key, $flat);
+	$value = $flat[$key] ?? 'MISSING';
+	echo sprintf("  %s: %s (value: %s)\n",
+		$key,
+		$exists ? 'EXISTS' : 'MISSING',
+		is_array($value) ? json_encode($value) : var_export($value, true)
+		);
+}
+
 // Step 6: Construct Configuration and inspect
 echo "=== Configuration object state ===\n";
 try {

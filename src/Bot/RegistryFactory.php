@@ -76,7 +76,6 @@ class RegistryFactory
 				try {
 					$registry = Presets::load($preset);
 				} catch (\InvalidArgumentException $e) {
-					// Unknown preset name — fall back to full
 					ErrorReporter::error(null,
 						'BadBehaviour registry preset invalid; using default',
 						[
@@ -85,7 +84,7 @@ class RegistryFactory
 							'hint' => 'Valid presets: ' . implode(', ', Presets::AVAILABLE),
 						],
 						'registry_preset_invalid'
-					);
+						);
 					$registry = Presets::load('full');
 				} catch (\Throwable $e) {
 					ErrorReporter::error(null, 'BadBehaviour registry preset load failed', [
@@ -96,43 +95,94 @@ class RegistryFactory
 				}
 			}
 
-			// === Step 2: Apply category filters ===
+			// === Step 2: Apply subtractive filters ===
+			// exclude_categories / exclude_bots REMOVE bots from the current selection.
+			// These are subtractive: they take away, they don't add.
 			$exclude_categories = self::ensure_array($config['exclude_categories'] ?? []);
-			$include_categories = isset($config['include_categories'])
-				? self::ensure_array($config['include_categories'])
-				: null;
-
-			if (!empty($exclude_categories) || $include_categories !== null) {
-				$registry = new FilteredRegistry(
-					$registry,
-					include_categories: $include_categories,
-					exclude_categories: $exclude_categories,
-				);
-			}
-
-			// === Step 3: Apply exclude_bots ===
 			$exclude_bots = self::ensure_array($config['exclude_bots'] ?? []);
-			if (!empty($exclude_bots)) {
+
+			if (!empty($exclude_categories) || !empty($exclude_bots)) {
 				$registry = new FilteredRegistry(
 					$registry,
 					exclude_bots: $exclude_bots,
-				);
+					exclude_categories: $exclude_categories,
+					);
 			}
 
-			// === Step 4: Apply additions (merged on top) ===
-			$additions = self::ensure_array($config['additions'] ?? []);
-			if (!empty($additions)) {
+			// === Step 3: Apply include_categories (additive merge — Option B) ===
+			//
+			// include_categories is ADDITIVE: it MERGES bots from the full default
+			// registry whose category matches, without restricting the current selection.
+			//
+			// This is the safety-net pattern. Use case: "I've selected `minimal`
+			// and excluded `seo_crawler`, but I want to make sure cloud_infrastructure
+			// probes are still recognized." include_categories => ['cloud_infrastructure']
+			// adds those bots back from the full registry.
+			//
+			// Implementation: build a filtered view of DefaultRegistry restricted
+			// to the requested categories, then merge on top of the current selection.
+			// The MergeRegistry's "last wins" semantics mean user overrides in
+			// `additions` still take priority.
+			//
+			// === SEMANTIC CHANGE (Option B) ===
+			//
+			// Previous behavior: include_categories was a strict whitelist that
+			// DROPPED every bot not in the list. This was a footgun: shipping
+			// `include_categories => ['cloud_infrastructure']` as a "safety net"
+			// silently dropped all 95+ other bots. See git history for details.
+			//
+			// If you genuinely want strict whitelist behavior, use only_categories.
+			$include_categories = self::ensure_array($config['include_categories'] ?? []);
+			if (!empty($include_categories)) {
 				try {
-					$custom = new CustomRegistry($additions);
-					$registry = new MergedRegistry([$registry, $custom]);
+					// Build the safety-net view: every bot in the requested categories,
+					// sourced from a fresh DefaultRegistry (not the current $registry,
+					// which may have already been filtered down).
+						$safety_net = new FilteredRegistry(
+							new DefaultRegistry(),
+							include_categories: $include_categories,
+							);
+						$registry = new MergedRegistry([$registry, $safety_net]);
 				} catch (\Throwable $e) {
-					ErrorReporter::error(null, 'BadBehaviour registry additions failed; skipped', [
+					ErrorReporter::error(null, 'BadBehaviour registry include_categories failed; skipped', [
 						'error' => $e->getMessage(),
-					], 'registry_additions_failed');
+						'include_categories' => $include_categories,
+					], 'registry_include_categories_failed');
 				}
 			}
 
-			return $registry;
+			// === Step 4: Apply only_categories (strict whitelist — explicit opt-in) ===
+			//
+			// only_categories RESTRICTS the registry to ONLY the listed categories.
+			// Use this when you genuinely want a minimal whitelist (e.g., a closed
+			// intranet with only monitoring + cloud_infrastructure bots).
+				//
+				// For the common "make sure these are present" use case, use
+				// include_categories instead — it's additive and safer.
+				$only_categories = self::ensure_array($config['only_categories'] ?? []);
+				if (!empty($only_categories)) {
+					$registry = new FilteredRegistry(
+						$registry,
+						include_categories: $only_categories,
+						);
+				}
+
+				// === Step 5: Apply additions (merged on top) ===
+				// additions are merged last so they override any filtered or merged
+				// registry entries with the same ID.
+				$additions = self::ensure_array($config['additions'] ?? []);
+				if (!empty($additions)) {
+					try {
+						$custom = new CustomRegistry($additions);
+						$registry = new MergedRegistry([$registry, $custom]);
+					} catch (\Throwable $e) {
+						ErrorReporter::error(null, 'BadBehaviour registry additions failed; skipped', [
+							'error' => $e->getMessage(),
+						], 'registry_additions_failed');
+					}
+				}
+
+				return $registry;
 		} catch (\Throwable $e) {
 			// Last-resort: even our error handling failed. Return empty registry
 			// rather than crash the host app.
@@ -231,7 +281,12 @@ class RegistryFactory
 			$candidates = [
 				defined('CONFIG_DIR') ? CONFIG_DIR . '/bb_registry.php' : null,
 				'config/bb_registry.php',
-				__DIR__ . '/../../config/bb_registry.php',
+				// REMOVED: __DIR__ . '/../../config/bb_registry.php'
+				// The package directory file is a test fixture / default-fallback
+				// ONLY. Loading it in production silently breaks BotDetector
+				// because the shipped bb_registry.php uses include_categories
+				// as a "safety net" — which FilteredRegistry interprets as a
+				// strict whitelist, dropping every bot that isn't cloud_infra.
 			];
 
 			foreach (array_filter($candidates) as $path) {

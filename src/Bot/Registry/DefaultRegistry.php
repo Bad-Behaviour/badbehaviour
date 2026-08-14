@@ -480,13 +480,19 @@ class DefaultRegistry implements RegistryInterface
 			'marginalia' => new BotDefinition(
 				id: 'marginalia',
 				name: 'Marginalia Search (Indie)',
-				user_agent_patterns: ['MarginaliaBot', 'marginalia.nu'],
-				host_patterns: ['marginalia.nu'],
-				ip_ranges: [],
+				user_agent_patterns: ['search.marginalia.nu', 'MarginaliaBot'],
+				host_patterns: ['marginalia.nu', 'search.marginalia.nu'],
+				ip_ranges: [
+					'81.170.128.52/32',
+					'193.183.0.162/31',
+					'193.183.0.164/30',
+					'193.183.0.168/30',
+					'193.183.0.172/31',
+				],
 				verify_dns: false,
 				dns_suffixes: [],
 				category: BotCategory::SEARCH_ENGINE,
-				robots_txt_token: 'MarginaliaBot',
+				robots_txt_token: 'search.marginalia.nu',
 				description: 'Indie/non-commercial search engine focused on non-commercial content.',
 			),
 			'centrum' => new BotDefinition(

@@ -692,11 +692,11 @@ final class OnDemandRefresher
      */
     private function bot_id_allowed(string $bot_id): bool
     {
-        $allowed = $this->options['bot_ids'];
-        if ($allowed === null) {
-            return true;
-        }
-        return in_array($bot_id, $allowed, true);
+    	$allowed = $this->options['bot_ids'];
+    	if ($allowed === null || $allowed === []) {
+    		return true;
+    	}
+    	return in_array($bot_id, $allowed, true);
     }
 
     /**

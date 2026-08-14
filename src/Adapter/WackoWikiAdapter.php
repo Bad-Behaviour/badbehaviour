@@ -261,7 +261,6 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 				//   * host:            VARCHAR(2083) → VARCHAR(253)   [RFC 1035 max hostname]
 				//   * *_hash columns:   CHAR(40) SHA-1 → CHAR(16) half-SHA-256 [admin grouping only]
 				//   * status_code:     VARCHAR(50) → VARCHAR(32)       [longest enum value = 26 chars]
-				//   * bot_category:    VARCHAR(32) → VARCHAR(20)       [longest enum value = 20 chars]
 				//   * status_message:  TEXT → VARCHAR(255)             [dynamic context, capped]
 				//   * h2_hash:         DROPPED                        [was empty in 99% of rows]
 				//   * header_order_hash: DROPPED                       [was empty in 99% of rows]
@@ -282,7 +281,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					\"status_code\" VARCHAR(32) NOT NULL DEFAULT '',
 					\"status_message\" VARCHAR(255),
 					\"support_key\" VARCHAR(64),
-					\"bot_category\" VARCHAR(20),
+					\"bot_category\" VARCHAR(32),
 					\"bot_verified\" BOOLEAN DEFAULT 0,
 					\"ja3\" CHAR(32),
 					\"asn\" VARCHAR(32),
@@ -309,7 +308,6 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 				//   * host:             VARCHAR(2083) → VARCHAR(253)  [RFC 1035 max hostname]
 				//   * *_hash columns:   CHAR(40) SHA-1 → CHAR(16) half-SHA-256 [admin grouping only]
 				//   * status_code:      VARCHAR(50) → VARCHAR(32)      [longest enum value = 26 chars]
-				//   * bot_category:     VARCHAR(32) → VARCHAR(20)      [longest enum value = 20 chars]
 				//   * status_message:   TEXT → VARCHAR(255)            [dynamic context, capped]
 				//   * h2_hash:          DROPPED                       [was empty in 99% of rows]
 				//   * header_order_hash: DROPPED                       [was empty in 99% of rows]
@@ -332,7 +330,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					`status_code` VARCHAR(32) NOT NULL DEFAULT '',
 					`status_message` VARCHAR(255),
 					`support_key` VARCHAR(64),
-					`bot_category` VARCHAR(20),
+					`bot_category` VARCHAR(32),
 					`bot_verified` BOOLEAN DEFAULT 0,
 					`ja3` CHAR(32),
 					`asn` VARCHAR(32),

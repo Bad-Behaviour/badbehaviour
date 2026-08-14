@@ -22,6 +22,7 @@ use BadBehaviour\Detection\DnsblDetector;
 use BadBehaviour\Detection\FingerprintDetector;
 use BadBehaviour\Detection\HeadRequestDetector;
 use BadBehaviour\Detection\RateLimitDetector;
+use BadBehaviour\Feeds\OnDemandRefresher;
 use BadBehaviour\Util\ErrorReporter;
 use BadBehaviour\Util\HeaderUtil;
 use BadBehaviour\Util\IpUtil;
@@ -1369,11 +1370,16 @@ class BadBehaviour
 		}
 
 		// Skip if cache already has data (any non-empty payload counts).
-		$existing = $this->cache !== null
-		? $this->cache->get(OnDemandRefresher::CACHE_KEY_MERGED)
-		: ($this->adapter instanceof CacheInterface
-			? $this->adapter->get(OnDemandRefresher::CACHE_KEY_MERGED)
-			: null);
+		try {
+			$existing = $this->cache !== null
+				? $this->cache->get(OnDemandRefresher::CACHE_KEY_MERGED)
+				: ($this->adapter instanceof CacheInterface
+					? $this->adapter->get(OnDemandRefresher::CACHE_KEY_MERGED)
+					: null);
+		} catch (\Throwable $e) {
+			$existing = null;
+		}
+
 		if (is_array($existing) && !empty($existing['data'])) {
 			return;
 		}

@@ -176,7 +176,6 @@ return [
     'inspect_json_body'               => false,
     'inspect_multipart_body'          => false,
     'enable_behavioral_analysis'      => true,
-    'enable_ai_crawler_control'       => true,
     'enable_client_hints_validation'  => false,
     'enable_agentic_detection'        => false,
     'enable_dynamic_ip_ranges'        => false,
@@ -447,7 +446,6 @@ return [
     'inspect_json_body'               => false,
     'inspect_multipart_body'          => false,
     'enable_behavioral_analysis'      => true,   // safe (rotating UA, rate)
-    'enable_ai_crawler_control'       => true,
     'enable_client_hints_validation'  => false,  // would break old Firefox/IE
     'enable_agentic_detection'        => false,  // would break power users
     'enable_dynamic_ip_ranges'        => false,  // experimental
@@ -1407,7 +1405,6 @@ These are the new detectors. **All default to `false`** for legacy compatibility
 | `inspect_json_body` | bool | `false` | 🔴 **HIGH** | Apply attack patterns to JSON bodies |
 | `inspect_multipart_body` | bool | `false` | 🔴 **HIGH** | Apply attack patterns to multipart uploads |
 | `enable_behavioral_analysis` | bool | `true` | 🟢 **LOW** | Rate/UA/think-time heuristics |
-| `enable_ai_crawler_control` | bool | `true` | 🟢 **LOW** | Verified AI allowlist enforcement |
 | `enable_client_hints_validation` | bool | `false` | 🟡 **MEDIUM** | Sec-CH-UA cross-check (requires Chromium 89+) |
 | `enable_agentic_detection` | bool | `false` | 🟡 **MEDIUM** | AI-agent pattern detection (think-then-fetch, precision) |
 | `enable_dynamic_ip_ranges` | bool | `false` | 🟡 **EXPERIMENTAL** | Use FeedRegistry (requires cron, see [`dynamic_ip_ranges`](#dynamic-ip-ranges-dynamic_ip_ranges)) |
@@ -1490,7 +1487,6 @@ de = "DE"
 | `block_unverified_ai` | 🟢 LOW | `true` | Keep enabled |
 | `strict_ai` | 🟡 MEDIUM | `false` | Zero AI policy |
 | `enable_behavioral_analysis` | 🟢 LOW | `true` | Keep enabled |
-| `enable_ai_crawler_control` | 🟢 LOW | `true` | Keep enabled |
 | `reverse_proxy.enabled` | 🟡 MEDIUM | `false` | Behind proxy + `addresses[]` |
 | `bot_categories.blocked` | 🟡 MEDIUM | `['malicious']` | Custom policy |
 | `bot_categories.allowed` | 🟢 LOW | feed/shopping/cloud/monitoring/archive | Custom policy |
@@ -1596,7 +1592,6 @@ return [
     'inspect_json_body'               => false,  // Never for AJAX apps
     'inspect_multipart_body'          => false,  // Never for uploads
     'enable_behavioral_analysis'      => true,
-    'enable_ai_crawler_control'       => true,
     'enable_client_hints_validation'  => true,   // Week 1 — low FP risk
     'enable_agentic_detection'        => false,  // Week 4+ — monitor FPs
     'enable_dynamic_ip_ranges'        => true,   // After cron deployed

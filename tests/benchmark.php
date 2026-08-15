@@ -32,7 +32,6 @@ $config = Configuration::from_array([
     'enable_agentic_detection' => false,
 	'dynamic_ip_ranges' => ['enabled' => false],
     'enable_behavioral_analysis' => true,
-    'enable_ai_crawler_control' => true,
     'rate_limit_enabled' => false,        // Don't pollute counters
     'dnsbl_enabled' => false,
     'httpbl_key' => '',

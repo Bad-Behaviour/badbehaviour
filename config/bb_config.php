@@ -39,9 +39,22 @@ return [
     // ===== AI CRAWLERS =====
     'ai_crawlers'                => [
         'allowed'          => [
-            'GPTBot', 'ClaudeBot', 'Google-Extended',
-            'PerplexityBot', 'GrokBot', 'MistralBot',
-            'YouBot', 'Meta-ExternalAgent'
+        	// OpenAI family
+        	'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+        	// Anthropic family
+        	'ClaudeBot', 'Claude-User', 'Claude-SearchBot',
+        	// Google AI (user-controlled via Search Console)
+        	'Google-Extended',
+        	// Apple AI (only if you've opted into Apple Intelligence training)
+        	'Applebot-Extended',
+        	// Meta AI
+        	'Meta-ExternalAgent',
+        	// Amazon
+        	'Amazonbot',
+        	// Other major operators with verified identity
+        	'PerplexityBot', 'Perplexity-User',
+        	'GrokBot', 'Grok-User',
+        	'CohereBot',
         ],
         'block_unverified' => true,
         'strict'           => false,
@@ -133,7 +146,6 @@ return [
     'inspect_json_body'          => false,
     'inspect_multipart_body'     => false,
     'enable_behavioral_analysis' => true,
-    'enable_ai_crawler_control'  => true,
 	'enable_client_hints_validation' => true,
 	'enable_agentic_detection' => true,
 

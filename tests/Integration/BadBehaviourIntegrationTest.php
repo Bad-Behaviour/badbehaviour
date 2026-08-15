@@ -32,7 +32,6 @@ class BadBehaviourIntegrationTest extends TestCase
     		'inspect_json_body' => false,
     		'inspect_multipart_body' => false,
     		'enable_behavioral_analysis' => true,
-    		'enable_ai_crawler_control' => true,
     		'enable_client_hints_validation' => false,  // ADDED: disable for tests
     		'enable_agentic_detection' => false,        // ADDED: disable for tests
     		'dnsbl_enabled' => false,

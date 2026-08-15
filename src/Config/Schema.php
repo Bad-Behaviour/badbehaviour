@@ -132,7 +132,6 @@ final class Schema
         'inspect_json_body'                      => 'inspect_json_body',
         'inspect_multipart_body'                 => 'inspect_multipart_body',
         'enable_behavioral_analysis'             => 'enable_behavioral_analysis',
-        'enable_ai_crawler_control'              => 'enable_ai_crawler_control',
         'enable_client_hints_validation'         => 'enable_client_hints_validation',
         'enable_agentic_detection'               => 'enable_agentic_detection',
 

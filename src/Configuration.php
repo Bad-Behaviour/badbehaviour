@@ -75,7 +75,6 @@ readonly class Configuration
         public bool $inspect_json_body = false,
         public bool $inspect_multipart_body = false,
         public bool $enable_behavioral_analysis = false,
-        public bool $enable_ai_crawler_control = true,
         public bool $enable_client_hints_validation = false,
         public bool $enable_agentic_detection = false,
 
@@ -408,7 +407,6 @@ readonly class Configuration
     		'inspect_json_body',
     		'inspect_multipart_body',
     		'enable_behavioral_analysis',
-    		'enable_ai_crawler_control',
     		'enable_client_hints_validation',
     		'enable_agentic_detection',
     		'dns_verification_enabled',
@@ -968,7 +966,6 @@ readonly class Configuration
             'inspect_json_body'               => false,
             'inspect_multipart_body'          => false,
             'enable_behavioral_analysis'      => false,
-            'enable_ai_crawler_control'       => true,
             'enable_client_hints_validation'  => false,
             'enable_agentic_detection'        => false,
 
@@ -1089,7 +1086,6 @@ readonly class Configuration
             'inspect_json_body'               => $this->inspect_json_body,
             'inspect_multipart_body'          => $this->inspect_multipart_body,
             'enable_behavioral_analysis'      => $this->enable_behavioral_analysis,
-            'enable_ai_crawler_control'       => $this->enable_ai_crawler_control,
             'enable_client_hints_validation'  => $this->enable_client_hints_validation,
             'enable_agentic_detection'        => $this->enable_agentic_detection,
 

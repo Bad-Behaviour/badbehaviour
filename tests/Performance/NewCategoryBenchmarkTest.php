@@ -30,7 +30,6 @@ class NewCategoryBenchmarkTest extends TestCase
 			'enable_agentic_detection' => false,
 			'dynamic_ip_ranges' => ['enabled' => false], // Static only for benchmark
 			'enable_behavioral_analysis' => true,
-			'enable_ai_crawler_control' => true,
 			'rate_limit_enabled' => false,
 			'dnsbl_enabled' => false,
 		], $adapter);

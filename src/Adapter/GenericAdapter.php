@@ -70,9 +70,8 @@ class GenericAdapter implements AdapterInterface, CacheInterface
 		// Configuration::from_array() built.
 		//
 		// Falls back to file loading only when no Configuration object
-		// has been injected (e.g., direct adapter usage without
-		// BadBehaviour bootstrap). This preserves the legacy file-based
-		// behavior for backward compatibility.
+		// has been injected (legacy direct-adapter usage without
+		// BadBehaviour bootstrap).
 		if ($this->configuration !== null) {
 			$config = $this->configuration->to_array();
 

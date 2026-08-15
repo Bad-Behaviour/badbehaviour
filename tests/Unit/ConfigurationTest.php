@@ -116,7 +116,6 @@ class ConfigurationTest extends TestCase
         $this->assertFalse($config->inspect_json_body);
         $this->assertFalse($config->inspect_multipart_body);
         $this->assertFalse($config->enable_behavioral_analysis);
-        $this->assertTrue($config->enable_ai_crawler_control);
         $this->assertFalse($config->enable_client_hints_validation);
         $this->assertFalse($config->enable_agentic_detection);
 

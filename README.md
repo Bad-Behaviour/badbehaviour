@@ -788,7 +788,6 @@ return [
     'inspect_json_body'               => false,
     'inspect_multipart_body'          => false,
     'enable_behavioral_analysis'      => true,
-    'enable_ai_crawler_control'       => true,
     'enable_client_hints_validation'  => false,
     'enable_agentic_detection'        => false,
     'enable_dynamic_ip_ranges'        => false,
@@ -901,7 +900,6 @@ See [`CONFIGURATION.md`](docs/CONFIGURATION.md#configuration-profiles) for full 
 | `inspect_json_body` | bool | `false` | 🔴 **HIGH** | **Never** for AJAX/JSON apps |
 | `inspect_multipart_body` | bool | `false` | 🔴 **HIGH** | **Never** for upload endpoints |
 | `enable_behavioral_analysis` | bool | `true` | 🟢 **LOW** | Keep enabled |
-| `enable_ai_crawler_control` | bool | `true` | 🟢 **LOW** | Keep enabled |
 | `enable_client_hints_validation` | bool | `false` | 🟡 **MEDIUM** | After monitoring; requires Chromium 89+ |
 | `enable_agentic_detection` | bool | `false` | 🟡 **MEDIUM** | After monitoring; needs session cookies |
 | `enable_dynamic_ip_ranges` | bool | `false` | 🟡 **EXPERIMENTAL** | Requires cron; see [Feeds](#dynamic-ip-range-feeds-experimental) |

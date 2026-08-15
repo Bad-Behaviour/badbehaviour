@@ -19,6 +19,8 @@ use PHPUnit\Framework\TestCase;
  *   - Regional bots
  *   - Dynamic IP range caching
  *   - Default-action categories (residential proxy, residential data, etc.)
+ *   - strict_search_engines gate (the lenient-default fix for
+ *     DuckDuckGo/Brave/Kagi/MojeekBot being silently blocked)
  *
  * These tests use REAL DNS resolvers (no stubs). That means:
  *   - Tests don't depend on DNS for cloud-infra IPs (those use static ranges).
@@ -83,20 +85,101 @@ class BotDetectorTest extends TestCase
 			'Googlebot from a static Google IP must be allowed without DNS');
 	}
 
-	public function test_unknown_bot_ua_only_not_allowed(): void
+	/**
+	 * Strict search engines gate: with the flag OFF (default), an
+	 * unverified SE that has no static IP ranges and no DNS verification
+	 * falls through to $def->default_action. This is the documented
+	 * behavior and the reason DuckDuckBot/Brave/Kagi/MojeekBot are no
+	 * longer silently blocked under the lenient default.
+	 */
+	public function test_search_engine_unverified_with_strict_off_returns_default_action(): void
 	{
-		// 192.0.2.1 (TEST-NET-1) is in no static range. DNS verification
-		// fails in test environment → search engine marked unverified → BLOCK.
+		// DuckDuckBot has verify_dns=false and no static ranges; under
+		// the old (buggy) behavior, claiming to be DuckDuckBot from an
+		// unknown IP was a hard block. Under the fix, it's allowed.
 		$package = $this->createPackage(
-			'Mozilla/5.0 (compatible; Googlebot/2.1)',
+			'Mozilla/5.0 (compatible; DuckDuckBot/1.1; +http://duckduckgo.com/duckduckbot.html)',
 			'192.0.2.1'
 		);
 
 		$result = $this->detector->detect($package);
 
 		$this->assertNotNull($result);
-		$this->assertTrue($result->is_blocked());
-		$this->assertSame('blocked.bot', $result->code->value);
+		$this->assertTrue($result->is_allowed(),
+			'Under strict_search_engines=false (default), unverified UA-only '
+			. 'search engines fall through to def->default_action, not BLOCK');
+		$this->assertSame('search_engine', $result->metadata['bot_category'] ?? null,
+			'Bot is still correctly categorized as SEARCH_ENGINE even when allowed');
+	}
+
+	/**
+	 * Strict search engines gate: with the flag ON, an unverified SE is
+	 * hard-blocked. This is the explicit opt-in for operators seeing
+	 * fake-SE abuse who accept the FP risk.
+	 */
+	public function test_search_engine_unverified_with_strict_on_returns_block(): void
+	{
+		$adapter = new GenericAdapter();
+		$config = Configuration::from_array([
+			'preset'               => 'full',
+			'strict_search_engines'=> true,
+			'ai_crawlers'          => [
+				'allowed'          => ['GPTBot'],
+				'block_unverified' => true,
+				'strict'           => false,
+			],
+			'bot_categories'       => ['blocked' => ['malicious']],
+		], $adapter);
+
+		$detector = new BotDetector($config, $adapter);
+
+		$package = $this->createPackage(
+			'Mozilla/5.0 (compatible; DuckDuckBot/1.1)',
+			'192.0.2.1'
+		);
+
+		$result = $detector->detect($package);
+
+		$this->assertNotNull($result);
+		$this->assertTrue($result->is_enforced_block(),
+			'strict_search_engines=true must hard-block unverified SEs');
+		$this->assertSame(ResultCode::BLOCKED_BOT, $result->code);
+	}
+
+	/**
+	 * Strict search engines gate: verification still short-circuits the
+	 * gate. Under strict_search_engines=true, a verified Googlebot must
+	 * still be allowed. Without this test, a refactor could accidentally
+	 * move the gate before the verification check and break real
+	 * Googlebot traffic.
+	 */
+	public function test_search_engine_verified_short_circuits_strict_gate(): void
+	{
+		$adapter = new GenericAdapter();
+		$config = Configuration::from_array([
+			'preset'               => 'full',
+			'strict_search_engines'=> true,
+			'ai_crawlers'          => [
+				'allowed'          => ['GPTBot'],
+				'block_unverified' => true,
+				'strict'           => false,
+			],
+			'bot_categories'       => ['blocked' => ['malicious']],
+		], $adapter);
+
+		$detector = new BotDetector($config, $adapter);
+
+		// 66.249.64.1 is in googlebot's static range → verified.
+		$package = $this->createPackage(
+			'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+			'66.249.64.1'
+		);
+
+		$result = $detector->detect($package);
+
+		$this->assertNotNull($result);
+		$this->assertTrue($result->is_allowed(),
+			'Verified Googlebot must pass even when strict_search_engines=true');
 	}
 
 	// ============================================================
@@ -338,11 +421,19 @@ class BotDetectorTest extends TestCase
 	}
 
 	// ============================================================
-	// 7. Regional search engines
+	// 7. Regional search engines (UA-only, no static IP, no DNS)
 	// ============================================================
+	//
+	// These bots have verify_dns=false and no static IP ranges in
+	// DefaultRegistry. Under the old (buggy) behavior they were hard-
+	// blocked when claiming their UA from an unknown IP. The strict
+	// search engines gate fix means they now fall through to
+	// $def->default_action under the lenient default — they pass.
 
-	public function test_coccoc_vietnam_bot_blocked_when_unverified(): void
+	public function test_coccoc_vietnam_bot_allowed_under_lenient_default(): void
 	{
+		// coccoc has verify_dns=false → UA-only matching.
+		// Under the old buggy behavior this was BLOCKED.
 		$package = $this->createPackage(
 			'Mozilla/5.0 (compatible; coccocbot/2.0; +http://coccoc.com)',
 			'192.0.2.1'
@@ -351,12 +442,17 @@ class BotDetectorTest extends TestCase
 		$result = $this->detector->detect($package);
 
 		$this->assertNotNull($result);
-		$this->assertTrue($result->is_blocked());
-		$this->assertSame('blocked.bot', $result->code->value);
+		$this->assertTrue($result->is_allowed(),
+			'coccoc has verify_dns=false and no static ranges; lenient '
+			. 'strict_search_engines default allows UA-only SEs through');
+		$this->assertSame('search_engine', $result->metadata['bot_category'] ?? null);
 	}
 
-	public function test_mailru_blocked_when_unverified(): void
+	public function test_mailru_allowed_under_lenient_default(): void
 	{
+		// Mail.ru has verify_dns=true, but with no static ranges and DNS
+		// failing in tests, it ends up unverified. Old behavior: BLOCK.
+		// New behavior: allowed under lenient default.
 		$package = $this->createPackage(
 			'Mozilla/5.0 (compatible; Mail.RU_Bot/2.0)',
 			'192.0.2.1'
@@ -364,7 +460,40 @@ class BotDetectorTest extends TestCase
 
 		$result = $this->detector->detect($package);
 
-		$this->assertTrue($result->is_blocked());
+		$this->assertNotNull($result);
+		$this->assertTrue($result->is_allowed(),
+			'Mail.ru unverified under lenient default must pass (verifies '
+			. 'strict_search_engines gate handles DNS-fail-true case)');
+	}
+
+	public function test_coccoc_blocked_under_strict_mode(): void
+	{
+		// Same coccoc request as above, but with strict_search_engines=true.
+		// Demonstrates that operators who want the old behavior can opt in.
+		$adapter = new GenericAdapter();
+		$config = Configuration::from_array([
+			'preset'               => 'full',
+			'strict_search_engines'=> true,
+			'ai_crawlers'          => [
+				'allowed'          => ['GPTBot'],
+				'block_unverified' => true,
+				'strict'           => false,
+			],
+			'bot_categories'       => ['blocked' => ['malicious']],
+		], $adapter);
+
+		$detector = new BotDetector($config, $adapter);
+
+		$package = $this->createPackage(
+			'Mozilla/5.0 (compatible; coccocbot/2.0; +http://coccoc.com)',
+			'192.0.2.1'
+		);
+
+		$result = $detector->detect($package);
+
+		$this->assertTrue($result->is_enforced_block(),
+			'Under strict_search_engines=true, UA-only SEs are blocked');
+		$this->assertSame(ResultCode::BLOCKED_BOT, $result->code);
 	}
 
 	// ============================================================

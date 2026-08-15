@@ -965,11 +965,23 @@ class BotDetector
 		}
 
 		// === SEARCH ENGINES ===
+		//
+		// Default (strict_search_engines = false): lenient. Verified SEs are
+		// allowed; unverified SEs fall through to $def->default_action (ALLOW
+		// for most SEARCH_ENGINE definitions). This prevents dropping legitimate
+		// crawlers when static IP ranges go stale.
+		//
+		// Strict (strict_search_engines = true): any SE that can't prove its
+		// identity (no static IP match, no DNS verify, no reverse-DNS suffix
+		// match) is HARD-BLOCKED. Use only when actively seeing fake-SE abuse.
 		if ($def->category === BotCategory::SEARCH_ENGINE) {
-			if (!$verified) {
+			if ($verified) {
+				return BotAction::ALLOW;
+			}
+			if ($this->config->strict_search_engines) {
 				return BotAction::BLOCK;
 			}
-			return BotAction::ALLOW;
+			return $def->default_action;
 		}
 
 		// === SOCIAL CRAWLERS ===

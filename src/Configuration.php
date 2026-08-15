@@ -129,10 +129,28 @@ readonly class Configuration
 
     public static function from_array(array $config, ?AdapterInterface $adapter = null): self
     {
-        $flat_user    = Schema::flatten($config);
-        $flat_default = Schema::flatten(self::get_defaults());
+    	// === STEP 0: Normalize partial nested configs with defaults ===
+    	//
+    	// Operators should only set values that differ from defaults
+    	// (per established bb_config.php convention). When they provide
+    	// a partial nested array like:
+    	//
+    	//     'dynamic_ip_ranges' => ['enabled' => true]
+    	//
+    	// we must merge it with the defaults so missing sub-keys
+    	// (ttl, feeds, etc.) are filled in.
+    	//
+    	// This is GENERAL-PURPOSE: any nested array that exists in
+    	// BOTH the user config AND the defaults gets automatically
+    	// merged. No hardcoded list of "known" nests — when new
+    	// nested sections are added to get_defaults(), this picks
+    	// them up automatically.
+    	$config = self::normalize_partial_nested($config);
 
-        $strictness = $flat_user['strictness'] ?? $flat_default['strictness'] ?? 'normal';
+    	$flat_user    = Schema::flatten($config);
+    	$flat_default = Schema::flatten(self::get_defaults());
+
+    	$strictness = $flat_user['strictness'] ?? $flat_default['strictness'] ?? 'normal';
         if (!in_array($strictness, self::STRICTNESS_LEVELS, true)) {
             $strictness = $flat_default['strictness'] ?? 'normal';
         }
@@ -806,7 +824,24 @@ readonly class Configuration
                 'dynamic_ip_ranges' => ['enabled' => true],
                 'dnsbl' => ['enabled' => false, 'lists' => ['zen.spamhaus.org', 'bl.spamcop.net']],
                 'ai_crawlers' => [
-                    'allowed' => ['GPTBot', 'ClaudeBot', 'Google-Extended'],
+                	'allowed' => [
+                		// OpenAI family
+                		'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+                		// Anthropic family
+                		'ClaudeBot', 'Claude-User', 'Claude-SearchBot',
+                		// Google AI (user-controlled via Search Console)
+                		'Google-Extended',
+                		// Apple AI (only if you've opted into Apple Intelligence training)
+                		'Applebot-Extended',
+                		// Meta AI
+                		'Meta-ExternalAgent',
+                		// Amazon
+                		'Amazonbot',
+                		// Other major operators with verified identity
+                		'PerplexityBot', 'Perplexity-User',
+                		'GrokBot', 'Grok-User',
+                		'CohereBot',
+                	],
                     'block_unverified' => false,
                     'strict' => false,
                 ],
@@ -874,7 +909,24 @@ readonly class Configuration
             'httpbl' => ['key' => '', 'threat' => 25, 'maxage' => 30],
             'dnsbl'  => ['enabled' => false, 'lists' => ['zen.spamhaus.org', 'bl.spamcop.net']],
             'ai_crawlers' => [
-                'allowed' => ['GPTBot', 'ClaudeBot', 'Google-Extended'],
+            	'allowed' => [
+            		// OpenAI family
+            		'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+            		// Anthropic family
+            		'ClaudeBot', 'Claude-User', 'Claude-SearchBot',
+            		// Google AI (user-controlled via Search Console)
+            		'Google-Extended',
+            		// Apple AI (only if you've opted into Apple Intelligence training)
+            		'Applebot-Extended',
+            		// Meta AI
+            		'Meta-ExternalAgent',
+            		// Amazon
+            		'Amazonbot',
+            		// Other major operators with verified identity
+            		'PerplexityBot', 'Perplexity-User',
+            		'GrokBot', 'Grok-User',
+            		'CohereBot',
+            	],
                 'block_unverified' => false,
                 'strict' => false,
             ],
@@ -1076,6 +1128,80 @@ readonly class Configuration
             'asset_only_session_threshold'    => $this->asset_only_session_threshold,
             'asset_pattern_threshold'         => $this->asset_pattern_threshold,
         ];
+    }
+
+    /**
+     * Normalize partial nested configs by merging with defaults.
+     *
+     * Established convention: bb_config.php only sets values that differ
+     * from defaults. When an operator writes:
+     *
+     *     'dynamic_ip_ranges' => ['enabled' => true]
+     *
+     * they mean "enable dynamic_ip_ranges with default ttl and feeds".
+     * This method ensures missing sub-keys are filled in from
+     * Configuration::get_defaults() so the rest of from_array() sees
+     * complete nested arrays.
+     *
+     * === GENERAL-PURPOSE ===
+     *
+     * Any key that:
+     *   1. Exists in BOTH user config AND defaults
+     *   2. Has a nested array value in BOTH (associative, not list)
+     *
+     * gets automatically merged. No hardcoded list of known nests —
+     * when new nested sections are added to get_defaults(), this picks
+     * them up automatically.
+     *
+     * === WHAT GETS MERGED ===
+     *
+     * Associative arrays (like ['enabled' => true, 'ttl' => 86400]).
+     * Lists (like ['aws', 'cloudflare']) are NOT merged — if the user
+     * provides a list, it's treated as a complete override.
+     *
+     * === NESTING ===
+     *
+     * Merging is shallow (one level deep). For deeper nesting like
+     *   rate_limits => ['global' => ['requests' => 100]]
+     * the user must provide the complete sub-tree or accept defaults
+     * via the schema pipeline's array_replace_recursive equivalent.
+     *
+     * @param array<string, mixed> $config User config (may have partial nests)
+     * @return array<string, mixed> Config with partial nests filled from defaults
+     */
+    private static function normalize_partial_nested(array $config): array
+    {
+    	$defaults = self::get_defaults();
+
+    	foreach ($defaults as $key => $default_value) {
+    		// Only consider keys that exist in user config
+    		if (!array_key_exists($key, $config)) {
+    			continue;
+    		}
+
+    		// Only merge associative arrays (not lists, not scalars).
+    		// is_list() returns true for sequential int-keyed arrays.
+    		if (!is_array($default_value) || !is_array($config[$key])) {
+    			continue;
+    		}
+
+    		if (array_is_list($default_value) || array_is_list($config[$key])) {
+    			// Both must be associative arrays to merge safely
+    			continue;
+    		}
+
+    		// Merge: defaults first, then user values overwrite.
+    		// This fills missing sub-keys with defaults while letting
+    		// the user override individual sub-keys.
+    		//
+    		// Example:
+    		//   defaults: ['enabled' => false, 'ttl' => 86400, 'feeds' => [...]]
+    		//   user:     ['enabled' => true]
+    		//   merged:   ['enabled' => true, 'ttl' => 86400, 'feeds' => [...]]
+    		$config[$key] = array_replace($default_value, $config[$key]);
+    	}
+
+    	return $config;
     }
 
     private static function ensure_array(mixed $value, array $default = []): array

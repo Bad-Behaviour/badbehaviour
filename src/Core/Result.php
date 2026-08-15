@@ -32,14 +32,15 @@ readonly class Result
     // Factory methods
     // =====================================================================
 
-    public static function allow(?RequestPackage $package = null): self
+    public static function allow(?RequestPackage $package = null, array $metadata = []): self
     {
-        return new self(
-            ResultCode::ALLOWED,
-            'Request allowed',
-            $package,
-            enforcement: EnforcementAction::ALLOWED,
-        );
+    	return new self(
+    		ResultCode::ALLOWED,
+    		'Request allowed',
+    		$package,
+    		$metadata,
+    		enforcement: EnforcementAction::ALLOWED,
+    		);
     }
 
     public static function block(
@@ -152,8 +153,6 @@ readonly class Result
      *   - enforcement is MONITORED (detection matched but suppressed)
      *
      * Returns FALSE when BadBehaviour should serve a response itself.
-     *
-     * Equivalent to is_allowed_or_monitored(); the clearer name is preferred.
      */
     public function reaches_application(): bool
     {
@@ -199,18 +198,6 @@ readonly class Result
     public function is_allowed(): bool
     {
         return $this->code === ResultCode::ALLOWED;
-    }
-
-    /**
-     * Did the request pass through to the application?
-     *
-     * TRUE for ALLOWED and MONITORED. Equivalent to reaches_application().
-     *
-     * @deprecated Since 3.0. Prefer reaches_application().
-     */
-    public function is_allowed_or_monitored(): bool
-    {
-        return $this->reaches_application();
     }
 
     /**

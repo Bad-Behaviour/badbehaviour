@@ -219,13 +219,13 @@ final class ResultTest extends TestCase
 
     public function testIsAllowedOrMonitoredMatchesReachesApplication(): void
     {
-        $this->assertTrue(Result::allow($this->pkg)->is_allowed_or_monitored());
+        $this->assertTrue(Result::allow($this->pkg)->reaches_application());
 
         $blocked = Result::block(ResultCode::BLOCKED_BOT, 'x', $this->pkg);
-        $this->assertFalse($blocked->is_allowed_or_monitored());
+        $this->assertFalse($blocked->reaches_application());
 
         $monitored = Result::monitored_from($blocked);
-        $this->assertTrue($monitored->is_allowed_or_monitored());
+        $this->assertTrue($monitored->reaches_application());
     }
 
     // ====================================================================

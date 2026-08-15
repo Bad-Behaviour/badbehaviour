@@ -174,7 +174,11 @@ class BotDetector
 		// CRITICAL: Do this BEFORE bot UA matching — these are network probes,
 		// not real bots, and blocking them = downtime.
 		if ($this->is_cloud_infrastructure_ip($ip)) {
-			return Result::allow($package);
+			return Result::allow($package, [
+				'bot_category' => BotCategory::CLOUD_INFRASTRUCTURE->value,
+				'bot_name'     => 'Cloud Infrastructure',
+				'bot_verified' => true,
+			]);
 		}
 
 		try {
@@ -231,30 +235,27 @@ class BotDetector
 				$verified = $ip_match || $dns_verified;
 				$action = $this->determine_action($def, $verified);
 
+				$bot_metadata = [
+					'bot_id'       => $bot_id,
+					'bot_name'     => $def->name,
+					'bot_category' => $def->category->value,
+					'bot_verified' => $verified,
+				];
+
 				return match ($action) {
-					BotAction::ALLOW => Result::allow($package),
-					BotAction::LOG_ONLY => Result::allow($package),
-					BotAction::CHALLENGE => Result::challenge(
+					BotAction::ALLOW		=> Result::allow($package, $bot_metadata),
+					BotAction::LOG_ONLY		=> Result::allow($package, $bot_metadata),
+					BotAction::CHALLENGE	=> Result::challenge(
 						ResultCode::CHALLENGE_REQUIRED,
 						"Bot challenge required: {$def->name}",
 						$package,
-						[
-							'bot_id'       => $bot_id,
-							'bot_name'     => $def->name,
-							'bot_category' => $def->category->value,
-							'bot_verified' => $verified,
-						]
+						$bot_metadata,
 					),
-					BotAction::BLOCK => Result::block(
+					BotAction::BLOCK		=> Result::block(
 						$this->code_for_category($def->category),
 						"Bot blocked: {$def->name}",
 						$package,
-						[
-							'bot_id'       => $bot_id,
-							'bot_name'     => $def->name,
-							'bot_category' => $def->category->value,
-							'bot_verified' => $verified,
-						]
+						$bot_metadata,
 					),
 				};
 			} catch (\Throwable $e) {
@@ -858,7 +859,7 @@ class BotDetector
 		// Cached Results carry the wrong package reference; rebuild so the
 		// returned Result points at THIS request's package (support key etc.).
 		if ($cached->is_allowed()) {
-			return Result::allow($package);
+			return Result::allow($package, $cached->metadata);  // ← preserve metadata
 		}
 		return new Result(
 			code: $cached->code,

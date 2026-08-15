@@ -126,41 +126,177 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 	/**
 	 * Resolve the production config file location for WackoWiki.
 	 *
-	 * WackoWiki defines CONFIG_DIR as the absolute path to its config
-	 * directory. BadBehaviour's production config must live at
-	 * CONFIG_DIR/bb_config.php. That is the ONLY acceptable location.
+	 * === RESOLUTION ORDER ===
 	 *
-	 * The package directory is intentionally excluded — it ships a test
-	 * fixture config that can shadow the operator's real config and
-	 * cause silent production misconfiguration. See commit history for
-	 * the outage this fix prevents.
+	 *   1. BB_CONFIG_FILE constant (explicit override)
+	 *      Set this in your WackoWiki bootstrap if the auto-resolve
+	 *      heuristics don't match your install layout:
 	 *
-	 * @return string|null Absolute path, or null if CONFIG_DIR is undefined
-	 *                     or the config file does not exist there.
+	 *          define('BB_CONFIG_FILE', __DIR__ . '/config/bb_config.php');
+	 *
+	 *      This is the recommended path for production — it bypasses
+	 *      the fragile CONFIG_DIR-relative logic that breaks when
+	 *      CONFIG_DIR is set to a relative segment like 'config'
+	 *      (which is WackoWiki's default).
+	 *
+	 *   2. CONFIG_DIR + '/bb_config.php'
+	 *      WackoWiki's CONFIG_DIR constant. Must point at a directory
+	 *      that actually contains bb_config.php. If the constant is
+	 *      defined but points to the wrong place (e.g., relative
+	 *      'config' that doesn't resolve from the FPM CWD), this
+	 *      branch logs a one-shot warning and falls through.
+	 *
+	 *   3. CWD-relative 'config/bb_config.php'
+	 *      Legacy fallback. Works for CLI tools and test harnesses;
+	 *      ambiguous in web context where PHP-FPM's CWD is the
+	 *      document root, not the application root. If this hits,
+	 *      log a one-shot warning suggesting the BB_CONFIG_FILE
+	 *      override.
+	 *
+	 * The package directory is intentionally excluded as a final
+	 * fallback — that file exists only as a unit-test fixture and
+	 * is NOT safe for production use.
+	 *
+	 * === WHY THE BB_CONFIG_FILE OVERRIDE ===
+	 *
+	 * WackoWiki's config/constants.php defines:
+	 *
+	 *     const CONFIG_DIR = 'config';
+	 *
+	 * which is a *relative* segment. PHP-FPM workers' CWD is usually
+	 * the document root, not the application root, so
+	 * CONFIG_DIR . '/bb_config.php' resolves to <docroot>/config/bb_config.php
+	 * — typically wrong. WackoWikiAdapter historically trusted this
+	 * resolution without validation, which silently dropped the
+	 * library into safe-mode in production.
+	 *
+	 * BB_CONFIG_FILE lets operators point at the exact file with no
+	 * ambiguity. Set it once in the bootstrap and forget about it.
+	 *
+	 * @return string|null Absolute path to bb_config.php, or null
+	 *                     if not resolvable (caller should enter safe-mode).
 	 */
 	private function production_config_path(): ?string
 	{
-		if (!defined('CONFIG_DIR')) {
+		// === 1. Explicit override (recommended for production) ===
+		if (defined('BB_CONFIG_FILE')) {
+			$candidate = BB_CONFIG_FILE;
+
+			if (!is_string($candidate) || $candidate === '') {
+				ErrorReporter::warning($this,
+					'WackoWikiAdapter: BB_CONFIG_FILE defined but empty or non-string; '
+					. 'cannot locate bb_config.php',
+					[
+						'hint' => 'Set BB_CONFIG_FILE to the absolute path of '
+						. 'bb_config.php in your bootstrap, e.g.: '
+						. '`define(\'BB_CONFIG_FILE\', __DIR__ . \'/config/bb_config.php\');`',
+					],
+					'bb_wacko_bb_config_file_empty'
+					);
+			} elseif (!file_exists($candidate)) {
+				ErrorReporter::warning($this,
+					'WackoWikiAdapter: BB_CONFIG_FILE defined but file does not exist',
+					[
+						'defined_path' => $candidate,
+						'hint'         => 'Either create bb_config.php at this location '
+						. 'or correct the BB_CONFIG_FILE definition in your bootstrap.',
+					],
+					'bb_wacko_bb_config_file_missing'
+					);
+			} else {
+				return $candidate;
+			}
+
+			// Fall through to other resolution paths — the override was
+			// present but invalid, so don't bail without trying.
+		}
+
+		// === 2. CONFIG_DIR + '/bb_config.php' ===
+		//
+		// WackoWiki sets CONFIG_DIR in config/constants.php. The historical
+		// value is the relative segment 'config', which doesn't resolve
+		// correctly under PHP-FPM (CWD ≠ application root). Validate the
+		// result before trusting it; if it points at a non-existent file,
+		// warn loudly and fall through to the next branch.
+		if (defined('CONFIG_DIR')) {
+			$config_dir = CONFIG_DIR;
+
+			// Guard against empty or non-string values — defensive against
+			// future WackoWiki changes that might accidentally unset the
+			// constant or assign it a non-string.
+			if (!is_string($config_dir) || $config_dir === '') {
+				ErrorReporter::warning($this,
+					'WackoWikiAdapter: CONFIG_DIR defined but empty or non-string',
+					[
+						'actual_type' => get_debug_type($config_dir),
+						'hint'        => 'WackoWiki\'s CONFIG_DIR constant must be a '
+						. 'non-empty string. Either fix the constant definition or '
+						. 'define BB_CONFIG_FILE in your bootstrap.',
+					],
+					'bb_wacko_config_dir_empty'
+					);
+			} else {
+				$candidate = $config_dir . '/bb_config.php';
+
+				if (file_exists($candidate)) {
+					return $candidate;
+				}
+
+				// CONFIG_DIR is defined but points at the wrong place.
+				// This is the most common production failure mode —
+				// WackoWiki sets CONFIG_DIR = 'config' (relative), PHP-FPM's
+				// CWD is the docroot, and 'config/bb_config.php' doesn't
+				// exist there. Warn loudly so operators can fix it.
+				ErrorReporter::warning($this,
+					'WackoWikiAdapter: CONFIG_DIR defined but bb_config.php not found at '
+					. $candidate,
+					[
+						'config_dir'    => $config_dir,
+						'expected_path' => $candidate,
+						'cwd'           => getcwd() ?: '(unknown)',
+						'hint'          => 'WackoWiki\'s CONFIG_DIR constant is set to a '
+						. 'relative path that does not resolve from PHP-FPM\'s CWD. '
+						. 'Define BB_CONFIG_FILE in your bootstrap with the absolute '
+						. 'path, e.g.: '
+						. '`define(\'BB_CONFIG_FILE\', __DIR__ . \'/config/bb_config.php\');`',
+					],
+					'bb_wacko_config_dir_unresolved'
+					);
+				// Fall through — let subsequent branches try.
+			}
+		}
+
+		// === 3. CWD-relative 'config/bb_config.php' ===
+		//
+		// Legacy fallback. Works for CLI tools and test harnesses run
+		// from the application root; ambiguous under PHP-FPM. Log a
+		// one-shot warning when this branch is the one that succeeds,
+		// so operators know to set the explicit override for cleaner
+		// resolution.
+		$cwd_candidate = 'config/bb_config.php';
+		if (file_exists($cwd_candidate)) {
 			ErrorReporter::warning($this,
-				'WackoWikiAdapter: CONFIG_DIR not defined; cannot '
-				. 'locate config/bb_config.php in application config directory',
+				'WackoWikiAdapter: resolving bb_config.php via CWD-relative path; '
+				. 'production deployments should define BB_CONFIG_FILE',
 				[
-					'hint' => 'BadBehaviour expects config/bb_config.php in the '
-					. 'directory WackoWiki defines as CONFIG_DIR. If '
-					. 'CONFIG_DIR isn\'t defined when BadBehaviour boots, '
-					. 'the extension may be loading before WackoWiki '
-					. 'initializes its config directory constant.',
+					'resolved_path' => realpath($cwd_candidate) ?: $cwd_candidate,
+					'cwd'           => getcwd() ?: '(unknown)',
+					'hint'          => 'Add `define(\'BB_CONFIG_FILE\', __DIR__ . '
+					. '\'/config/bb_config.php\');` to your bootstrap before '
+					. 'BadBehaviour boots. This bypasses the fragile CWD-relative '
+					. 'fallback.',
 				],
-				'bb_wacko_config_dir_unresolved'  // once-tag
+				'bb_wacko_config_cwd_relative'
 				);
-			return null;
+			return $cwd_candidate;
 		}
 
-		$candidate = CONFIG_DIR . '/bb_config.php';
-		if (file_exists($candidate)) {
-			return $candidate;
-		}
-
+		// === Resolution failed ===
+		//
+		// None of the three branches succeeded. Caller (get_settings)
+		// will fall through to safe-mode. ErrorReporter::warning() calls
+		// above already recorded WHY each branch failed, so the operator
+		// has the diagnostic context they need.
 		return null;
 	}
 
@@ -335,10 +471,10 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					`ja3` CHAR(32),
 					`asn` VARCHAR(32),
 					`country` CHAR(2),
-				`request_time_ms` INT UNSIGNED,
-				`enforcement_action` VARCHAR(16) NOT NULL DEFAULT 'enforced',
-				`original_code` VARCHAR(50) NULL,
-				`resolved_at` DATETIME NULL DEFAULT NULL,
+					`request_time_ms` INT UNSIGNED,
+					`enforcement_action` VARCHAR(16) NOT NULL DEFAULT 'enforced',
+					`original_code` VARCHAR(50) NULL,
+					`resolved_at` DATETIME NULL DEFAULT NULL,
 				PRIMARY KEY (`log_id`),
 				KEY `idx_ip` (`ip`),
 				KEY `idx_status` (`status_code`),

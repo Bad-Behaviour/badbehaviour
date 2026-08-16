@@ -2,6 +2,57 @@
 
 ---
 
+## Table of Contents
+
+- [🔧 CACHE_DIR — Critical for Production](#-cache_dir--critical-for-production)
+  - [Why Override It?](#-why-override-it)
+  - [Recommended: Define in `constants.php`](#-recommended-define-in-constantsphp)
+  - [Alternative: Override in `index.php` (Local Dev)](#-alternative-override-in-indexphp-local-dev)
+  - [Directory Permissions](#directory-permissions)
+  - [Verify It Works](#verify-it-works)
+- [Configuration File Format (3.0)](#configuration-file-format-30)
+- [Quick Start: Safe Defaults](#quick-start-safe-defaults)
+- [Bot Registry — Custom, Composable, Pluggable](#bot-registry--custom-composable-pluggable)
+  - [Architecture](#architecture)
+  - [Configuration File: `config/bb_registry.php`](#configuration-file-configbb_registryphp)
+  - [Per-Category Behavior (12 categories)](#per-category-behavior-12-categories)
+  - [Adding Custom Bots](#adding-custom-bots)
+  - [Programmatic Composition](#programmatic-composition)
+- [Configuration Profiles](#configuration-profiles)
+  - [Profile: Default](#profile-default-drop-in-2x-replacement)
+  - [Profile: Medium](#profile-medium-production-grade-monitored)
+  - [Profile: Strict](#profile-strict-high-security--api-only)
+  - [Compatibility matrix](#compatibility-matrix)
+- [Cloud Infrastructure Safety](#cloud-infrastructure-safety--read-this-if-youre-behind-a-cdn)
+- [Complete Settings Reference](#complete-settings-reference)
+  - [Core](#core)
+  - [Reverse Proxy](#reverse-proxy)
+  - [AI Crawlers (`ai_crawlers`)](#ai-crawlers-ai_crawlers)
+  - [Bot Categories (`bot_categories`)](#bot-categories-bot_categories)
+  - [Dynamic IP Ranges (`dynamic_ip_ranges`)](#dynamic-ip-ranges-dynamic_ip_ranges)
+  - [On-Demand IP Refresh (`on_demand_ip_refresh`)](#on-demand-ip-refresh-on_demand_ip_refresh)
+  - [Rate Limiting (`rate_limits`)](#rate-limiting-rate_limits)
+  - [Log Retention (`log_retention`)](#log-retention-log_retention)
+  - [Body Scan (`body_scan_skip_fields`)](#body-scan-body_scan_skip_fields)
+  - [Custom Rules (`custom_rules`)](#custom-rules-custom_rules)
+  - [Challenge System (`challenge`)](#challenge-system-challenge)
+  - [Performance (`performance`)](#performance-performance)
+  - [Head Request Detection (`head_*`)](#head-request-detection-head_)
+  - [Asset Scraping Detection (`asset_*`)](#asset-scraping-detection-asset_)
+  - [http:BL (`httpbl`)](#httpbl-httpbl)
+  - [DNSBL (`dnsbl`)](#dnsbl-dnsbl)
+  - [Fingerprints (`fingerprints`)](#fingerprints-fingerprints--opt-in-only)
+  - [GeoIP (`geoip`)](#geoip-geoip)
+  - [Detection Features (Opt-in)](#detection-features-opt-in)
+- [Whitelist (`config/bb_whitelist.conf`)](#whitelist-configbb_whitelistconf)
+- [Risk Matrix Summary](#risk-matrix-summary)
+- [Migration from INI Format (2.x → 3.0)](#migration-from-ini-format-2x--30)
+- [Example: Production Wiki (WackoWiki)](#example-production-wiki-wackowiki)
+- [Testing Configuration Changes](#testing-configuration-changes)
+- [Files to Distribute](#files-to-distribute)
+
+---
+
 ## 🔧 CACHE_DIR — Critical for Production
 
 Bad Behaviour stores **rate-limit counters, behavioral profiles, JA3 sets, and challenge tokens** in a file cache.
@@ -1179,6 +1230,207 @@ At default settings (1/1000 probability, 6h staleness floor), N hosts cost N × 
 
 ---
 
+### Log Retention (`log_retention`)
+
+Automatic cleanup of old `bad_behaviour` log rows. Replaces BB 2.x's implicit per-request cleanup (which caused DELETE storms under load) with a 4-gated, on-demand approach. The cleanup runs in the background — user-facing latency is unaffected under PHP-FPM because the DELETE happens after the response has been sent.
+
+#### When to Use
+
+| Deployment | Recommended approach |
+|-------------|----------------------|
+| **Shared hosting, PaaS, no cron access** | Use on-request cleanup (default; `log_retention.enabled = true`) |
+| **Single-server with cron available** | Run `bin/cleanup-logs.php` daily via cron |
+| **Multi-server with shared cache** | Run `bin/cleanup-logs.php` on one host via cron (coordinated) |
+| **Multi-server without shared cache** | On-request cleanup on each host (bounded by probability × min_interval) |
+
+#### How It Works
+
+Four gates coordinate each cleanup — probability × cooldown × staleness × mutex — so even on very busy sites the cleanup runs **at most once per `min_interval_seconds` per worker**, and **at most once concurrently** across all workers on a shared cache:
+
+```
+Gate 1: Probability   1 in N requests even checks the staleness gate
+Gate 2: Cooldown      Skip while cleanup lock is held (cache TTL doubles as lock)
+Gate 3: Staleness     Skip when last cleanup was recent
+Gate 4: Mutex         Only one worker cleans at a time
+```
+
+The actual DELETE runs **after** the HTTP response has been sent to the client. Under PHP-FPM this uses `fastcgi_finish_request()`; under CLI / mod_php the on-request cleanup is skipped — use `bin/cleanup-logs.php` instead.
+
+#### Schema-Portable DELETE
+
+The cleanup probes the table to discover the newest row's date, then computes `cutoff = newest − max_age_days`. This works on every common schema (DATETIME, INT unix-timestamp, TEXT ISO-8601) without adapter-specific SQL. SQLite uses chunked DELETEs (default 1000 rows per statement) bounded by a 500ms wall-clock budget to avoid database locks.
+
+#### Settings
+
+| Setting | Type | Default | Risk | Description |
+|---------|------|---------|------|-------------|
+| `enabled` | bool | `true` | 🟢 **LOW** | Master switch. Set `false` to disable on-request cleanup entirely (e.g., before running bin/cleanup-logs.php from cron exclusively) |
+| `max_age_days` | int | `7` | 🟢 **LOW** | Rows older than this are deleted. Cutoff is computed relative to the **newest row** (not now), so a quiet table still gets cleaned on next write |
+| `max_rows` | int | `0` (unlimited) | 🟢 **LOW** | Optional row-count cap. When table exceeds this, switches to row-count mode: oldest rows deleted until table has fewer than `max_rows` entries. Useful for verbose logging |
+| `probability_denominator` | int | `1000` | 🟢 **LOW** | 1 in N requests triggers Gate 1. Higher = less frequent checks. Bounded by `min_interval_seconds` so increasing this doesn't increase cleanup frequency |
+| `min_interval_seconds` | int | `21600` (6h) | 🟢 **LOW** | Hard floor on cleanup frequency. Recommended: `3600` for high-traffic with disk pressure, `21600` typical, `86400` conservative |
+| `lock_ttl` | int | `600` (10min) | 🟢 **LOW** | Cache lock TTL (mutex  cooldown combined). Should exceed worst-case cleanup duration (500ms wall-clock budget → 1200× headroom) |
+
+#### Full Configuration
+
+```php
+<?php
+// config/bb_config.php
+
+return [
+    // ... (other settings) ...
+
+    // ===== LOG RETENTION =====
+    'log_retention' => [
+        // Master switch. Set false if you only want cron-driven cleanup.
+        'enabled' => true,
+
+        // Retention window in days. Rows older than this are deleted.
+        // Cutoff is computed relative to the newest row, not now.
+        //   7  — BB 2.x default; minimum useful for forensics
+        //   14 — two-week window for short-term abuse investigation
+        //   30 — monthly window for compliance audits
+        //   90 — quarterly window for long-term trend analysis
+        'max_age_days' => 7,
+
+        // Optional row-count cap. 0 = no cap (age-based only).
+        // Use this if verbose logging produces millions of rows.
+        'max_rows' => 0,
+
+        // 1 in N requests triggers Gate 1. At 100 req/min with
+        // denominator=1000: ~6 checks/hour per worker. Bounded by
+        // min_interval_seconds so increasing this doesn't increase
+        // cleanup frequency — only reduces Gate 1's mt_rand() cost.
+        'probability_denominator' => 1000,
+
+        // Minimum age of last cleanup before another is allowed.
+        //   3600  (1h)   — aggressive; high-traffic with disk pressure
+        //   21600 (6h)   — typical; matches BB 2.x behavior loosely
+        //   86400 (24h)  — conservative; daily cleanup is plenty
+        'min_interval_seconds' => 21600,
+
+        // Cache lock TTL. Functions as both:
+        //   (a) Cross-process/host mutex — only one worker cleans
+        //   (b) Cooldown — don't re-check within this window
+        'lock_ttl' => 600,
+    ],
+
+    // ... (other settings) ...
+];
+```
+
+#### Cache Backend Requirement
+
+The cleanup mutex requires a SHARED cache across processes/hosts:
+
+| Cache backend | Multi-host behavior |
+|---------------|---------------------|
+| Redis, Memcached, DB-backed | ✅ Works correctly — mutex coordinates across hosts |
+| File-based (default) | ⚠️ Per-host mutex only — multiple hosts may clean concurrently |
+| None configured | ❌ Cleanup silently disabled — use `bin/cleanup-logs.php` from single-worker CLI cron |
+
+#### CLI Cleanup (`bin/cleanup-logs.php`)
+
+For operators with cron access, run `bin/cleanup-logs.php` directly. It bypasses all four gates and runs unconditionally — useful for cron schedules and first-time cleanup of an overgrown table.
+
+```bash
+# Run daily at 3am
+0 3 * * * php /path/to/badbehaviour/bin/cleanup-logs.php >> /var/log/bb-cleanup.log 2>&1
+
+# Or invoke manually for first-time cleanup of a large table
+php /path/to/badbehaviour/bin/cleanup-logs.php
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success (rows deleted, or nothing to delete) |
+| `1` | Configuration error (missing config, adapter not writable) |
+| `2` | Query failure (DB error, probe failed) |
+
+**Sample output:**
+```
+[2024-01-15T03:00:00+00:00] BadBehaviour log retention cleanup
+
+Settings:
+  max_age_days:            7
+  max_rows:                (unlimited)
+  log_table:               bad_behaviour
+
+Result:
+  table:           bad_behaviour
+  limit_by:        max_age_days
+  cutoff_computed: 1705276800 (2024-01-14 03:00:00)
+  rows_deleted:    1247
+  iterations:      2
+  elapsed:         0.342s
+
+✓ Cleaned 1247 rows from bad_behaviour in 0.342s
+```
+
+#### Programmatic API (Advanced)
+
+For tests, admin tools, and hosts that want manual control:
+
+```php
+use BadBehaviour\Util\LogRetention;
+use BadBehaviour\Util\LogRetentionResult;
+
+$retention = new LogRetention(
+    adapter: $adapter,
+    config: $config,
+    cache: $cache,
+);
+
+// Bypass all four gates — operator-invoked cleanup runs unconditionally.
+$result = $retention->force_cleanup_now();
+// $result->log_table       (string)  — table that was cleaned
+// $result->limit_by        (string)  — 'max_age_days' or 'max_rows'
+// $result->cutoff_computed (int)     — Unix timestamp of cutoff
+// $result->rows_deleted    (int)     — count of rows removed
+// $result->iterations      (int)     — chunked DELETE rounds
+// $result->elapsed_seconds (float)   — wall-clock time
+// $result->error           (?string) — error message if any
+
+// Read-only gate check — what would the next on-request call do?
+$decision = $retention->peek_cleanup_decision();
+// Returns RefreshDecision-shaped object with should_schedule and reason
+
+// Is the feature usable (enabled + cache available)?
+$retention->is_enabled();  // bool
+
+// Register a shutdown function that runs cleanup IF gates pass.
+if ($retention->register_shutdown_cleanup()) {
+    // Shutdown function queued
+}
+```
+
+#### Cold-Start Behavior
+
+On a fresh install with an empty table, no cleanup runs (nothing to delete). On an overgrown table from BB 2.x migration, run `bin/cleanup-logs.php` once manually to bring the table size under control — then on-request cleanup maintains it.
+
+#### Multi-Server Deployments
+
+At default settings (1/1000 probability, 6h staleness floor), N hosts cost N × 1 cleanup per 6h ≈ trivial even without coordination. If you need strict coordination, use a single-host cron with `bin/cleanup-logs.php` and disable on-request cleanup on the other hosts (`log_retention.enabled = false`).
+
+#### Comparison: On-Request vs. CLI Cron
+
+| Aspect | On-request (`log_retention.enabled = true`) | CLI (`bin/cleanup-logs.php`) |
+|--------|---------------------------------------------|------------------------------|
+| **When** | Opportunistic (1/N requests) | Fixed schedule (cron) |
+| **Where** | FPM worker shutdown | Separate CLI process |
+| **Predictability** | ⚠️ Depends on traffic patterns | ✅ Runs at known times |
+| **Cold start** | ⚠️ Empty table = no cleanup | ✅ Runs immediately on first cron tick |
+| **Multi-host coordination** | ⚠️ Each host cleans (bounded) | ✅ One host's cron is enough |
+| **Latency impact** | ✅ Zero (runs after response) | ✅ Zero (separate process) |
+| **Deployment complexity** | Just flip the flag | Add a cron line |
+| **Best for** | Shared hosting, PaaS | Single-server, predictable ops |
+
+**Recommendation:** Run BOTH — on-request cleanup as the safety net, CLI cron as the primary. On high-traffic sites the random 1/N gate may not fire often enough; on low-traffic sites the cron ensures cleanup happens even when traffic is sparse.
+
+---
+
 ### Body Scan (`body_scan_skip_fields`)
 
 Prevents false positives on legitimate code snippets in comments/articles.
@@ -1491,6 +1743,12 @@ de = "DE"
 | `bot_categories.blocked` | 🟡 MEDIUM | `['malicious']` | Custom policy |
 | `bot_categories.allowed` | 🟢 LOW | feed/shopping/cloud/monitoring/archive | Custom policy |
 | Cloud LB safety net | 🟢 LOW | **always on** | Cannot disable |
+| `log_retention.enabled` | 🟢 LOW | `true` | Keep enabled; disable only when CLI cron is sole cleanup source |
+| `log_retention.max_age_days` | 🟢 LOW | `7` | Adjust based on compliance / forensics needs |
+| `log_retention.max_rows` | 🟢 LOW | `0` (unlimited) | Set when verbose logging produces runaway row counts |
+| `log_retention.probability_denominator` | 🟢 LOW | `1000` | Keep default |
+| `log_retention.min_interval_seconds` | 🟢 LOW | `21600` (6h) | Lower for aggressive cleanup, higher for less DB load |
+| `log_retention.lock_ttl` | 🟢 LOW | `600` | Keep default |
 
 ---
 
@@ -1668,6 +1926,7 @@ php /path/to/badbehaviour/bin/update-ip-ranges.php --dry-run
 | `config/bb_whitelist.conf` | Whitelist (INI — human-editable, simple) |
 | `bin/install-bb.php` | Cache seeder — pre-warms IP range cache (run once at install or on schedule) |
 | `bin/update-ip-ranges.php` | Cron script for explicit, scheduled IP range refresh |
+| `bin/cleanup-logs.php` | CLI log retention cleanup (run via cron, or invoke manually for first-time cleanup) |
 
 **`install-bb.php` vs `update-ip-ranges.php`:**
 
@@ -1675,6 +1934,8 @@ php /path/to/badbehaviour/bin/update-ip-ranges.php --dry-run
 - `update-ip-ranges.php` is the canonical scheduled-refresh script. Use it via cron (`0 */6 * * *`) when you have scheduled-job support.
 
 Both scripts populate the same cache key (`bb:ip_ranges:merged`) with the same data shape. They are functionally equivalent — pick one based on your deployment.
+
+**`bin/cleanup-logs.php`** is the dedicated CLI for log retention. Run it from cron (`0 3 * * *`) for predictable daily cleanup, or invoke manually for first-time cleanup of an overgrown table. Bypasses all four on-request gates and runs unconditionally. See [Log Retention](#log-retention-log_retention) above for the full configuration reference.
 
 ---
 

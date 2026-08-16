@@ -469,12 +469,17 @@ final class BotDetectorCategoryOverrideTest extends TestCase
 				user_agent_patterns: ['Googlebot'],
 			),
 		]);
-		$detector = $this->make_detector(null, $registry);
+		// Strict mode is required to BLOCK unverified search engines —
+		// lenient default follows $def->default_action (typically ALLOW).
+		$detector = $this->make_detector(
+			$this->make_config(['strict_search_engines' => true]),
+			$registry,
+			);
 
 		$result = $this->run_one($detector, $registry->get('googlebot'), verified: false);
 
 		$this->assertSame(ResultCode::BLOCKED_BOT, $result->code,
-			'Unverified search engine → BLOCK (impersonation protection)');
+			'Unverified search engine → BLOCK when strict_search_engines enabled');
 	}
 
 	public function test_search_engine_allowed_when_verified(): void

@@ -54,6 +54,7 @@ class BotDetectorDnsVerificationTest extends TestCase
 		// pass it.
 		$this->config = Configuration::from_array([
 			'preset'         => 'minimal',
+			'strict_search_engines' => true,  // unverified SEARCH_ENGINE → BLOCK
 			'dns_verification' => [
 				'enabled'                   => true,
 				'timeout_ms'                => 100,
@@ -238,6 +239,7 @@ class BotDetectorDnsVerificationTest extends TestCase
 		$adapter = new InMemoryAdapterStub();
 		$disabled_config = Configuration::from_array([
 			'preset'         => 'minimal',
+			'strict_search_engines' => true,
 			'dns_verification' => [
 				'enabled' => false, // ← the kill switch
 			],
@@ -295,6 +297,7 @@ class BotDetectorDnsVerificationTest extends TestCase
 		$adapter = new InMemoryAdapterStub();
 		$strict_config = Configuration::from_array([
 			'preset'         => 'minimal',
+			'strict_search_engines' => true,
 			'dns_verification' => [
 				'enabled'                 => true,
 				'require_forward_confirm' => true,
@@ -324,6 +327,7 @@ class BotDetectorDnsVerificationTest extends TestCase
 		$adapter = new InMemoryAdapterStub();
 		$strict_config = Configuration::from_array([
 			'preset'         => 'minimal',
+			'strict_search_engines' => true,
 			'dns_verification' => [
 				'enabled'                 => true,
 				'require_forward_confirm' => true,
@@ -564,6 +568,7 @@ class BotDetectorDnsVerificationTest extends TestCase
 		$adapter = new InMemoryAdapterStub();
 		$config = Configuration::from_array([
 			'preset'         => 'minimal',
+			'strict_search_engines' => true,
 			'dns_verification' => ['enabled' => true, 'timeout_ms' => 100],
 		], $adapter);
 
@@ -697,6 +702,7 @@ class BotDetectorDnsVerificationTest extends TestCase
 		$adapter = new InMemoryAdapterStub();
 		$config = Configuration::from_array([
 			'preset'         => 'minimal',
+			'strict_search_engines' => true,
 			'dns_verification' => ['enabled' => true, 'timeout_ms' => 100],
 		], $adapter);
 

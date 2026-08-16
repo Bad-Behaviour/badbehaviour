@@ -189,6 +189,7 @@ final class CloudIpRangeProviderTest extends TestCase
 
 	public function test_ranges_returns_empty_when_cache_is_empty(): void
 	{
+		$this->require_offline();
 		// No cache, no upstream fetch in unit tests → empty result.
 		$provider = new CloudIpRangeProvider($this->make_cache());
 
@@ -215,12 +216,36 @@ final class CloudIpRangeProviderTest extends TestCase
 		$this->assertSame(['198.51.100.0/24'], $provider->ranges('aws', 'EC2'));
 	}
 
+	private function require_offline(): void
+	{
+		// These tests assume network is unreachable so that fetch() fails
+		// and the cache-miss fallback returns []. When network IS reachable,
+		// fetch() succeeds and returns real provider data, breaking the test.
+		if (getenv('BB_TEST_OFFLINE') === '1') {
+			return;
+		}
+		// Disable SSL verification in the probe context — we only care
+		// whether the host is reachable, not whether TLS validates.
+		// (CloudIpRangeProvider uses CaBundleLocator for real fetches.)
+		$ctx = stream_context_create([
+			'http' => ['timeout' => 2, 'ignore_errors' => true],
+			'ssl'  => ['verify_peer' => false, 'verify_peer_name' => false],
+		]);
+		$reachable = @file_get_contents('https://api.fastly.com/public-ip-list', false, $ctx) !== false;
+		if ($reachable) {
+			$this->markTestSkipped(
+				'Requires unreachable network. Run with BB_TEST_OFFLINE=1 to enable.'
+			);
+		}
+	}
+
 	// ============================================================
 	// 4. Stale-cache fallback
 	// ============================================================
 
 	public function test_stale_cache_returned_when_fresh_unavailable(): void
 	{
+		$this->require_offline();
 		// We can't actually exercise the upstream fetch in a unit test,
 		// but we CAN verify the stale-fallback contract: if a cache
 		// entry exists but is stale (fetched > ttl seconds ago), the
@@ -330,7 +355,7 @@ final class CloudIpRangeProviderTest extends TestCase
 	// 8. Provider-specific contract: each provider has a URL
 	// ============================================================
 
-	
+
     #[DataProvider('everyProviderProvider')]
 	public function test_each_documented_provider_has_a_feed_url(string $provider): void
 	{
@@ -401,6 +426,7 @@ final class CloudIpRangeProviderTest extends TestCase
 
 	public function test_cache_for_one_provider_does_not_leak_to_another(): void
 	{
+		$this->require_offline();
 		$cache = $this->make_cache();
 		$cache->set('ip_range:aws:all', [
 			'data'    => ['192.0.2.0/24'],

@@ -21,13 +21,13 @@ class RateLimitDetectorTest extends TestCase
     {
         $this->adapter = $this->createMock(AdapterInterface::class);
         $config = Configuration::from_array([
-            'rate_limit_enabled' => true,
-            'rate_limits' => [
-                'global' => ['requests' => 10, 'window' => 60],
-                'per_minute' => ['requests' => 5, 'window' => 60],
-                'post' => ['requests' => 3, 'window' => 60],
-                'login' => ['requests' => 2, 'window' => 60],
-            ],
+        	'rate_limits' => [
+        		'enabled'    => true,
+        		'global'     => ['requests' => 10, 'window' => 60],
+        		'per_minute' => ['requests' => 5, 'window' => 60],
+        		'post'       => ['requests' => 3, 'window' => 60],
+        		'login'      => ['requests' => 2, 'window' => 60],
+        	],
         ], new \BadBehaviour\Adapter\GenericAdapter());
 
         $this->detector = new RateLimitDetector($config, $this->adapter);
@@ -49,9 +49,9 @@ class RateLimitDetectorTest extends TestCase
 
     public function test_disabled_returns_null(): void
     {
-        $config = Configuration::from_array([
-            'rate_limit_enabled' => false,
-        ], new \BadBehaviour\Adapter\GenericAdapter());
+    	$config = Configuration::from_array([
+    		'rate_limits' => ['enabled' => false],
+    	], new \BadBehaviour\Adapter\GenericAdapter());
 
         $detector = new RateLimitDetector($config, $this->adapter);
         $package = $this->create_package();

@@ -59,7 +59,17 @@ class ConfigurationTest extends TestCase
         $this->assertEquals(['zen.spamhaus.org', 'bl.spamcop.net'], $config->dnsbl_lists);
 
         // === AI crawlers ===
-        $this->assertEquals(['GPTBot', 'ClaudeBot', 'Google-Extended'], $config->allowed_ai_crawlers);
+        $this->assertEquals([
+        	'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+        	'ClaudeBot', 'Claude-User', 'Claude-SearchBot',
+        	'Google-Extended',
+        	'Applebot-Extended',
+        	'Meta-ExternalAgent',
+        	'Amazonbot',
+        	'PerplexityBot', 'Perplexity-User',
+        	'GrokBot', 'Grok-User',
+        	'CohereBot',
+        ], $config->allowed_ai_crawlers);
 
         // FIX: default is false — aggressive blocking is OFF in 'normal' strictness
         // for FP prevention. Operators opt in via 'strict' or explicit override.

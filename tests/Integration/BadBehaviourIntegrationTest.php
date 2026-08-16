@@ -35,8 +35,8 @@ class BadBehaviourIntegrationTest extends TestCase
     		'enable_client_hints_validation' => false,  // ADDED: disable for tests
     		'enable_agentic_detection' => false,        // ADDED: disable for tests
     		'dnsbl_enabled' => false,
-    		'rate_limit_enabled' => true,
     		'rate_limits' => [
+    			'enabled'    => true,
     			'global' => ['requests' => 1000, 'window' => 3600],
     			'per_minute' => ['requests' => 60, 'window' => 60],
     			'post' => ['requests' => 30, 'window' => 3600],
@@ -219,8 +219,8 @@ class BadBehaviourIntegrationTest extends TestCase
     public function test_rate_limiting(): void
     {
         $config = Configuration::from_array([
-            'rate_limit_enabled' => true,
             'rate_limits' => [
+            	'enabled'    => true,
                 'per_minute' => ['requests' => 5, 'window' => 60],
             ],
         ], $this->adapter);

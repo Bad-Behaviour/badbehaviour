@@ -159,7 +159,24 @@ return [
 	 * but not blocked.
 	 */
 	'ai_crawlers' => [
-		'allowed'         => ['GPTBot', 'ClaudeBot', 'Google-Extended'],
+		'allowed'         => [
+			// OpenAI family
+			'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+			// Anthropic family
+			'ClaudeBot', 'Claude-User', 'Claude-SearchBot',
+			// Google AI (user-controlled via Search Console)
+			'Google-Extended',
+			// Apple AI (only if you've opted into Apple Intelligence training)
+			'Applebot-Extended',
+			// Meta AI
+			'Meta-ExternalAgent',
+			// Amazon
+			'Amazonbot',
+			// Other major operators with verified identity
+			'PerplexityBot', 'Perplexity-User',
+			'GrokBot', 'Grok-User',
+			'CohereBot',
+		],
 		'block_unverified'=> false,
 		'strict'          => false,
 	],
@@ -487,6 +504,162 @@ return [
 		 * Default: null (all four providers)
 		 */
 		'cloud_providers' => null,
+	],
+
+	// =========================================================================
+	// LOG RETENTION
+	// =========================================================================
+
+	/**
+	 * Automatic cleanup of old bad_behaviour log rows.
+	 *
+	 * Replaces BB 2.x's implicit per-request cleanup (which caused DELETE
+	 * storms under load) with a 4-gated, on-demand approach. The cleanup
+	 * runs in the background — user-facing latency is unaffected under
+	 * PHP-FPM because the DELETE happens after the response has been sent.
+	 *
+	 * === WHEN TO USE ===
+	 *
+	 *   - Recommended for: any deployment that previously relied on the
+	 *     BB 2.x "auto-delete after 7 days" behavior.
+	 *   - For sites without cron access: leave on-request cleanup enabled
+	 *     (the default). The 4-gate design guarantees at most one DELETE
+	 *     per min_interval (default 6h) per worker.
+	 *   - For sites with cron access: enable on-request cleanup AND run
+	 *     bin/cleanup-logs.php daily — belt-and-suspenders for high-traffic
+	 *     sites where the random 1/N gate might not fire often enough.
+	 *
+	 * === HOW IT WORKS ===
+	 *
+	 * Four gates gate each cleanup — probability × cooldown × staleness ×
+	 * mutex — so even on very busy sites the cleanup runs at most once
+	 * per min_interval_seconds per worker, and at most once concurrently
+	 * across all workers on a shared cache:
+	 *
+	 *   Gate 1: Probability   — 1 in N requests even checks
+	 *   Gate 2: Cooldown      — skip while cleanup lock is held
+	 *   Gate 3: Staleness     — skip when last cleanup was recent
+	 *   Gate 4: Mutex         — only one worker cleans at a time
+	 *
+	 * The actual DELETE runs after the HTTP response has been sent to
+	 * the client. Under PHP-FPM the cleanup uses the shutdown function;
+	 * under CLI / mod_php it's skipped (no clean way to detach from
+	 * response time). Use bin/cleanup-logs.php for CLI invocation.
+	 *
+	 * === SCHEMA-PORTABLE DELETE ===
+	 *
+	 * The cleanup probes the table to discover the newest row's date,
+	 * then computes cutoff = newest - max_age_days. This works on every
+	 * common schema (DATETIME, INT unix-timestamp, TEXT ISO-8601) without
+	 * adapter-specific SQL. SQLite uses chunked DELETEs (default 1000 rows
+	 * per statement) bounded by a 500ms wall-clock budget to avoid
+	 * database locks.
+	 *
+	 * === CACHE BACKEND REQUIREMENT ===
+	 *
+	 * The cleanup mutex requires a SHARED cache across processes/hosts:
+	 *   - Redis, Memcached, DB-backed cache: works correctly
+	 *   - File-based cache: gives per-host mutex only (still works, just
+	 *     multiple hosts may clean concurrently — bounded by probability
+	 *     × min_interval, so the cost is trivial)
+	 *
+	 * If no CacheInterface is available, cleanup is silently disabled.
+	 * Use bin/cleanup-logs.php from a single-worker CLI cron instead.
+	 *
+	 * === COST ===
+	 *
+	 *   - Per-request overhead: 1 mt_rand() call + 1 cache get on the
+	 *     rare triggering request. Negligible.
+	 *   - Per-cleanup cost: 1-2 SQL queries (probe + DELETE) per worker
+	 *     per min_interval, capped at 500ms wall-clock. Well within DB
+	 *     load tolerance.
+	 *   - Cache storage: ~100 bytes for the last-run timestamp.
+	 */
+	'log_retention' => [
+
+		/**
+		 * Master switch.
+		 *
+		 * Default: true (to match BB 2.x's "auto-delete after 7 days" behavior)
+		 */
+		'enabled' => true,
+
+		/**
+		 * Retention window in days.
+		 *
+		 * Rows older than this are deleted. The cutoff is computed relative
+		 * to the newest row in the table (not now), so a table that hasn't
+		 * received writes in 30 days still has its old rows deleted when
+		 * the next write arrives.
+		 *
+		 * Recommended values:
+		 *   - 7  — BB 2.x default; minimum useful for forensics
+		 *   - 14 — two-week window for short-term abuse investigation
+		 *   - 30 — monthly window for compliance audits
+		 *   - 90 — quarterly window for long-term trend analysis
+		 *
+		 * Default: 7
+		 */
+		'max_age_days' => 7,
+
+		/**
+		 * Optional row-count safety cap.
+		 *
+		 * When the table exceeds this many rows, cleanup switches from
+		 * age-based to row-count mode: oldest rows are deleted until the
+		 * table has fewer than max_rows entries. Useful for sites where
+		 * verbose logging produces millions of rows even within the
+		 * retention window.
+		 *
+		 * 0 = no cap (age-based only). Default: 0.
+		 */
+		'max_rows' => 0,
+
+		/**
+		 * Probability denominator.
+		 *
+		 * 1 in N requests triggers the staleness check. Higher values mean
+		 * less frequent checks and less load on the DB.
+		 *
+		 * The actual cleanup frequency is bounded by `min_interval_seconds`
+		 * (Gate 3), so increasing the denominator doesn't increase cleanup
+		 * frequency — it only reduces the CPU cost of Gate 1's mt_rand()
+		 * call on the hot path.
+		 *
+		 * Default: 1000
+		 */
+		'probability_denominator' => 1000,
+
+		/**
+		 * Staleness floor (seconds).
+		 *
+		 * Minimum age of the last cleanup before another is allowed,
+		 * regardless of how often the probability gate fires. This is
+		 * the hard floor on cleanup frequency.
+		 *
+		 * Recommended values:
+		 *   - 3600  (1h)   — aggressive; high-traffic sites with disk pressure
+		 *   - 21600 (6h)   — typical; matches BB 2.x behavior loosely
+		 *   - 86400 (24h)  — conservative; daily cleanup is plenty
+		 *
+		 * Default: 21600
+		 */
+		'min_interval_seconds' => 21600,
+
+		/**
+		 * Mutex lock TTL (seconds).
+		 *
+		 * How long the cleanup lock is held. Functions as both:
+		 *   (a) Cross-process/host mutex — only one worker cleans
+		 *   (b) Cooldown — don't re-check within this window
+		 *
+		 * Should comfortably exceed the worst-case cleanup duration
+		 * (1 DELETE × 500ms wall-clock budget). Default 600s (10 min)
+		 * gives 1200× headroom.
+		 *
+		 * Default: 600
+		 */
+		'lock_ttl' => 600,
 	],
 
 	// =========================================================================

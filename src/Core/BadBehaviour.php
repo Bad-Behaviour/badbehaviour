@@ -59,6 +59,16 @@ class BadBehaviour
 	private ?\BadBehaviour\Feeds\OnDemandRefresher $refresh_checker = null;
 
 	/**
+	 * Optional on-demand log retention cleaner. Null when disabled by
+	 * config or when construction failed. See run_internal() for how/when
+	 * it's invoked.
+	 *
+	 * Mirrors $refresh_checker's lifecycle: opt-in via config, fails
+	 * gracefully to null if no cache backend is available.
+	 */
+	private ?\BadBehaviour\Util\LogRetention $log_retention_checker = null;
+
+	/**
 	 * @param Configuration $config
 	 * @param RegistryInterface|null $registry Optional bot registry override.
 	 *        If null, loads from config/bb_registry.php (or falls back to
@@ -201,6 +211,37 @@ class BadBehaviour
 				$this->refresh_checker = null;
 			}
 		}
+
+		// === On-demand log retention cleanup ===
+		//
+		// Restores BB 2.x's "delete rows older than 7 days" behavior with
+		// safe gating. Replaces the implicit per-request cleanup that caused
+		// DELETE storms under load. Disabled by default? No — enabled by
+		// default to match BB 2.x's behavior (operators who upgrade and
+		// relied on the implicit cleanup get it back). Operators who never
+		// want it can set `log_retention.enabled => false`.
+		if ($this->config->log_retention_enabled) {
+			try {
+				$cache = $this->cache ?? ($this->adapter instanceof CacheInterface ? $this->adapter : null);
+				if ($cache !== null) {
+					$this->log_retention_checker = new \BadBehaviour\Util\LogRetention(
+						adapter: $this->adapter,
+						config: $this->config,
+						cache: $cache,
+						);
+				}
+			} catch (\Throwable $e) {
+				ErrorReporter::error($this->adapter,
+					'BadBehaviour: log retention init failed; disabled',
+					[
+						'error' => $e->getMessage(),
+						'exception_class' => $e::class,
+					],
+					'log_retention_init_failed'
+					);
+				$this->log_retention_checker = null;
+			}
+		}
 	}
 
 	/**
@@ -215,6 +256,81 @@ class BadBehaviour
 		$clone->registry = $registry;
 		$clone->bot_detector = new BotDetector($this->config, $this->adapter, $registry);
 		return $clone;
+	}
+
+	// ====================================================================
+	// ON-DEMAND LOG CLEANUP API
+	// ====================================================================
+	//
+	// Mirror of the IP refresh public API for consistency.
+
+	/**
+	 * Evaluate whether the log retention cleaner would schedule a cleanup
+	 * on the next detection call. Runs the four-gate check WITHOUT
+	 * acquiring the lock or triggering any side effects.
+	 *
+	 * Returns null when log cleanup is disabled (no checker constructed).
+	 */
+	public function peek_cleanup_decision(): ?\BadBehaviour\Util\RetentionDecision
+	{
+		if ($this->log_retention_checker === null) {
+			return null;
+		}
+		try {
+			return $this->log_retention_checker->maybe_cleanup();
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter,
+				'peek_cleanup_decision failed', [
+					'error' => $e->getMessage(),
+				], 'peek_cleanup_decision_failure');
+			return null;
+		}
+	}
+
+	/**
+	 * True when log retention cleanup is configured AND a cache backend
+	 * is available to coordinate the mutex.
+	 */
+	public function is_log_cleanup_enabled(): bool
+	{
+		return $this->config->log_retention_enabled
+		&& $this->log_retention_checker !== null;
+	}
+
+	/**
+	 * Force an immediate synchronous cleanup. Bypasses all four gates.
+	 * Useful for admin "Cleanup Now" buttons and bin/cleanup-logs.php.
+	 *
+	 * Returns null when log retention is disabled in config. Returns the
+	 * RetentionResult on success/partial/failure otherwise.
+	 */
+	public function force_cleanup_now(): ?\BadBehaviour\Util\RetentionResult
+	{
+		if ($this->log_retention_checker === null) {
+			return null;
+		}
+		try {
+			return $this->log_retention_checker->force_cleanup_now();
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter,
+				'force_cleanup_now failed', [
+					'error' => $e->getMessage(),
+					'exception_class' => get_class($e),
+				], 'force_cleanup_now_failure');
+			return null;
+		}
+	}
+
+	/**
+	 * Get the result of the most recent force_cleanup_now() or shutdown
+	 * cleanup. Null if no cleanup has completed on this instance.
+	 */
+	public function get_last_cleanup_result(): ?\BadBehaviour\Util\RetentionResult
+	{
+		if ($this->log_retention_checker === null) {
+			return null;
+		}
+		return $this->log_retention_checker->get_last_result();
 	}
 
 	// ====================================================================
@@ -548,6 +664,16 @@ class BadBehaviour
 			'cache_ttl'               => $this->config->on_demand_ip_refresh_cache_ttl,
 		];
 
+		$log_cleanup = [
+			'enabled'                 => $this->config->log_retention_enabled,
+			'usable'                  => $this->is_log_cleanup_enabled(),
+			'max_age_days'            => $this->config->log_retention_max_age_days,
+			'max_rows'                => $this->config->log_retention_max_rows,
+			'probability_denominator' => $this->config->log_retention_probability_denominator,
+			'min_interval_seconds'    => $this->config->log_retention_min_interval_seconds,
+		];
+
+
 		$config_loaded = false;
 		if (method_exists($this->adapter, 'is_config_loaded')) {
 			try {
@@ -583,6 +709,7 @@ class BadBehaviour
 			'logging_enabled'        => $this->config->logging,
 			'detectors_active'       => $detectors,
 			'on_demand_refresh'      => $on_demand_refresh,
+			'log_cleanup'            => $log_cleanup,
 			'hint'                   => $hint,
 		];
 	}
@@ -701,6 +828,19 @@ class BadBehaviour
 		// (refresh_checker is null) — zero overhead for the common case.
 		// ============================================================
 		$this->maybe_schedule_refresh();
+
+		// ============================================================
+		// ON-DEMAND LOG CLEANUP GATE
+		//
+		// Same 4-gate pattern as IP refresh: 1/N requests trigger the
+		// check, gated by cooldown, staleness, and mutex. The actual
+		// DELETE runs in the shutdown function — user-facing latency
+		// is unaffected under PHP-FPM.
+		//
+		// Skipped when log_retention_checker is null (feature disabled
+		// or cache backend unavailable).
+		// ============================================================
+		$this->maybe_schedule_cleanup();
 
 		// ============================================================
 		// HARD TIME BUDGET — Detection must NEVER stall the request.
@@ -1216,6 +1356,55 @@ class BadBehaviour
 		});
 	}
 
+	/**
+	 * Run the log cleanup gate and, if it schedules, register a shutdown
+	 * function to perform the actual DELETE.
+	 *
+	 * Mirrors maybe_schedule_refresh() exactly — same 4-gate pattern,
+	 * same shutdown deferral, same defensive error handling. The DELETE
+	 * itself has a hard wall-clock budget (default 500ms) so a large
+	 * table can't stall the shutdown handler.
+	 *
+	 * @return void
+	 */
+	private function maybe_schedule_cleanup(): void
+	{
+		if ($this->log_retention_checker === null) {
+			return;
+		}
+
+		try {
+			$decision = $this->log_retention_checker->maybe_cleanup();
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter,
+				'log cleanup gate threw; skipping',
+				[
+					'error' => $e->getMessage(),
+					'exception_class' => $e::class,
+				],
+				'log_cleanup_gate_threw'
+				);
+			return;
+		}
+
+		if (!$decision->should_cleanup) {
+			return;
+		}
+
+		// Schedule the slow work for after the response is sent.
+		$retention = $this->log_retention_checker;
+		register_shutdown_function(static function () use ($retention): void {
+			try {
+				$retention->do_cleanup();
+			} catch (\Throwable $e) {
+				error_log(
+					'[BadBehaviour] log cleanup shutdown handler threw: '
+					. $e->getMessage()
+					);
+			}
+		});
+	}
+
 	// === Static Resource Skip Logic ===
 	private function should_skip_static(string $uri): bool
 	{
@@ -1458,6 +1647,61 @@ class BadBehaviour
 					'hint' => 'Run bin/install-bb.php manually to seed the cache.',
 				],
 				'install_once_seed_failed'
+			);
+		}
+
+		// === Opportunistic log cleanup seeding ===
+		//
+		// If log retention is enabled and we've never cleaned, do a
+		// synchronous cleanup here to ensure the first request doesn't
+		// see an unbounded table. Same pattern as the IP refresh seed:
+		// opt-in via config, opportunistic via install_once, hosts that
+		// want guaranteed cleanup run bin/cleanup-logs.php during install.
+		if ($this->log_retention_checker === null) {
+			return;
+		}
+
+		// Skip if cleanup has run recently (any non-null last_run counts).
+		try {
+			$existing = $this->cache !== null
+			? $this->cache->get(\BadBehaviour\Util\LogRetention::CACHE_KEY_LAST_RUN)
+			: ($this->adapter instanceof CacheInterface
+				? $this->adapter->get(\BadBehaviour\Util\LogRetention::CACHE_KEY_LAST_RUN)
+				: null);
+		} catch (\Throwable $e) {
+			$existing = null;
+		}
+
+		if ($existing !== null) {
+			return;
+		}
+
+		// Skip during CLI.
+		if (php_sapi_name() === 'cli') {
+			return;
+		}
+
+		// Cap seeding at 1 second.
+		$start = microtime(true);
+		try {
+			$result = $this->log_retention_checker->force_cleanup_now();
+			if ($result !== null && $result->success) {
+				error_log(sprintf(
+					'[BadBehaviour] install_once: cleaned %d rows from %s in %.2fs',
+					$result->rows_deleted,
+					$result->log_table,
+					microtime(true) - $start
+					));
+			}
+		} catch (\Throwable $e) {
+			ErrorReporter::error($this->adapter,
+				'install_once: opportunistic log cleanup failed',
+				[
+					'error' => $e->getMessage(),
+					'exception_class' => $e::class,
+					'hint' => 'Run bin/cleanup-logs.php manually if needed.',
+				],
+				'install_once_cleanup_failed'
 				);
 		}
 	}

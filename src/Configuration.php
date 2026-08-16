@@ -97,6 +97,13 @@ readonly class Configuration
     	public array $on_demand_ip_refresh_bot_ids = [],
     	public array $on_demand_ip_refresh_cloud_providers = [],
 
+    	public bool $log_retention_enabled = true,
+    	public int $log_retention_max_age_days = 7,
+    	public int $log_retention_max_rows = 0,
+    	public int $log_retention_probability_denominator = 1000,
+    	public int $log_retention_min_interval_seconds = 21600,
+    	public int $log_retention_lock_ttl = 600,
+
         public bool $enable_head_request_detection = false,
         public bool $head_require_referer = false,
         public int $head_flood_threshold = 20,
@@ -188,6 +195,21 @@ readonly class Configuration
         	}
         	if (isset($args['dynamic_ip_ranges_ttl'])) {
         		$args['dynamic_ip_ranges_ttl'] = max(3600, (int)$args['dynamic_ip_ranges_ttl']);
+        	}
+        	if (isset($args['log_retention_max_age_days'])) {
+        		$args['log_retention_max_age_days'] = max(1, min(3650, (int)$args['log_retention_max_age_days']));
+        	}
+        	if (isset($args['log_retention_max_rows'])) {
+        		$args['log_retention_max_rows'] = max(0, (int)$args['log_retention_max_rows']);
+        	}
+        	if (isset($args['log_retention_probability_denominator'])) {
+        		$args['log_retention_probability_denominator'] = max(1, (int)$args['log_retention_probability_denominator']);
+        	}
+        	if (isset($args['log_retention_min_interval_seconds'])) {
+        		$args['log_retention_min_interval_seconds'] = max(60, (int)$args['log_retention_min_interval_seconds']);
+        	}
+        	if (isset($args['log_retention_lock_ttl'])) {
+        		$args['log_retention_lock_ttl'] = max(60, (int)$args['log_retention_lock_ttl']);
         	}
 
         	// Threshold values must be >= 1 (zero would disable the detector entirely)
@@ -415,6 +437,7 @@ readonly class Configuration
     		'enable_head_request_detection',
     		'head_require_referer',
     		'enable_asset_scraping_detection',
+    		'log_retention_enabled',
     	];
 
     	// Properties whose expected type is `int`.
@@ -434,6 +457,11 @@ readonly class Configuration
     		'on_demand_ip_refresh_min_age_seconds',
     		'on_demand_ip_refresh_lock_ttl',
     		'on_demand_ip_refresh_cache_ttl',
+    		'log_retention_max_age_days',
+    		'log_retention_max_rows',
+    		'log_retention_probability_denominator',
+    		'log_retention_min_interval_seconds',
+    		'log_retention_lock_ttl',
     	];
 
     	// Properties whose expected type is `float`.
@@ -989,6 +1017,15 @@ readonly class Configuration
         		'cloud_providers'         => [],
         	],
 
+        	'log_retention' => [
+        		'enabled'                 => true,
+        		'max_age_days'            => 7,
+        		'max_rows'                => 0,
+        		'probability_denominator' => 1000,
+        		'min_interval_seconds'    => 21600,
+        		'lock_ttl'                => 600,
+        	],
+
             'enable_head_request_detection'   => false,
             'head_require_referer'            => false,
             'head_flood_threshold'            => 20,
@@ -1110,6 +1147,15 @@ readonly class Configuration
         		'feed_timeout_seconds'    => $this->on_demand_ip_refresh_feed_timeout_seconds,
         		'bot_ids'                 => $this->on_demand_ip_refresh_bot_ids,
         		'cloud_providers'         => $this->on_demand_ip_refresh_cloud_providers,
+        	],
+
+        	'log_retention' => [
+        		'enabled'                 => $this->log_retention_enabled,
+        		'max_age_days'            => $this->log_retention_max_age_days,
+        		'max_rows'                => $this->log_retention_max_rows,
+        		'probability_denominator' => $this->log_retention_probability_denominator,
+        		'min_interval_seconds'    => $this->log_retention_min_interval_seconds,
+        		'lock_ttl'                => $this->log_retention_lock_ttl,
         	],
 
             'enable_head_request_detection'   => $this->enable_head_request_detection,

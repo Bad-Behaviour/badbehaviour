@@ -251,6 +251,14 @@ CREATE TABLE IF NOT EXISTS `$name` (
 SQL;
 	}
 
+	public function probe_log_table(string $table_name): array
+	{
+		// No DB → no probe. Returning the documented no-op shape lets
+		// LogRetention fall through to its time()-anchor cutoff without
+		// logging a spurious error.
+		return ['newest' => null, 'total' => 0, 'error' => null];
+	}
+
 	public function log_request(RequestPackage $package, Result $result): void
 	{
 		// No-op for generic adapter - implement in specific adapters
@@ -261,8 +269,15 @@ SQL;
 
 	public function query(string $sql): bool
 	{
-		// Generic adapter has no DB connection by default
-		return false;
+		// GenericAdapter has no real DB connection. Operators must use a
+		// concrete adapter (WackoWikiAdapter, MediaWikiAdapter, or a custom
+		// adapter that connects to their application's database) for actual
+		// log retention cleanup.
+		throw new \RuntimeException(
+			'GenericAdapter cannot execute SQL — configure a concrete adapter '
+			. 'with a database connection, or use bin/cleanup-logs.php against '
+			. 'an environment with proper adapter wiring.'
+		);
 	}
 
 	// CacheInterface implementation

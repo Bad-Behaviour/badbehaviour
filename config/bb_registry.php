@@ -1,3 +1,4 @@
+<?php
 /**
  * Bad Behaviour — Default bot registry configuration (shipped).
  *

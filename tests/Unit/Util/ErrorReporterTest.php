@@ -434,6 +434,10 @@ final class ErrorReporterTest extends TestCase
             // implementation will FAIL because the interface declares log().
             // So we instead subclass GenericAdapter and break the method.
 
+        	public function probe_log_table(string $table): array
+        	{
+        		return ['newest' => null, 'total' => 0, 'error' => null];
+        	}
             public function get_settings(): array { return []; }
             public function get_whitelist(): array { return []; }
             public function get_email(): string { return ''; }

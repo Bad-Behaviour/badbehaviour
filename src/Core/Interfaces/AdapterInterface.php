@@ -16,6 +16,7 @@ interface AdapterInterface
 	// Database / Storage
 	public function log_request(RequestPackage $package, Result $result): void;
 	public function get_table_schema(string $table_name): string|array;
+	public function probe_log_table(string $table_name): array;
 
 	// Cache / Rate Limiting
 	public function increment_counter(string $key, int $window_seconds): int;

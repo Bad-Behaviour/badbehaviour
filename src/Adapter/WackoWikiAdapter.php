@@ -489,6 +489,33 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		}
 	}
 
+	public function probe_log_table(string $table_name): array
+	{
+		$safe = preg_replace('/[^a-zA-Z0-9_]/', '', $table_name);
+		if ($safe === '' || $safe === null) {
+			return ['newest' => null, 'total' => 0, 'error' => 'invalid_table_name'];
+		}
+
+		try {
+			$result = $this->db->ll_query("SELECT MAX(`date`) AS newest, COUNT(*) AS total FROM `{$safe}`");
+			if (!$result) {
+				return ['newest' => null, 'total' => 0, 'error' => null];
+			}
+			$row = $this->db->fetch_assoc($result) ?: ['newest' => null, 'total' => 0];
+			return [
+				'newest' => $row['newest'] ?? null,
+				'total'  => (int)($row['total'] ?? 0),
+				'error'  => null,
+			];
+		} catch (\Throwable $e) {
+			return [
+				'newest' => null,
+				'total'  => 0,
+				'error'  => $e->getMessage(),
+			];
+		}
+	}
+
 	public function log_request(RequestPackage $package, Result $result): void
 	{
 		// CRITICAL: never let logging failures crash the request.

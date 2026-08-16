@@ -118,6 +118,16 @@ class InMemoryAdapterStub implements AdapterInterface, CacheInterface
         // no-op
     }
 
+    /**
+     * No-op probe — InMemoryAdapterStub has no real DB to query.
+     * Returns the documented no-op shape so LogRetention falls through
+     * to its time()-anchor cutoff without logging a spurious error.
+     */
+    public function probe_log_table(string $table_name): array
+    {
+    	return ['newest' => null, 'total' => 0, 'error' => null];
+    }
+
     public function get_table_schema(string $table_name): string|array
     {
         return '';

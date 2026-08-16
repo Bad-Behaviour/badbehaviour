@@ -18,6 +18,11 @@ use BadBehaviour\Util\RequestPackage;
 
 class NoCacheAdapter implements AdapterInterface
 {
+	public function probe_log_table(string $table): array
+	{
+		return ['newest' => null, 'total' => 0, 'error' => null];
+	}
+
     public function get_settings(): array
     {
         return [

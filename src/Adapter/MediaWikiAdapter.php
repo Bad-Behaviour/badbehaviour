@@ -223,6 +223,32 @@ CREATE TABLE IF NOT EXISTS `$name` (
 SQL;
 	}
 
+	public function probe_log_table(string $table_name): array
+	{
+		try {
+			$row = $this->db->selectRow(
+				$table_name,
+				['MAX(date) AS newest', 'COUNT(*) AS total'],
+				[],
+				__METHOD__
+				);
+			if ($row === false) {
+				return ['newest' => null, 'total' => 0, 'error' => null];
+			}
+			return [
+				'newest' => $row->newest ?? null,
+				'total'  => (int)($row->total ?? 0),
+				'error'  => null,
+			];
+		} catch (\Throwable $e) {
+			return [
+				'newest' => null,
+				'total'  => 0,
+				'error'  => $e->getMessage(),
+			];
+		}
+	}
+
 	public function log_request(RequestPackage $package, Result $result): void
 	{
 		// CRITICAL: never let logging failures crash the request.

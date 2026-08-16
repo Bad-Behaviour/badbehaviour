@@ -170,6 +170,14 @@ final class Schema
         'asset_no_referer_threshold'             => 'asset_no_referer_threshold',
         'asset_only_session_threshold'           => 'asset_only_session_threshold',
         'asset_pattern_threshold'                => 'asset_pattern_threshold',
+
+        // === Log retention ===
+    	'log_retention.enabled'                 => 'log_retention_enabled',
+    	'log_retention.max_age_days'            => 'log_retention_max_age_days',
+    	'log_retention.max_rows'                => 'log_retention_max_rows',
+    	'log_retention.probability_denominator' => 'log_retention_probability_denominator',
+    	'log_retention.min_interval_seconds'    => 'log_retention_min_interval_seconds',
+    	'log_retention.lock_ttl'                => 'log_retention_lock_ttl',
     ];
 
     /**

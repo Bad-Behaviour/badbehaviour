@@ -425,7 +425,8 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					\"request_time_ms\" INTEGER UNSIGNED,
 					\"enforcement_action\" VARCHAR(16) NOT NULL DEFAULT 'enforced',
 					\"original_code\" VARCHAR(50) DEFAULT NULL,
-					\"resolved_at\" DATETIME NULL DEFAULT NULL
+					\"resolved_at\" DATETIME NULL DEFAULT NULL,
+					\"check\" TINYINT(1) NOT NULL DEFAULT 0
 				);",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_ip\" ON \"{$name}\" (\"ip\");",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_status\" ON \"{$name}\" (\"status_code\");",
@@ -435,6 +436,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_uri_hash\" ON \"{$name}\" (\"request_uri_hash\");",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_method\" ON \"{$name}\" (\"request_method\");",
 				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_enforcement\" ON \"{$name}\" (\"enforcement_action\", \"date\");",
+				"CREATE INDEX IF NOT EXISTS \"idx_{$name}_check\" ON \"{$name}\" (\"check\");",
 				];
 		}
 		else {
@@ -475,6 +477,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 					`enforcement_action` VARCHAR(16) NOT NULL DEFAULT 'enforced',
 					`original_code` VARCHAR(50) NULL,
 					`resolved_at` DATETIME NULL DEFAULT NULL,
+					`check` TINYINT(1) NOT NULL DEFAULT 0,
 				PRIMARY KEY (`log_id`),
 				KEY `idx_ip` (`ip`),
 				KEY `idx_status` (`status_code`),
@@ -483,7 +486,8 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 				KEY `idx_user_agent_hash` (`user_agent_hash`),
 				KEY `idx_request_uri_hash` (`request_uri_hash`),
 				KEY `idx_request_method` (`request_method`),
-				KEY `idx_enforcement` (`enforcement_action`, `date`)
+				KEY `idx_enforcement` (`enforcement_action`, `date`),
+				KEY `idx_check` (`check`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
 			];
 		}
@@ -513,6 +517,70 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 				'total'  => 0,
 				'error'  => $e->getMessage(),
 			];
+		}
+	}
+
+	/**
+	 * Set the `check` flag on a single log row.
+	 *
+	 * Used by the admin UI to mark records the operator wants to keep an eye on
+	 * (typical use case: false positives to investigate later, entries to share
+	 * with a colleague, suspicious patterns to whitelist before autodelete kicks
+	 * in). Checked rows are exempt from automatic log retention cleanup — the
+	 * retention service MUST include `AND check = 0` in its DELETE WHERE clause
+	 * (see get_log_retention() JSDoc for the full contract).
+	 *
+	 * Idempotent: setting an already-checked row to true is a no-op (returns
+	 * true). Setting to false clears the flag regardless of prior state.
+	 *
+	 * Validation:
+	 *   - log_id must be > 0 (defensive against bad dispatch)
+	 *   - table name comes from get_settings()['log_table'], sanitized via
+	 *     preg_replace to disallow anything but [a-zA-Z0-9_]
+	 *
+	 * @param int  $log_id  Primary key from the log table.
+	 * @param bool $checked New value for the `check` column.
+	 * @return bool         true on success, false on DB failure (already logged).
+	 */
+	public function set_log_check(int $log_id, bool $checked): bool
+	{
+		// === Validate inputs ===
+		if ($log_id <= 0)
+		{
+			return false;
+		}
+
+		// Resolve + sanitize table name from current settings. Falls back to the
+		// adapter's default if settings haven't loaded (e.g. early bootstrap).
+		$settings = $this->get_settings();
+		$table = $settings['log_table'] ?? (($this->db->table_prefix ?? '') . 'bad_behaviour');
+
+		$safe = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+		if ($safe === '' || $safe === null)
+		{
+			return false;
+		}
+
+		$val = $checked ? 1 : 0;
+		// Note: `check` is a reserved word in MySQL 8+ in some contexts, but is
+		// perfectly valid as a column identifier when backtick-quoted. Both
+		// drivers handle this without issue.
+		$sql = "UPDATE `{$safe}` SET `check` = {$val} WHERE `log_id` = " . (int)$log_id;
+
+		try
+		{
+			$result = $this->db->ll_query($sql);
+			return $result !== false;
+		}
+		catch (\Throwable $e)
+		{
+			ErrorReporter::error($this, 'set_log_check failed', [
+				'log_id'  => $log_id,
+				'checked' => $checked,
+				'table'   => $safe,
+				'error'   => $e->getMessage(),
+			], 'set_log_check_failure');
+			return false;
 		}
 	}
 

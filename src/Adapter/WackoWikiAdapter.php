@@ -584,6 +584,276 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 		}
 	}
 
+	/**
+	 * Bulk-set the `check` flag on multiple log rows in one query.
+	 *
+	 * Single UPDATE ... WHERE log_id IN (...) instead of N round trips.
+	 * Returns bool (success/failure) rather than affected_rows() because
+	 * different DB drivers report affected_rows() inconsistently after
+	 * UPDATE — the caller uses count($ids) for the user-facing count.
+	 *
+	 * @param int[] $log_ids
+	 * @param bool  $checked
+	 * @return bool  true if the UPDATE executed successfully.
+	 */
+	public function set_log_check_bulk(array $log_ids, bool $checked): bool
+	{
+		$ids = $this->sanitize_log_ids($log_ids);
+		if (empty($ids))
+		{
+			return false;
+		}
+
+		$table = $this->resolve_log_table();
+		if ($table === null)
+		{
+			return false;
+		}
+
+		$val = $checked ? 1 : 0;
+		$id_list = implode(',', $ids);
+		$sql = "UPDATE `{$table}` SET `check` = {$val} WHERE `log_id` IN ({$id_list})";
+
+		try
+		{
+			$result = $this->db->ll_query($sql);
+			return $result !== false;
+		}
+		catch (\Throwable $e)
+		{
+			ErrorReporter::error($this, 'set_log_check_bulk failed', [
+				'count'   => count($ids),
+				'checked' => $checked,
+				'table'   => $table,
+				'error'   => $e->getMessage(),
+			], 'set_log_check_bulk_failure');
+			return false;
+		}
+	}
+
+	/**
+	 * Bulk-delete multiple log rows in one query.
+	 *
+	 * @param int[] $log_ids
+	 * @return bool  true if the DELETE executed successfully.
+	 */
+	public function delete_log_bulk(array $log_ids): bool
+	{
+		$ids = $this->sanitize_log_ids($log_ids);
+		if (empty($ids))
+		{
+			return false;
+		}
+
+		$table = $this->resolve_log_table();
+		if ($table === null)
+		{
+			return false;
+		}
+
+		$id_list = implode(',', $ids);
+		$sql = "DELETE FROM `{$table}` WHERE `log_id` IN ({$id_list})";
+
+		try
+		{
+			$result = $this->db->ll_query($sql);
+			return $result !== false;
+		}
+		catch (\Throwable $e)
+		{
+			ErrorReporter::error($this, 'delete_log_bulk failed', [
+				'count' => count($ids),
+				'table' => $table,
+				'error' => $e->getMessage(),
+			], 'delete_log_bulk_failure');
+			return false;
+		}
+	}
+
+	/**
+	 * Bulk-set or clear the `resolved_at` column on multiple log rows.
+	 *
+	 * Matches per-row semantics:
+	 *   - resolve=true  → only updates rows where resolved_at IS NULL
+	 *   - resolve=false → unconditionally clears resolved_at
+	 *
+	 * @param int[] $log_ids
+	 * @param bool  $resolved
+	 * @return bool
+	 */
+	public function set_log_resolved_bulk(array $log_ids, bool $resolved): bool
+	{
+		$ids = $this->sanitize_log_ids($log_ids);
+		if (empty($ids))
+		{
+			return false;
+		}
+
+		$table = $this->resolve_log_table();
+		if ($table === null)
+		{
+			return false;
+		}
+
+		$id_list = implode(',', $ids);
+
+		if ($resolved)
+		{
+			$now = $this->db->q(gmdate('Y-m-d H:i:s'));
+			$sql = "UPDATE `{$table}` SET `resolved_at` = {$now} "
+				 . "WHERE `log_id` IN ({$id_list}) AND `resolved_at` IS NULL";
+		}
+		else
+		{
+			$sql = "UPDATE `{$table}` SET `resolved_at` = NULL "
+				 . "WHERE `log_id` IN ({$id_list})";
+		}
+
+		try
+		{
+			$result = $this->db->ll_query($sql);
+			return $result !== false;
+		}
+		catch (\Throwable $e)
+		{
+			ErrorReporter::error($this, 'set_log_resolved_bulk failed', [
+				'count'    => count($ids),
+				'resolved' => $resolved,
+				'table'    => $table,
+				'error'    => $e->getMessage(),
+			], 'set_log_resolved_bulk_failure');
+			return false;
+		}
+	}
+
+	/**
+	 * Bulk-whitelist IPs found in the selected log rows.
+	 *
+	 * Reads DISTINCT IPs from the rows in one query, appends any new ones
+	 * to the existing whitelist, writes the INI file. Returns the count of
+	 * NEW IPs added (existing IPs don't count).
+	 *
+	 * @param int[] $log_ids
+	 * @return int  Number of NEW IPs added.
+	 */
+	public function whitelist_ips_from_logs_bulk(array $log_ids): int
+	{
+		$ids = $this->sanitize_log_ids($log_ids);
+		if (empty($ids))
+		{
+			return 0;
+		}
+
+		$table = $this->resolve_log_table();
+		if ($table === null)
+		{
+			return 0;
+		}
+
+		$id_list = implode(',', $ids);
+
+		$sql = "SELECT DISTINCT `ip` FROM `{$table}` WHERE `log_id` IN ({$id_list})";
+
+		try
+		{
+			$rows = $this->db->load_all($sql, true);
+		}
+		catch (\Throwable $e)
+		{
+			ErrorReporter::error($this, 'whitelist_ips_from_logs_bulk: SELECT failed', [
+				'count' => count($ids),
+				'error' => $e->getMessage(),
+			], 'whitelist_bulk_select_failure');
+			return 0;
+		}
+
+		$existing = $this->get_whitelist();
+		$current_ips = $existing['ip'] ?? [];
+
+		$new_ips = $current_ips;
+		$added = 0;
+
+		foreach ($rows as $row)
+		{
+			$ip = $row['ip'] ?? '';
+			if ($ip !== '' && !in_array($ip, $new_ips, true))
+			{
+				$new_ips[] = $ip;
+				$added++;
+			}
+		}
+
+		if ($added === 0)
+		{
+			return 0;
+		}
+
+		$file = defined('CONFIG_DIR') ? CONFIG_DIR . '/bb_whitelist.conf' : 'config/bb_whitelist.conf';
+
+		$content = '';
+		foreach (($existing['useragent'] ?? []) as $ua) $content .= "[useragent]\nwhitelist = \"" . $ua . "\"\n\n";
+		foreach (($existing['url'] ?? []) as $url)     $content .= "[url]\nwhitelist = \"" . $url . "\"\n\n";
+		foreach (($existing['asn'] ?? []) as $asn)     $content .= "[asn]\nwhitelist = \"" . $asn . "\"\n\n";
+		foreach (($existing['country'] ?? []) as $c)   $content .= "[country]\nwhitelist = \"" . $c . "\"\n\n";
+		foreach ($new_ips as $ip)                       $content .= "[ip]\nwhitelist = \"" . $ip . "\"\n\n";
+
+		$bytes = @file_put_contents($file, $content);
+		if ($bytes === false)
+		{
+			ErrorReporter::error($this, 'whitelist_ips_from_logs_bulk: write failed', [
+				'file'  => $file,
+				'added' => $added,
+			], 'whitelist_bulk_write_failure');
+			return 0;
+		}
+
+		return $added;
+	}
+
+	/**
+	 * Sanitize an array of log_ids: cast to int, drop non-positive, dedupe, cap.
+	 *
+	 * The cap at 1000 prevents runaway IN-lists. mark_all currently selects at
+	 * most one page (100 rows default), so 1000 is generous headroom.
+	 *
+	 * @return int[]
+	 */
+	private function sanitize_log_ids(array $log_ids): array
+	{
+		$clean = [];
+		foreach ($log_ids as $id)
+		{
+			$i = (int)$id;
+			if ($i > 0)
+			{
+				$clean[$i] = true;
+			}
+		}
+		$ids = array_keys($clean);
+		sort($ids, SORT_NUMERIC);
+
+		if (count($ids) > 1000)
+		{
+			$ids = array_slice($ids, 0, 1000);
+		}
+
+		return $ids;
+	}
+
+	/**
+	 * Resolve the log table name from settings + sanitize.
+	 *
+	 * @return string|null
+	 */
+	private function resolve_log_table(): ?string
+	{
+		$settings = $this->get_settings();
+		$table = $settings['log_table'] ?? (($this->db->table_prefix ?? '') . 'bad_behaviour');
+
+		$safe = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+		return ($safe === '' || $safe === null) ? null : $safe;
+	}
+
 	public function log_request(RequestPackage $package, Result $result): void
 	{
 		// CRITICAL: never let logging failures crash the request.

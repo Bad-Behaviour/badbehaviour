@@ -253,6 +253,14 @@ class DefaultRegistry implements RegistryInterface
 				dns_suffixes: ['googlebot.com', 'google.com'],
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'Googlebot',
+				info_url: 'https://developers.google.com/search/docs/crawling-indexing/verifying-googlebot',
+				ip_ranges_feed_url: [
+					'https://developers.google.com/static/crawling/ipranges/common-crawlers.json',
+					'https://developers.google.com/static/crawling/ipranges/special-crawlers.json',
+					'https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers.json',
+					'https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers-google.json',
+					'https://developers.google.com/static/crawling/ipranges/user-triggered-agents.json',
+				],
 			),
 			'bingbot' => new BotDefinition(
 				id: 'bingbot',
@@ -269,6 +277,7 @@ class DefaultRegistry implements RegistryInterface
 				dns_suffixes: ['search.msn.com', 'bing.com'],
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'Bingbot',
+				ip_ranges_feed_url: ['https://www.bing.com/toolbox/bingbot.json'],
 			),
 			'yandex' => new BotDefinition(
 				id: 'yandex',
@@ -583,6 +592,12 @@ class DefaultRegistry implements RegistryInterface
 				category: BotCategory::AI_CRAWLER,
 				robots_txt_token: 'GPTBot',
 				default_action: BotAction::CHALLENGE,
+				info_url: 'https://developers.openai.com/api/docs/bots',
+				ip_ranges_feed_url: [
+					'https://openai.com/gptbot.json',
+					'https://openai.com/searchbot.json',
+					'https://openai.com/chatgpt-user.json',
+				],
 			),
 			'claude' => new BotDefinition(
 				id: 'claude',
@@ -1111,6 +1126,8 @@ class DefaultRegistry implements RegistryInterface
 				category: BotCategory::ARCHIVE_CRAWLER,
 				robots_txt_token: 'CCBot',
 				description: 'CCBot — Common Crawl web archive.',
+				info_url: 'https://commoncrawl.org/ccbot',
+				ip_ranges_feed_url: ['https://index.commoncrawl.org/ccbot.json'],
 			),
 			'internet_archive' => new BotDefinition(
 				id: 'internet_archive',
@@ -1361,6 +1378,12 @@ class DefaultRegistry implements RegistryInterface
 				category: BotCategory::CLOUD_INFRASTRUCTURE,
 				default_action: BotAction::ALLOW,
 				description: 'CRITICAL: Cloudflare LB health probes. Blocking takes you offline.',
+				info_url: 'https://developers.cloudflare.com/fundamentals/concepts/cloudflare-ip-addresses/',
+				ip_ranges_feed_urls: [
+					'https://api.cloudflare.com/client/v4/ips',  // Official API
+					'https://www.cloudflare.com/ips-v4',         // Plain text v4
+					'https://www.cloudflare.com/ips-v6',         // Plain text v6
+				],
 			),
 			'aws_elb_health' => new BotDefinition(
 				id: 'aws_elb_health',

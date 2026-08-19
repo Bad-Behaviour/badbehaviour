@@ -237,16 +237,8 @@ class DefaultRegistry implements RegistryInterface
 			'googlebot' => new BotDefinition(
 				id: 'googlebot',
 				name: 'Googlebot',
-				user_agent_patterns: [
-					'Googlebot', 'Google-PageRenderer', 'Google-Read-Aloud',
-					'GoogleProducer', 'DuplexWeb-Google',
-					'gzip(gfe)', 'GoogleWebLight', 'Google-Proxy',
-					'GoogleWebProxy', 'GoogleTranslator',
-				],
-				host_patterns: [
-					'googlebot.com', 'google.com',
-					'googleusercontent.com', 'translate.google.com'
-				],
+				user_agent_patterns: ['Googlebot', 'Google-PageRenderer', 'Google-Read-Aloud', 'GoogleProducer', 'DuplexWeb-Google'],
+				host_patterns: ['googlebot.com', 'google.com'],
 				ip_ranges: [
 					'64.233.160.0/19', '66.249.64.0/19', '66.102.0.0/20', '72.14.192.0/18',
 					'74.125.0.0/16', '209.85.128.0/17', '216.239.32.0/19', '203.208.32.0/19',
@@ -255,7 +247,7 @@ class DefaultRegistry implements RegistryInterface
 					'2a00:1450:4000::/36', '2c0f:fb50:4000::/36',
 				],
 				verify_dns: true,
-				dns_suffixes: ['googlebot.com', 'google.com', 'googleusercontent.com'],
+				dns_suffixes: ['googlebot.com', 'google.com'],
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'Googlebot',
 				info_url: 'https://developers.google.com/search/docs/crawling-indexing/verifying-googlebot',
@@ -266,6 +258,62 @@ class DefaultRegistry implements RegistryInterface
 					'https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers-google.json',
 					'https://developers.google.com/static/crawling/ipranges/user-triggered-agents.json',
 				],
+			),
+			'google_user_triggered' => new BotDefinition(
+				id: 'google_user_triggered',
+				name: 'Google User-Triggered Fetchers',
+				user_agent_patterns: ['gzip(gfe)', 'GoogleWebLight', 'Google-Proxy', 'GoogleWebProxy', 'GoogleTranslator', 'Google-Site-Verification', 'GooglePageSpeed'],
+				host_patterns: ['google.com', 'googleusercontent.com', 'translate.google.com', 'pagespeed.google.com'],
+				// STATIC FALLBACK: Major GCP blocks used by user-triggered fetchers
+				// These cover ~80% of translate/proxy traffic. Feeds add the rest.
+				ip_ranges: [
+					// Major user-triggered fetcher blocks (from user-triggered-fetchers-google.json)
+					'34.0.0.0/10',      // 34.x.x.x - GCP us-central1, us-east1, etc.
+					'35.0.0.0/10',      // 35.x.x.x - GCP europe-west1, asia-east1, etc.
+					'107.178.0.0/16',   // GCP
+					'136.121.0.0/16',   // GCP
+					'142.250.0.0/15',   // Google services
+					'172.253.0.0/16',   // Google services
+					'192.178.0.0/16',   // Google services
+					'199.36.152.0/22',  // Google services
+					'208.68.16.0/22',   // Google services
+
+					// IPv6 GCP blocks
+					'2001:4860:4801::/48',
+					'2404:f340::/32',
+					'2600:1900::/32',
+				],
+				ip_ranges_feed_urls: [
+					'https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers.json',
+					'https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers-google.json',
+				],
+				verify_dns: true,
+				dns_suffixes: ['gae.googleusercontent.com', 'google-proxy'],
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'Googlebot',
+				default_action: BotAction::ALLOW,
+				description: 'Google Translate, PageSpeed, Site Verifier, etc. Ignores robots.txt. Static ranges are major GCP blocks; feeds provide full precision.',
+			),
+			'google_user_triggered_agents' => new BotDefinition(
+				id: 'google_user_triggered_agents',
+				name: 'Google User-Triggered Agents',
+				user_agent_patterns: [],
+				host_patterns: [],
+				ip_ranges: [
+					// From user-triggered-agents.json - stable blocks
+					'136.121.0.0/16',
+					'136.122.0.0/16',
+					'74.125.232.0/24',
+					'2001:4860:c::/124',
+				],
+				ip_ranges_feed_urls: [
+					'https://developers.google.com/static/crawling/ipranges/user-triggered-agents.json',
+				],
+				verify_dns: true,
+				dns_suffixes: [],
+				category: BotCategory::SEARCH_ENGINE,
+				robots_txt_token: 'Googlebot',
+				default_action: BotAction::ALLOW,
 			),
 			'bingbot' => new BotDefinition(
 				id: 'bingbot',

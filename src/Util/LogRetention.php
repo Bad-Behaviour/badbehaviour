@@ -285,13 +285,13 @@ final class LogRetention
 				//   int(N>0):  N rows deleted. Continue if rows-mode; break if age-mode.
 				//   int(0):    Query succeeded; nothing matched. Break.
 				//   null:      Adapter can't tell. One-shot diagnostic + break.
-				$affected = method_exists($this->adapter, 'lastQueryAffectedRows')
-				? $this->adapter->lastQueryAffectedRows()
-				: null;
+				$affected = method_exists($this->adapter, 'last_query_affected_rows')
+					? $this->adapter->last_query_affected_rows()
+					: null;
 
 				if ($affected === null) {
 					$this->log_unknown_affected_rows($log_table);
-					$affected_known = false;  // ← ADD THIS LINE
+					$affected_known = false;
 					break;
 				}
 
@@ -318,11 +318,11 @@ final class LogRetention
 					'log_table' => $log_table,
 				],
 				'log_retention_do_cleanup_failure'
-				);
+			);
 			return $this->finalize(
 				$start, $rows_deleted, $iterations,
 				$cutoff, $log_table, $limit_by, $e->getMessage()
-				);
+			);
 		}
 
 		// === Phase 4: Record last-run timestamp ===
@@ -687,7 +687,7 @@ final class LogRetention
 				. 'cleanup effectiveness cannot be verified',
 				[
 					'log_table' => $log_table,
-					'hint'      => 'Implement AdapterInterface::lastQueryAffectedRows() '
+					'hint'      => 'Implement AdapterInterface::last_query_affected_rows() '
 					. 'on your adapter. Without it, LogRetention cannot distinguish '
 					. '"deleted N rows" from "query ran but matched nothing", so '
 					. 'cleanups will be marked unverified and retried — but '

@@ -172,7 +172,7 @@ final class LogRetentionTest extends TestCase
     			return ['newest' => null, 'total' => 0, 'error' => null];
     		}
     		// ADD THIS METHOD:
-    		public function lastQueryAffectedRows(): ?int
+    		public function last_query_affected_rows(): ?int
     		{
     			return null; // No DB connection → can't determine affected rows
     		}
@@ -806,7 +806,7 @@ final class LogRetentionTest extends TestCase
     }
 
     // ========================================================================
-    // lastQueryAffectedRows() null contract
+    // last_query_affected_rows() null contract
     // ========================================================================
 
     #[Test]
@@ -867,12 +867,12 @@ final class LogRetentionTest extends TestCase
     }
 
     #[Test]
-    public function lastQueryAffectedRows_contract_returns_nullable_int(): void
+    public function last_query_affected_rows_contract_returns_nullable_int(): void
     {
     	// Verify the interface signature: ?int (not int).
     	$reflection = new \ReflectionMethod(
     		\BadBehaviour\Core\Interfaces\AdapterInterface::class,
-    		'lastQueryAffectedRows'
+    		'last_query_affected_rows'
     		);
     	$return_type = $reflection->getReturnType();
     	$this->assertNotNull($return_type);

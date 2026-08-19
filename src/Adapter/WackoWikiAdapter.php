@@ -1108,7 +1108,7 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 	 * Returns null when the connection is unavailable or the value can't be
 	 * determined — LogRetention treats null as "unknown" rather than guessing.
 	 */
-	public function lastQueryAffectedRows(): ?int
+	public function last_query_affected_rows(): ?int
 	{
 		try {
 			if (isset($this->db) && method_exists($this->db, 'affected_rows')) {

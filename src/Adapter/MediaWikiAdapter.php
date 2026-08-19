@@ -452,7 +452,7 @@ SQL;
 	 * MediaWiki's Database class exposes affectedRows() directly. Returns
 	 * null when the connection is unavailable or the value can't be determined.
 	 */
-	public function lastQueryAffectedRows(): ?int
+	public function last_query_affected_rows(): ?int
 	{
 		try {
 			if (isset($this->db) && method_exists($this->db, 'affectedRows')) {

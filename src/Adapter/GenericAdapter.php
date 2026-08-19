@@ -396,7 +396,7 @@ SQL;
 	 * and emits a one-shot diagnostic, rather than guessing with a fake
 	 * number that would silently stall the cleanup loop.
 	 */
-	public function lastQueryAffectedRows(): ?int
+	public function last_query_affected_rows(): ?int
 	{
 		return null;
 	}

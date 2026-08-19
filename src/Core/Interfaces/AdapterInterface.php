@@ -49,5 +49,5 @@ interface AdapterInterface
 	 * is the safe default. A wrong guess (chunk_size fallback) causes
 	 * silent stalls where cleanup appears to succeed but nothing happens.
 	 */
-	public function lastQueryAffectedRows(): ?int;
+	public function last_query_affected_rows(): ?int;
 }

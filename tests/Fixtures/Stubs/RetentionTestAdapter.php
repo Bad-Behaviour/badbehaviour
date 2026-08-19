@@ -26,7 +26,7 @@ class RetentionTestAdapter implements AdapterInterface, CacheInterface
 	public int $rowsAffectedPerQuery = 0;
 
 	/**
-	 * When non-null, lastQueryAffectedRows() returns this value instead of
+	 * When non-null, last_query_affected_rows() returns this value instead of
 	 * $rowsAffectedPerQuery. Used to simulate adapters that genuinely
 	 * cannot report affected rows (which should return null per the
 	 * AdapterInterface contract).
@@ -34,7 +34,7 @@ class RetentionTestAdapter implements AdapterInterface, CacheInterface
 	public ?int $rowsAffectedOverride = null;
 
 	/**
-	 * When true, lastQueryAffectedRows() returns null regardless of other settings.
+	 * When true, last_query_affected_rows() returns null regardless of other settings.
 	 * Used to simulate adapters that genuinely cannot report affected rows.
 	 */
 	public bool $forceNullAffectedRows = false;
@@ -85,7 +85,7 @@ class RetentionTestAdapter implements AdapterInterface, CacheInterface
      * that can't report affected rows). Otherwise returns $rowsAffectedOverride
      * if set, or $rowsAffectedPerQuery as default.
      */
-    public function lastQueryAffectedRows(): ?int
+    public function last_query_affected_rows(): ?int
     {
         if ($this->forceNullAffectedRows) {
             return null;

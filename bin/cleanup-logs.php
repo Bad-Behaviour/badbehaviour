@@ -30,7 +30,61 @@ use BadBehaviour\Configuration;
 $start = microtime(true);
 
 try {
-    $adapter = new GenericAdapter();
+	// Optional SQLite override for testing. When BB_DB_DSN is set (e.g.,
+	// by integration tests pointing at a temp file), construct a minimal
+	// SQLite-backed adapter inline. Production deployments leave the env
+	// var unset and get GenericAdapter (no DB — script exits informatively).
+	$db_dsn = getenv('BB_DB_DSN') ?: null;
+	if ($db_dsn !== null) {
+		$pdo = new \PDO($db_dsn);
+		$pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+		$table = getenv('BB_DB_TABLE') ?: 'bad_behaviour';
+		$pdo->exec("CREATE TABLE IF NOT EXISTS `$table` (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL)");
+
+		$adapter = new class($pdo, $table) implements \BadBehaviour\Core\Interfaces\AdapterInterface, \BadBehaviour\Core\Interfaces\CacheInterface {
+			private array $cacheStore = [];
+			public function __construct(private \PDO $db, private string $table) {}
+			public function get_settings(): array { return ['log_table' => $this->table]; }
+			public function get_whitelist(): array { return []; }
+			public function get_email(): string { return 'cli@example.com'; }
+			public function get_relative_path(): string { return '/'; }
+			public function get_table_schema(string $t): string|array { return ''; }
+			public function log_request(\BadBehaviour\Util\RequestPackage $p, \BadBehaviour\Core\Result $r): void {}
+			public function query(string $sql): bool { $this->db->exec($sql); return true; }
+			public function last_query_affected_rows(): ?int
+			{
+				try {
+					return (int)$this->db->query('SELECT changes()')->fetchColumn();
+				} catch (\Throwable $e) {
+					return null;
+				}
+			}
+			public function probe_log_table(string $table): array {
+				try {
+					return ['newest' => $this->db->query("SELECT MAX(date) FROM `$table`")->fetchColumn(), 'total' => (int)$this->db->query("SELECT COUNT(*) FROM `$table`")->fetchColumn(), 'error' => null];
+				} catch (\Throwable $e) { return ['newest' => null, 'total' => 0, 'error' => $e->getMessage()]; }
+			}
+			public function get(string $key): mixed {
+				if (!isset($this->cacheStore[$key])) return null;
+				[$v, $exp] = $this->cacheStore[$key];
+				if ($exp > 0 && $exp < time()) { unset($this->cacheStore[$key]); return null; }
+				return $v;
+			}
+			public function set(string $key, mixed $value, int $ttl): bool { $this->cacheStore[$key] = [$value, $ttl > 0 ? time() + $ttl : 0]; return true; }
+			public function delete(string $key): bool { unset($this->cacheStore[$key]); return true; }
+			public function increment_counter(string $k, int $w): int { return 1; }
+			public function get_counter(string $k): int { return 0; }
+			public function get_behavior_profile(string $s): ?array { return null; }
+			public function save_behavior_profile(string $s, array $p, int $t): bool { return true; }
+			public function add_to_set(string $k, string $v, int $t): bool { return true; }
+			public function get_set(string $k): array { return []; }
+			public function get_geoip(string $ip): ?array { return null; }
+			public function verify_challenge(string $r, string $ip): bool { return false; }
+			public function log(string $l, string $m, array $c = []): void {}
+		};
+	} else {
+		$adapter = new GenericAdapter();
+	}
 
     // Load config from standard locations.
     $config = null;
@@ -49,6 +103,23 @@ try {
 
     if ($config === null) {
         $config = new Configuration(adapter: $adapter);
+    }
+
+    // === Guard: ensure adapter can actually execute SQL ===
+    try {
+    	$adapter->query('SELECT 1');
+    } catch (\RuntimeException $e) {
+    	if (str_contains($e->getMessage(), 'GenericAdapter cannot execute SQL')) {
+    		echo "No database adapter configured for CLI cleanup.\n\n";
+    		echo "Options:\n";
+    		echo "  1. Set BB_DB_DSN environment variable to a SQLite DSN:\n";
+    		echo "     BB_DB_DSN=sqlite:/path/to/bad_behaviour.sqlite php bin/cleanup-logs.php\n";
+    		echo "  2. Use a WackoWikiAdapter or MediaWikiAdapter with proper DB wiring.\n";
+    		echo "  3. Configure a cache backend and adapter in config/bb_config.php.\n\n";
+    		echo "See config/bb_config.example.php for log_retention settings.\n";
+    		exit(1);
+    	}
+    	throw $e;
     }
 
     echo "[" . date('c') . "] BadBehaviour log retention cleanup\n\n";

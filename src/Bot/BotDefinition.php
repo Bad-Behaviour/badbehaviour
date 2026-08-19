@@ -19,7 +19,7 @@ readonly class BotDefinition
 		public ?string $robots_txt_token = null,
 		public string $description = '',
 		public string $info_url = '',
-		public string $ip_ranges_feed_url = [],
+		public array $ip_ranges_feed_url = [],
 		public BotAction $default_action = BotAction::ALLOW,
 		) {}
 

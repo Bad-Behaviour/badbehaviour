@@ -125,30 +125,27 @@ class DefaultRegistry implements RegistryInterface
 	}
 
 	/**
-	 * Strip URLs and parenthetical noise from UA string before matching.
+	 * Strip URLs from UA string while PRESERVING parenthetical content.
 	 *
-	 * Common UA format: "Product/Version (Comment; URL; ...)"
-	 * The bot identity is in the Product/Version token; URLs and comments
-	 * are noise that cause false substring matches.
+	 * Bot identifiers (Googlebot, bingbot, etc.) are typically inside
+	 * parentheticals: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://...)"
+	 * The URL is the noise; the parenthetical contains the signal.
 	 *
 	 * @param string $ua Raw User-Agent
-	 * @return string Cleaned UA with only product tokens
+	 * @return string Cleaned UA with URLs removed, parentheticals intact
 	 */
 	private function strip_ua_noise(string $ua): string
 	{
-		// 1. Remove URLs (http://..., https://...)
+		// 1. Remove URLs (http://..., https://...) from anywhere in the string
 		$ua = preg_replace('/https?:\/\/[^\s\)]+/i', '', $ua);
 
-		// 2. Remove parenthetical content (comments, URLs, extra info)
-		//    but keep the product token before the first parenthesis
-		$ua = preg_replace('/\([^)]*\)/', '', $ua);
+		// 2. Remove trailing "+http://..." patterns inside parentheticals
+		//    (the "+http://..." is the noise; "compatible; Googlebot/2.1" is signal)
+		$ua = preg_replace('/\s*\+\S+/', '', $ua);
 
-		// 3. Remove version numbers (optional — keeps tokens like "Googlebot/2.1" → "Googlebot")
-		//    Comment out if you need version-specific matching
-		// $ua = preg_replace('/\/\d+(\.\d+)*/', '', $ua);
-
-		// 4. Normalize whitespace
+		// 3. Normalize whitespace (multiple spaces, spaces before ) )
 		$ua = preg_replace('/\s+/', ' ', $ua);
+		$ua = preg_replace('/\s+\)/', ')', $ua);
 
 		return trim($ua);
 	}
@@ -240,8 +237,16 @@ class DefaultRegistry implements RegistryInterface
 			'googlebot' => new BotDefinition(
 				id: 'googlebot',
 				name: 'Googlebot',
-				user_agent_patterns: ['Googlebot', 'Google-PageRenderer', 'Google-Read-Aloud', 'GoogleProducer', 'DuplexWeb-Google'],
-				host_patterns: ['googlebot.com', 'google.com'],
+				user_agent_patterns: [
+					'Googlebot', 'Google-PageRenderer', 'Google-Read-Aloud',
+					'GoogleProducer', 'DuplexWeb-Google',
+					'gzip(gfe)', 'GoogleWebLight', 'Google-Proxy',
+					'GoogleWebProxy', 'GoogleTranslator',
+				],
+				host_patterns: [
+					'googlebot.com', 'google.com',
+					'googleusercontent.com', 'translate.google.com'
+				],
 				ip_ranges: [
 					'64.233.160.0/19', '66.249.64.0/19', '66.102.0.0/20', '72.14.192.0/18',
 					'74.125.0.0/16', '209.85.128.0/17', '216.239.32.0/19', '203.208.32.0/19',
@@ -250,7 +255,7 @@ class DefaultRegistry implements RegistryInterface
 					'2a00:1450:4000::/36', '2c0f:fb50:4000::/36',
 				],
 				verify_dns: true,
-				dns_suffixes: ['googlebot.com', 'google.com'],
+				dns_suffixes: ['googlebot.com', 'google.com', 'googleusercontent.com'],
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'Googlebot',
 				info_url: 'https://developers.google.com/search/docs/crawling-indexing/verifying-googlebot',

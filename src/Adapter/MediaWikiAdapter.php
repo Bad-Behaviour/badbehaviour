@@ -445,4 +445,26 @@ SQL;
 			}
 		}
 	}
+
+	/**
+	 * Return the number of rows affected by the most recent query().
+	 *
+	 * MediaWiki's Database class exposes affectedRows() directly. Returns
+	 * null when the connection is unavailable or the value can't be determined.
+	 */
+	public function lastQueryAffectedRows(): ?int
+	{
+		try {
+			if (isset($this->db) && method_exists($this->db, 'affectedRows')) {
+				$n = $this->db->affectedRows();
+				if ($n === false || $n === null) {
+					return null;
+				}
+				return (int)$n;
+			}
+		} catch (\Throwable $e) {
+			// fall through
+		}
+		return null;
+	}
 }

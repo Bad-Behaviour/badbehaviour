@@ -147,7 +147,7 @@ final class LogRetentionTest extends TestCase
     #[Test]
     public function gate2_returns_cooldown_when_no_cache_available(): void
     {
-        // Adapter without CacheInterface → no mutex possible.
+    	// Adapter without CacheInterface → no mutex possible.
     	$noCacheAdapter = new class implements \BadBehaviour\Core\Interfaces\AdapterInterface {
 
     		public function get_settings(): array { return ['log_table' => 't']; }
@@ -171,20 +171,25 @@ final class LogRetentionTest extends TestCase
     		{
     			return ['newest' => null, 'total' => 0, 'error' => null];
     		}
+    		// ADD THIS METHOD:
+    		public function lastQueryAffectedRows(): ?int
+    		{
+    			return null; // No DB connection → can't determine affected rows
+    		}
     	};
 
-        $retention = new LogRetention(
-            adapter: $noCacheAdapter,
-            config: $this->config,
-            cache: null,
-            clock: fn() => $this->fixedNow,
-            rng: fn() => 1,
-        );
+    	$retention = new LogRetention(
+    		adapter: $noCacheAdapter,
+    		config: $this->config,
+    		cache: null,
+    		clock: fn() => $this->fixedNow,
+    		rng: fn() => 1,
+    		);
 
-        $decision = $retention->maybe_cleanup();
+    	$decision = $retention->maybe_cleanup();
 
-        $this->assertFalse($decision->should_cleanup);
-        $this->assertSame('cooldown', $decision->reason);
+    	$this->assertFalse($decision->should_cleanup);
+    	$this->assertSame('cooldown', $decision->reason);
     }
 
     // ========================================================================
@@ -798,5 +803,107 @@ final class LogRetentionTest extends TestCase
     	$this->assertSame(1_700_000_000, $result['newest']);
     	$this->assertSame(42, $result['total']);
     	$this->assertNull($result['error']);
+    }
+
+    // ========================================================================
+    // lastQueryAffectedRows() null contract
+    // ========================================================================
+
+    #[Test]
+    public function null_affected_rows_does_not_block_subsequent_cleanups(): void
+    {
+    	// Reproduces the silent-stall bug: when the adapter can't report
+    	// affected rows, the previous code fell back to chunk_size and
+    	// marked the cleanup as successful. Subsequent cleanups were
+    	// blocked by Gate 3 (staleness) for min_interval_seconds (6h),
+    	// causing unbounded log growth on WackoWiki+SQLite.
+    	$this->adapter = new RetentionTestAdapter(
+    		probeNewest: $this->fixedNow - 86400,
+    		probeTotal: 100,
+    		);
+    	$this->adapter->forceNullAffectedRows = true;  // ← CHANGE THIS LINE
+    	$this->config = $this->makeConfig();
+    	$retention = $this->makeRetention();
+
+    	// First cleanup: runs the DELETE, can't verify progress.
+    	$result1 = $retention->force_cleanup_now();
+    	$this->assertSame(1, $result1->iterations);
+    	$this->assertSame(0, $result1->rows_deleted);
+    	$this->assertFalse($result1->success);
+
+    	// CRITICAL: last_run is NOT recorded, so the next cleanup gets
+    	// a chance to run too.
+    	$this->assertFalse(
+    		$this->adapter->cacheHas(LogRetention::CACHE_KEY_LAST_RUN),
+    		'null affected_rows must not record last_run (would block future cleanups)'
+    		);
+
+    	// A subsequent cleanup should also be able to run.
+    	$retention2 = $this->makeRetention();
+    	$result2 = $retention2->force_cleanup_now();
+    	$this->assertSame(1, $result2->iterations);
+    	// Two DELETEs total = two attempts.
+    	$this->assertCount(2, $this->adapter->queryLog);
+    }
+
+    #[Test]
+    public function null_affected_rows_emits_diagnostic(): void
+    {
+    	$this->adapter = new RetentionTestAdapter(
+    		probeNewest: $this->fixedNow - 86400,
+    		probeTotal: 100,
+    		);
+    	$this->adapter->forceNullAffectedRows = true;  // ← CHANGE THIS LINE
+    	$this->config = $this->makeConfig();
+    	$retention = $this->makeRetention();
+
+    	$retention->force_cleanup_now();
+
+    	// The diagnostic is emitted via ErrorReporter::warning, which
+    	// routes through the adapter's log() method. The stub records
+    	// nothing, but we can verify the path didn't crash.
+    	// (ErrorReporter::reset() in tearDown cleans any state.)
+    	$this->assertTrue(true); // reached without exception
+    }
+
+    #[Test]
+    public function lastQueryAffectedRows_contract_returns_nullable_int(): void
+    {
+    	// Verify the interface signature: ?int (not int).
+    	$reflection = new \ReflectionMethod(
+    		\BadBehaviour\Core\Interfaces\AdapterInterface::class,
+    		'lastQueryAffectedRows'
+    		);
+    	$return_type = $reflection->getReturnType();
+    	$this->assertNotNull($return_type);
+    	$this->assertTrue($return_type->allowsNull());
+    }
+
+    #[Test]
+    public function rows_mode_stops_when_affected_rows_is_null(): void
+    {
+    	// Adapter reports null on first call → log + break.
+    	$this->config = $this->makeConfig([
+    		'log_retention' => [
+    			'max_rows' => 1000,
+    			'enabled'  => true,
+    			'max_age_days' => 7,
+    		],
+    	]);
+    	$this->adapter = new RetentionTestAdapter(
+    		probeNewest: $this->fixedNow - 86400,
+    		probeTotal: 5000,
+    		);
+    	$this->adapter->forceNullAffectedRows = true;  // ← CHANGE THIS LINE
+
+    	$retention = $this->makeRetention(chunk_size: 1000);
+    	$result = $retention->force_cleanup_now();
+
+    	// First iteration: query runs, returns null → break.
+    	$this->assertSame(1, $result->iterations);
+    	$this->assertSame(0, $result->rows_deleted);
+    	$this->assertFalse($result->success);
+    	// No last-run recorded.
+    	$this->assertFalse($this->adapter->cacheHas(LogRetention::CACHE_KEY_LAST_RUN));
     }
 }

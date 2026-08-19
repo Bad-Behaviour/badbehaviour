@@ -39,4 +39,15 @@ interface AdapterInterface
 
 	// Logging
 	public function log(string $level, string $message, array $context = []): void;
+
+	/**
+	 * Number of rows affected by the most recent query().
+	 *
+	 * Return null when the adapter cannot determine the value (no DB,
+	 * connection died, etc.). Returning a guess is worse than null —
+	 * LogRetention treats null as "unknown, retry next request", which
+	 * is the safe default. A wrong guess (chunk_size fallback) causes
+	 * silent stalls where cleanup appears to succeed but nothing happens.
+	 */
+	public function lastQueryAffectedRows(): ?int;
 }

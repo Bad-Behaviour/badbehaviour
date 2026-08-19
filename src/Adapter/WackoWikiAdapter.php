@@ -1096,4 +1096,32 @@ class WackoWikiAdapter implements AdapterInterface, CacheInterface
 			// Last-resort: silent fail (we tried twice)
 		}
 	}
+
+	/**
+	 * Return the number of rows affected by the most recent query().
+	 *
+	 * WackoWiki's database wrapper exposes affected_rows() on the connection.
+	 * Without this, LogRetention::do_cleanup() reports cleanup as "successful"
+	 * even when zero rows were deleted, blocking future cleanups for
+	 * min_interval_seconds (default 6 hours) and causing unbounded log growth.
+	 *
+	 * Returns null when the connection is unavailable or the value can't be
+	 * determined — LogRetention treats null as "unknown" rather than guessing.
+	 */
+	public function lastQueryAffectedRows(): ?int
+	{
+		try {
+			if (isset($this->db) && method_exists($this->db, 'affected_rows')) {
+				$n = $this->db->affected_rows();
+				if ($n === false || $n === null) {
+					return null;
+				}
+				return (int)$n;
+			}
+		} catch (\Throwable $e) {
+			// Driver-specific quirks (SQLite sometimes returns -1 or false
+			// for DELETE with no matches); fall through to null.
+		}
+		return null;
+	}
 }

@@ -387,4 +387,17 @@ SQL;
 			// Last-resort: silent fail
 		}
 	}
+
+	/**
+	 * Return the number of rows affected by the most recent query().
+	 *
+	 * GenericAdapter has no DB connection, so it cannot determine affected
+	 * rows. Returns null so LogRetention treats the value as "unknown"
+	 * and emits a one-shot diagnostic, rather than guessing with a fake
+	 * number that would silently stall the cleanup loop.
+	 */
+	public function lastQueryAffectedRows(): ?int
+	{
+		return null;
+	}
 }

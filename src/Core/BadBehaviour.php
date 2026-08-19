@@ -671,6 +671,7 @@ class BadBehaviour
 			'max_rows'                => $this->config->log_retention_max_rows,
 			'probability_denominator' => $this->config->log_retention_probability_denominator,
 			'min_interval_seconds'    => $this->config->log_retention_min_interval_seconds,
+			'last_result'             => $this->get_last_cleanup_result()?->to_array(),
 		];
 
 

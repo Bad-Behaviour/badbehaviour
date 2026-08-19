@@ -25,21 +25,35 @@ class RetentionTestAdapter implements AdapterInterface, CacheInterface
 {
 	public int $rowsAffectedPerQuery = 0;
 
-    /** @var string[] SQL statements passed to query() */
-    public array $queryLog = [];
+	/**
+	 * When non-null, lastQueryAffectedRows() returns this value instead of
+	 * $rowsAffectedPerQuery. Used to simulate adapters that genuinely
+	 * cannot report affected rows (which should return null per the
+	 * AdapterInterface contract).
+	 */
+	public ?int $rowsAffectedOverride = null;
 
-    /** Configurable: should query() return true (success) or false (failure)? */
-    public bool $queryReturnsTrue = true;
+	/**
+	 * When true, lastQueryAffectedRows() returns null regardless of other settings.
+	 * Used to simulate adapters that genuinely cannot report affected rows.
+	 */
+	public bool $forceNullAffectedRows = false;
 
-    /** @var array<string, mixed> In-memory cache store */
-    private array $cacheStore = [];
+	/** @var string[] SQL statements passed to query() */
+	public array $queryLog = [];
 
-    public function __construct(
-    	private string $logTable = 'bad_behaviour',
-    	private int|string|null $probeNewest = null,
-    	private int $probeTotal = 0,
-    	private ?string $probeError = null,
-    ) {}
+	/** Configurable: should query() return true (success) or false (failure)? */
+	public bool $queryReturnsTrue = true;
+
+	/** @var array<string, mixed> In-memory cache store */
+	private array $cacheStore = [];
+
+	public function __construct(
+		private string $logTable = 'bad_behaviour',
+		private int|string|null $probeNewest = null,
+		private int $probeTotal = 0,
+		private ?string $probeError = null,
+		) {}
 
     // AdapterInterface — minimal stubs
 
@@ -66,12 +80,20 @@ class RetentionTestAdapter implements AdapterInterface, CacheInterface
 
     /**
      * Test hook: how many rows did the most recent query() affect?
-     * LogRetention uses this to track actual deletion progress instead
-     * of guessing chunk_size on every iteration.
+     *
+     * Returns null when $forceNullAffectedRows is true (simulates adapters
+     * that can't report affected rows). Otherwise returns $rowsAffectedOverride
+     * if set, or $rowsAffectedPerQuery as default.
      */
-    public function lastQueryAffectedRows(): int
+    public function lastQueryAffectedRows(): ?int
     {
-    	return $this->rowsAffectedPerQuery;
+        if ($this->forceNullAffectedRows) {
+            return null;
+        }
+        if ($this->rowsAffectedOverride !== null) {
+            return $this->rowsAffectedOverride;
+        }
+        return $this->rowsAffectedPerQuery;
     }
 
     public function increment_counter(string $key, int $window): int { return 1; }

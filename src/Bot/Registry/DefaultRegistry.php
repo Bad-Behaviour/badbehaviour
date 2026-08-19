@@ -83,25 +83,74 @@ class DefaultRegistry implements RegistryInterface
 
 	public function find_by_ua(string $ua): array
 	{
-		$ua_lower = strtolower($ua);
-		if ($ua_lower === '') {
+		// Strip URLs and parenthetical noise BEFORE matching.
+		$ua_clean = $this->strip_ua_noise($ua);
+
+		if ($ua_clean === '') {
 			return [];
 		}
 
 		$this->ensure_ua_index();
 
+		$ua_lower = strtolower($ua_clean);
 		$matched = [];
-		foreach ($this->ua_index as $fragment => $bot_ids) {
-			if (strlen($fragment) < 4) {
-				continue;
-			}
-			if (str_contains($ua_lower, $fragment)) {
-				foreach ($bot_ids as $id) {
+
+		// === Pass 1: Exact token match (word boundaries) ===
+		// Split into tokens on non-alphanumeric boundaries
+		$tokens = preg_split('/[^a-z0-9]+/', $ua_lower);
+		$tokens = array_filter($tokens, fn($t) => strlen($t) >= 4);
+
+		foreach ($tokens as $token) {
+			if (isset($this->ua_index[$token])) {
+				foreach ($this->ua_index[$token] as $id) {
 					$matched[$id] = true;
 				}
 			}
 		}
+
+		// === Pass 2: Substring match for multi-word patterns only ===
+		// Only for patterns that contain spaces/hyphens (e.g., "Googlebot", "SemrushBot")
+		// Skip single-word tokens already handled above.
+		foreach ($this->ua_index as $fragment => $bot_ids) {
+			if (str_contains($fragment, ' ') || str_contains($fragment, '-')) {
+				if (str_contains($ua_lower, $fragment)) {
+					foreach ($bot_ids as $id) {
+						$matched[$id] = true;
+					}
+				}
+			}
+		}
+
 		return array_keys($matched);
+	}
+
+	/**
+	 * Strip URLs and parenthetical noise from UA string before matching.
+	 *
+	 * Common UA format: "Product/Version (Comment; URL; ...)"
+	 * The bot identity is in the Product/Version token; URLs and comments
+	 * are noise that cause false substring matches.
+	 *
+	 * @param string $ua Raw User-Agent
+	 * @return string Cleaned UA with only product tokens
+	 */
+	private function strip_ua_noise(string $ua): string
+	{
+		// 1. Remove URLs (http://..., https://...)
+		$ua = preg_replace('/https?:\/\/[^\s\)]+/i', '', $ua);
+
+		// 2. Remove parenthetical content (comments, URLs, extra info)
+		//    but keep the product token before the first parenthesis
+		$ua = preg_replace('/\([^)]*\)/', '', $ua);
+
+		// 3. Remove version numbers (optional — keeps tokens like "Googlebot/2.1" → "Googlebot")
+		//    Comment out if you need version-specific matching
+		// $ua = preg_replace('/\/\d+(\.\d+)*/', '', $ua);
+
+		// 4. Normalize whitespace
+		$ua = preg_replace('/\s+/', ' ', $ua);
+
+		return trim($ua);
 	}
 
 	public function find_by_tokens(string $ua): array
@@ -110,9 +159,15 @@ class DefaultRegistry implements RegistryInterface
 			return [];
 		}
 
+		// Use cleaned UA for token matching too
+		$ua_clean = $this->strip_ua_noise($ua);
+		if ($ua_clean === '') {
+			return [];
+		}
+
 		$this->ensure_token_index();
 
-		$ua_lower = strtolower($ua);
+		$ua_lower = strtolower($ua_clean);
 		$tokens = preg_split('/[^a-z0-9]+/', $ua_lower);
 		$min_len = RegistryTokens::MIN_TOKEN_LENGTH;
 		$tokens = array_filter(
@@ -1041,14 +1096,16 @@ class DefaultRegistry implements RegistryInterface
 				name: 'Common Crawl',
 				user_agent_patterns: ['CCBot'],
 				host_patterns: ['commoncrawl.org', 'crawl.commoncrawl.org'],
-				// IPv4 Ranges
-				'3.41.188.32/29',
-				'18.97.9.168/29',
-				'18.97.14.80/29',
-				'18.97.14.88/30',
-				'98.85.178.216/32',
-				// IPv6 Range
-				'2600:1f28:365:8000::/56',
+				ip_ranges: [
+					// IPv4 Ranges
+					'3.41.188.32/29',
+					'18.97.9.168/29',
+					'18.97.14.80/29',
+					'18.97.14.88/30',
+					'98.85.178.216/32',
+					// IPv6 Range
+					'2600:1f28:365:8000::/56',
+				],
 				verify_dns: true,
 				dns_suffixes: ['crawl.commoncrawl.org'],
 				category: BotCategory::ARCHIVE_CRAWLER,

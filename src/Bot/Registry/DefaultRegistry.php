@@ -367,10 +367,12 @@ class DefaultRegistry implements RegistryInterface
 					'95.108.128.0/17', '100.43.64.0/18', '130.193.48.0/20', '141.8.128.0/17',
 					'178.154.128.0/17', '213.180.192.0/19', '2a02:6b8::/32',
 				],
+				ip_ranges_feed_urls: ['https://yandex.com/ips'],
 				verify_dns: true,
 				dns_suffixes: ['yandex.ru', 'yandex.net', 'yandex.com'],
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'YandexBot',
+				info_url: 'http://yandex.com/bots',
 			),
 			'baidu' => new BotDefinition(
 				id: 'baidu',

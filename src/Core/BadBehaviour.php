@@ -1771,7 +1771,7 @@ HTML;
 		<title>Access Denied</title>
 		<style>
 			body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
-			.card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%; }
+			.card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: min-content; width: 90%; }
 			h1 { color: #dc3545; margin-bottom: 1rem; }
 			.ref { font-family: monospace; background: #f8f9fa; padding: 0.5rem; border-radius: 4px; display: inline-block; margin-top: 1rem; }
 			code { background: #f8f9fa; padding: 0.2rem 0.4rem; border-radius: 3px; }

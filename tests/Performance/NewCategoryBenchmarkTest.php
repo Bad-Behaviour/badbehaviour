@@ -1,9 +1,7 @@
 <?php
 // tests/Performance/NewCategoryBenchmarkTest.php
 // Validates that additions don't regress the hot path.
-
-declare(strict_types=1);
-
+declare(strict_types = 1);
 namespace BadBehaviour\Tests\Performance;
 
 use BadBehaviour\Core\BadBehaviour;
@@ -18,6 +16,7 @@ use BadBehaviour\Detection\BotDetector;
  */
 class NewCategoryBenchmarkTest extends TestCase
 {
+
 	private BadBehaviour $bb;
 
 	protected function setUp(): void
@@ -28,10 +27,12 @@ class NewCategoryBenchmarkTest extends TestCase
 			'enable_fingerprinting' => false,
 			'enable_client_hints_validation' => false,
 			'enable_agentic_detection' => false,
-			'dynamic_ip_ranges' => ['enabled' => false], // Static only for benchmark
+			'dynamic_ip_ranges' => [
+				'enabled' => false
+			], // Static only for benchmark
 			'enable_behavioral_analysis' => true,
 			'rate_limit_enabled' => false,
-			'dnsbl_enabled' => false,
+			'dnsbl_enabled' => false
 		], $adapter);
 
 		$this->bb = new BadBehaviour($config);
@@ -42,15 +43,22 @@ class NewCategoryBenchmarkTest extends TestCase
 
 	/**
 	 * The cloud infrastructure fast path is the most performance-critical
-	 * new feature. It runs on EVERY request before bot matching.
+	 * new feature.
+	 * It runs on EVERY request before bot matching.
 	 * Budget: < 0.05 ms per call.
 	 */
 	public function test_cloud_fast_path_isolated(): void
 	{
 		$adapter = new GenericAdapter();
 		$config = Configuration::from_array([
-			'dynamic_ip_ranges' => ['enabled' => false],
-			'bot_categories' => ['blocked' => ['malicious']],
+			'dynamic_ip_ranges' => [
+				'enabled' => false
+			],
+			'bot_categories' => [
+				'blocked' => [
+					'malicious'
+				]
+			]
 		], $adapter);
 
 		$detector = new BotDetector($config, $adapter);
@@ -63,23 +71,19 @@ class NewCategoryBenchmarkTest extends TestCase
 
 		$iterations = 100000;
 		$start = microtime(true);
-		for ($i = 0; $i < $iterations; $i++) {
+		for ($i = 0; $i < $iterations; $i ++) {
 			$reflection->invoke($detector, '173.245.48.1');
 		}
 		$per_iter_us = ((microtime(true) - $start) * 1_000_000) / $iterations;
 
-		fwrite(STDERR, sprintf(
-			"\n  Cloud check only: %.2f μs/req (budget: 50 μs, headroom: %.1fx)\n",
-			$per_iter_us,
-			50.0 / $per_iter_us
-			));
+		fwrite(STDERR, sprintf("\n  Cloud check only: %.2f μs/req (budget: 50 μs, headroom: %.1fx)\n", $per_iter_us, 50.0 / $per_iter_us));
 
-		$this->assertLessThan(50.0, $per_iter_us,
-			"Cloud fast-path too slow: {$per_iter_us} μs (target: <50μs)");
+		$this->assertLessThan(50.0, $per_iter_us, "Cloud fast-path too slow: {$per_iter_us} μs (target: <50μs)");
 	}
 
 	/**
-	 * Registry::all() now returns ~80 bots. Verify find_by_ua() index
+	 * Registry::all() now returns ~80 bots.
+	 * Verify find_by_ua() index
 	 * build is fast on cold path.
 	 */
 	public function test_registry_index_build_under_5_ms(): void
@@ -97,13 +101,9 @@ class NewCategoryBenchmarkTest extends TestCase
 		$all = \BadBehaviour\Bot\Registry::all();
 		$elapsed_ms = (microtime(true) - $start) * 1000;
 
-		fwrite(STDERR, sprintf(
-			"\n  Registry::all(): %d bots, built in %.2f ms\n",
-			count($all), $elapsed_ms
-		));
+		fwrite(STDERR, sprintf("\n  Registry::all(): %d bots, built in %.2f ms\n", count($all), $elapsed_ms));
 
 		// First call (builds index) — should still be <5ms with ~80 bots
-		$this->assertLessThan(5.0, $elapsed_ms,
-			"Registry build too slow: {$elapsed_ms} ms (target: <5ms)");
+		$this->assertLessThan(5.0, $elapsed_ms, "Registry build too slow: {$elapsed_ms} ms (target: <5ms)");
 	}
 }

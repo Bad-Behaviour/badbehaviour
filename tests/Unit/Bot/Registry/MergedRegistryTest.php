@@ -1,7 +1,5 @@
 <?php
-
-declare(strict_types=1);
-
+declare(strict_types = 1);
 namespace BadBehaviour\Tests\Unit\Bot\Registry;
 
 use BadBehaviour\Bot\BotAction;
@@ -20,42 +18,43 @@ use PHPUnit\Framework\TestCase;
  * MergedRegistry composes multiple registries into one virtual view.
  * Its semantics matter because operators extend behavior by composing:
  *
- *   $merged = new MergedRegistry([
- *       DefaultRegistry(),                  // shipped bots
- *       new CustomRegistry($my_internal),   // my bots
- *   ]);
+ * $merged = new MergedRegistry([
+ * DefaultRegistry(), // shipped bots
+ * new CustomRegistry($my_internal), // my bots
+ * ]);
  *
  * Key contracts under test:
  *
- *   1. LAST-WINS for duplicate bot IDs
- *      - Bot definitions for the same ID across registries — the one
- *        declared LATER wins. This lets operators override shipped bots.
- *      - Applies in all(), get(), category accessors, find_by_ua,
- *        find_by_tokens.
+ * 1. LAST-WINS for duplicate bot IDs
+ * - Bot definitions for the same ID across registries — the one
+ * declared LATER wins. This lets operators override shipped bots.
+ * - Applies in all(), get(), category accessors, find_by_ua,
+ * find_by_tokens.
  *
- *   2. ID UNIQUENESS within the merged result
- *      - The merged set has unique bot IDs; duplicates collapse to the
- *        last occurrence.
+ * 2. ID UNIQUENESS within the merged result
+ * - The merged set has unique bot IDs; duplicates collapse to the
+ * last occurrence.
  *
- *   3. get_registries() exposes the input list
- *      - Used by diagnostics tools and tests to introspect the
- *        composition.
+ * 3. get_registries() exposes the input list
+ * - Used by diagnostics tools and tests to introspect the
+ * composition.
  *
- *   4. find_by_ua/find_by_tokens operate on the merged set
- *      - Cross-registry UA matching works without leaking source names.
+ * 4. find_by_ua/find_by_tokens operate on the merged set
+ * - Cross-registry UA matching works without leaking source names.
  */
 final class MergedRegistryTest extends TestCase
 {
+
 	// ---------- Helpers ----------
 
 	/**
 	 * Build a single-bot registry.
 	 */
-	private function registry_with(
-		BotDefinition $def,
-		?array $additional = null,
-	): RegistryInterface {
-		$bots = [$def->id => $def];
+	private function registry_with(BotDefinition $def, ?array $additional = null): RegistryInterface
+	{
+		$bots = [
+			$def->id => $def
+		];
 		if ($additional !== null) {
 			$bots = array_merge($bots, $additional);
 		}
@@ -70,16 +69,13 @@ final class MergedRegistryTest extends TestCase
 	private function bots_in_category(BotCategory $category, array $specs): array
 	{
 		$out = [];
-		foreach ($specs as [$id, $ua]) {
-			$out[$id] = new BotDefinition(
-				id: $id,
-				name: 'Bot ' . $id,
-				user_agent_patterns: [$ua],
-				host_patterns: [],
-				ip_ranges: [],
-				category: $category,
-				default_action: BotAction::ALLOW,
-			);
+		foreach ($specs as [
+			$id,
+			$ua
+		]) {
+			$out[$id] = new BotDefinition(id: $id, name: 'Bot ' . $id, user_agent_patterns: [
+				$ua
+			], host_patterns: [], ip_ranges: [], category: $category, default_action: BotAction::ALLOW);
 		}
 		return $out;
 	}
@@ -87,15 +83,17 @@ final class MergedRegistryTest extends TestCase
 	// ============================================================
 	// 1. Construction & validation
 	// ============================================================
-
 	public function test_constructor_rejects_non_registry_entries(): void
 	{
 		$this->expectException(\InvalidArgumentException::class);
 		$this->expectExceptionMessageMatches('/RegistryInterface/');
 
-		/** @phpstan-ignore-next-line — intentional type violation for test */
+		/**
+		 *
+		 * @phpstan-ignore-next-line — intentional type violation for test
+		 */
 		new MergedRegistry([
-			'not_a_registry',
+			'not_a_registry'
 		]);
 	}
 
@@ -111,16 +109,13 @@ final class MergedRegistryTest extends TestCase
 	public function test_constructor_accepts_single_registry(): void
 	{
 		$registry = new InMemoryRegistry([
-			'solo' => new BotDefinition(
-				id: 'solo',
-				name: 'Solo',
-				user_agent_patterns: ['SoloBot'],
-				host_patterns: [],
-				ip_ranges: [],
-				category: BotCategory::MONITORING,
-			),
+			'solo' => new BotDefinition(id: 'solo', name: 'Solo', user_agent_patterns: [
+				'SoloBot'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING)
 		]);
-		$merged = new MergedRegistry([$registry]);
+		$merged = new MergedRegistry([
+			$registry
+		]);
 
 		$this->assertSame(1, $merged->count());
 		$this->assertTrue($merged->has('solo'));
@@ -129,61 +124,49 @@ final class MergedRegistryTest extends TestCase
 	// ============================================================
 	// 2. Last-wins semantics (THE central contract)
 	// ============================================================
-
 	public function test_later_registry_overrides_earlier_for_same_bot_id(): void
 	{
-		$original = new BotDefinition(
-			id: 'googlebot',
-			name: 'Original Googlebot',
-			user_agent_patterns: ['Googlebot'],
-			host_patterns: ['googlebot.com'],
-			ip_ranges: ['66.249.64.0/19'],
-			category: BotCategory::SEARCH_ENGINE,
-			default_action: BotAction::BLOCK,   // intentionally contradictory
-		);
-		$override = new BotDefinition(
-			id: 'googlebot',
-			name: 'Overridden Googlebot',
-			user_agent_patterns: ['Googlebot', 'Googlebot-Override'],
-			host_patterns: [],
-			ip_ranges: [],
-			category: BotCategory::SEARCH_ENGINE,
-			default_action: BotAction::ALLOW,    // the operator's choice
-		);
+		$original = new BotDefinition(id: 'googlebot', name: 'Original Googlebot', user_agent_patterns: [
+			'Googlebot'
+		], host_patterns: [
+			'googlebot.com'
+		], ip_ranges: [
+			'66.249.64.0/19'
+		], category: BotCategory::SEARCH_ENGINE, default_action: BotAction::BLOCK) // intentionally contradictory
+		;
+		$override = new BotDefinition(id: 'googlebot', name: 'Overridden Googlebot', user_agent_patterns: [
+			'Googlebot',
+			'Googlebot-Override'
+		], host_patterns: [], ip_ranges: [], category: BotCategory::SEARCH_ENGINE, default_action: BotAction::ALLOW) // the operator's choice
+		;
 
 		$merged = new MergedRegistry([
 			$this->registry_with($original),
-			$this->registry_with($override),
+			$this->registry_with($override)
 		]);
 
 		$def = $merged->get('googlebot');
 
 		$this->assertNotNull($def);
-		$this->assertSame('Overridden Googlebot', $def->name,
-			'Later registry must win the name');
-		$this->assertSame(BotAction::ALLOW, $def->default_action,
-			'Later registry must win the default_action');
-		$this->assertSame(['Googlebot', 'Googlebot-Override'], $def->user_agent_patterns,
-			'Later registry must win the UA patterns');
-		$this->assertCount(1, $merged->all(),
-			'Merged set must not duplicate googlebot');
+		$this->assertSame('Overridden Googlebot', $def->name, 'Later registry must win the name');
+		$this->assertSame(BotAction::ALLOW, $def->default_action, 'Later registry must win the default_action');
+		$this->assertSame([
+			'Googlebot',
+			'Googlebot-Override'
+		], $def->user_agent_patterns, 'Later registry must win the UA patterns');
+		$this->assertCount(1, $merged->all(), 'Merged set must not duplicate googlebot');
 	}
 
 	public function test_three_way_override_last_wins(): void
 	{
-		$mk = static fn(string $tag): BotDefinition => new BotDefinition(
-			id: 'shared',
-			name: "Bot {$tag}",
-			user_agent_patterns: ["Bot/{$tag}"],
-			host_patterns: [],
-			ip_ranges: [],
-			category: BotCategory::MONITORING,
-		);
+		$mk = static fn (string $tag): BotDefinition => new BotDefinition(id: 'shared', name: "Bot {$tag}", user_agent_patterns: [
+			"Bot/{$tag}"
+		], host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING);
 
 		$merged = new MergedRegistry([
 			$this->registry_with($mk('first')),
 			$this->registry_with($mk('second')),
-			$this->registry_with($mk('third')),
+			$this->registry_with($mk('third'))
 		]);
 
 		$this->assertSame('Bot third', $merged->get('shared')->name);
@@ -195,30 +178,22 @@ final class MergedRegistryTest extends TestCase
 		// Later registry doesn't define 'googlebot' — earlier's version
 		// must still win (because there IS no override).
 		$earlier = new InMemoryRegistry([
-			'googlebot' => new BotDefinition(
-				id: 'googlebot',
-				name: 'From earlier',
-				user_agent_patterns: ['Googlebot'],
-				host_patterns: [],
-				ip_ranges: [],
-				category: BotCategory::SEARCH_ENGINE,
-			),
+			'googlebot' => new BotDefinition(id: 'googlebot', name: 'From earlier', user_agent_patterns: [
+				'Googlebot'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::SEARCH_ENGINE)
 		]);
 		$later = new InMemoryRegistry([
-			'bingbot' => new BotDefinition(
-				id: 'bingbot',
-				name: 'From later',
-				user_agent_patterns: ['bingbot'],
-				host_patterns: [],
-				ip_ranges: [],
-				category: BotCategory::SEARCH_ENGINE,
-			),
+			'bingbot' => new BotDefinition(id: 'bingbot', name: 'From later', user_agent_patterns: [
+				'bingbot'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::SEARCH_ENGINE)
 		]);
 
-		$merged = new MergedRegistry([$earlier, $later]);
+		$merged = new MergedRegistry([
+			$earlier,
+			$later
+		]);
 
-		$this->assertSame('From earlier', $merged->get('googlebot')->name,
-			'No override present → earlier definition is the merged definition');
+		$this->assertSame('From earlier', $merged->get('googlebot')->name, 'No override present → earlier definition is the merged definition');
 	}
 
 	public function test_override_only_takes_effect_when_later_registry_actually_has_bot(): void
@@ -227,53 +202,51 @@ final class MergedRegistryTest extends TestCase
 		// Later registry also has 'gptbot' but re-categorized as ai_crawler.
 		// The merged 'gptbot' must be the AI crawler (last wins).
 		$earlier = new InMemoryRegistry([
-			'gptbot' => new BotDefinition(
-				id: 'gptbot',
-				name: 'Old GPT',
-				user_agent_patterns: ['GPTBot'],
-				host_patterns: [],
-				ip_ranges: [],
-				category: BotCategory::SEARCH_ENGINE,
-			),
+			'gptbot' => new BotDefinition(id: 'gptbot', name: 'Old GPT', user_agent_patterns: [
+				'GPTBot'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::SEARCH_ENGINE)
 		]);
 		$later = new InMemoryRegistry([
-			'gptbot' => new BotDefinition(
-				id: 'gptbot',
-				name: 'New GPT',
-				user_agent_patterns: ['GPTBot'],
-				host_patterns: ['openai.com'],
-				ip_ranges: [],
-				category: BotCategory::AI_CRAWLER,
-				verify_dns: true,
-				dns_suffixes: ['openai.com'],
-			),
+			'gptbot' => new BotDefinition(id: 'gptbot', name: 'New GPT', user_agent_patterns: [
+				'GPTBot'
+			], host_patterns: [
+				'openai.com'
+			], ip_ranges: [], category: BotCategory::AI_CRAWLER, verify_dns: true, dns_suffixes: [
+				'openai.com'
+			])
 		]);
 
-		$merged = new MergedRegistry([$earlier, $later]);
+		$merged = new MergedRegistry([
+			$earlier,
+			$later
+		]);
 		$def = $merged->get('gptbot');
 
 		$this->assertSame(BotCategory::AI_CRAWLER, $def->category);
 		$this->assertTrue($def->verify_dns);
-		$this->assertSame(['openai.com'], $def->dns_suffixes);
+		$this->assertSame([
+			'openai.com'
+		], $def->dns_suffixes);
 	}
 
 	// ============================================================
 	// 3. get_registries() — introspection
 	// ============================================================
-
 	public function test_get_registries_returns_input_in_order(): void
 	{
-		$r1 = $this->registry_with(new BotDefinition(
-			id: 'a', name: 'A', user_agent_patterns: ['A'],
-			host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING,
-		));
+		$r1 = $this->registry_with(new BotDefinition(id: 'a', name: 'A', user_agent_patterns: [
+			'A'
+		], host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING));
 		$r2 = new EmptyRegistry();
-		$r3 = $this->registry_with(new BotDefinition(
-			id: 'b', name: 'B', user_agent_patterns: ['B'],
-			host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING,
-		));
+		$r3 = $this->registry_with(new BotDefinition(id: 'b', name: 'B', user_agent_patterns: [
+			'B'
+		], host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING));
 
-		$merged = new MergedRegistry([$r1, $r2, $r3]);
+		$merged = new MergedRegistry([
+			$r1,
+			$r2,
+			$r3
+		]);
 
 		$list = $merged->get_registries();
 
@@ -293,18 +266,29 @@ final class MergedRegistryTest extends TestCase
 	// ============================================================
 	// 4. all() — the merged view
 	// ============================================================
-
 	public function test_all_unions_unique_bot_ids(): void
 	{
 		$merged = new MergedRegistry([
 			new InMemoryRegistry($this->bots_in_category(BotCategory::SEARCH_ENGINE, [
-				['googlebot', 'Googlebot'],
-				['bingbot', 'bingbot'],
+				[
+					'googlebot',
+					'Googlebot'
+				],
+				[
+					'bingbot',
+					'bingbot'
+				]
 			])),
 			new InMemoryRegistry($this->bots_in_category(BotCategory::AI_CRAWLER, [
-				['gptbot', 'GPTBot'],
-				['claude', 'ClaudeBot'],
-			])),
+				[
+					'gptbot',
+					'GPTBot'
+				],
+				[
+					'claude',
+					'ClaudeBot'
+				]
+			]))
 		]);
 
 		$this->assertCount(4, $merged->all());
@@ -318,21 +302,18 @@ final class MergedRegistryTest extends TestCase
 	{
 		$merged = new MergedRegistry([
 			new InMemoryRegistry([
-				'gptbot' => new BotDefinition(
-					id: 'gptbot', name: 'A', user_agent_patterns: ['A'],
-					host_patterns: [], ip_ranges: [], category: BotCategory::AI_CRAWLER,
-				),
-				'claude' => new BotDefinition(
-					id: 'claude', name: 'B', user_agent_patterns: ['B'],
-					host_patterns: [], ip_ranges: [], category: BotCategory::AI_CRAWLER,
-				),
+				'gptbot' => new BotDefinition(id: 'gptbot', name: 'A', user_agent_patterns: [
+					'A'
+				], host_patterns: [], ip_ranges: [], category: BotCategory::AI_CRAWLER),
+				'claude' => new BotDefinition(id: 'claude', name: 'B', user_agent_patterns: [
+					'B'
+				], host_patterns: [], ip_ranges: [], category: BotCategory::AI_CRAWLER)
 			]),
 			new InMemoryRegistry([
-				'gptbot' => new BotDefinition(
-					id: 'gptbot', name: 'A2', user_agent_patterns: ['A'],
-					host_patterns: [], ip_ranges: [], category: BotCategory::AI_CRAWLER,
-				),
-			]),
+				'gptbot' => new BotDefinition(id: 'gptbot', name: 'A2', user_agent_patterns: [
+					'A'
+				], host_patterns: [], ip_ranges: [], category: BotCategory::AI_CRAWLER)
+			])
 		]);
 
 		$this->assertCount(2, $merged->all());
@@ -342,19 +323,27 @@ final class MergedRegistryTest extends TestCase
 	// ============================================================
 	// 5. Per-category accessors respect overrides
 	// ============================================================
-
 	public function test_category_accessors_collect_across_registries(): void
 	{
 		$merged = new MergedRegistry([
 			new InMemoryRegistry($this->bots_in_category(BotCategory::SEARCH_ENGINE, [
-				['googlebot', 'Googlebot'],
+				[
+					'googlebot',
+					'Googlebot'
+				]
 			])),
 			new InMemoryRegistry($this->bots_in_category(BotCategory::SEARCH_ENGINE, [
-				['bingbot', 'bingbot'],
+				[
+					'bingbot',
+					'bingbot'
+				]
 			])),
 			new InMemoryRegistry($this->bots_in_category(BotCategory::AI_CRAWLER, [
-				['gptbot', 'GPTBot'],
-			])),
+				[
+					'gptbot',
+					'GPTBot'
+				]
+			]))
 		]);
 
 		$this->assertCount(2, $merged->search_engines());
@@ -369,32 +358,25 @@ final class MergedRegistryTest extends TestCase
 		// If a later registry re-categorizes a bot, that bot should move
 		// to the new category in the merged view.
 		$earlier = new InMemoryRegistry([
-			'gptbot' => new BotDefinition(
-				id: 'gptbot',
-				name: 'GPT',
-				user_agent_patterns: ['GPTBot'],
-				host_patterns: [],
-				ip_ranges: [],
-				category: BotCategory::SEARCH_ENGINE, // wrong category
-			),
+			'gptbot' => new BotDefinition(id: 'gptbot', name: 'GPT', user_agent_patterns: [
+				'GPTBot'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::SEARCH_ENGINE) // wrong category
+			
 		]);
 		$later = new InMemoryRegistry([
-			'gptbot' => new BotDefinition(
-				id: 'gptbot',
-				name: 'GPT',
-				user_agent_patterns: ['GPTBot'],
-				host_patterns: [],
-				ip_ranges: [],
-				category: BotCategory::AI_CRAWLER,    // corrected
-			),
+			'gptbot' => new BotDefinition(id: 'gptbot', name: 'GPT', user_agent_patterns: [
+				'GPTBot'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::AI_CRAWLER) // corrected
+			
 		]);
 
-		$merged = new MergedRegistry([$earlier, $later]);
+		$merged = new MergedRegistry([
+			$earlier,
+			$later
+		]);
 
-		$this->assertCount(0, $merged->search_engines(),
-			'Corrected gptbot must NOT appear under SEARCH_ENGINE');
-		$this->assertCount(1, $merged->ai_crawlers(),
-			'Corrected gptbot MUST appear under AI_CRAWLER');
+		$this->assertCount(0, $merged->search_engines(), 'Corrected gptbot must NOT appear under SEARCH_ENGINE');
+		$this->assertCount(1, $merged->ai_crawlers(), 'Corrected gptbot MUST appear under AI_CRAWLER');
 	}
 
 	public function test_category_accessors_handle_empty_registries(): void
@@ -402,9 +384,12 @@ final class MergedRegistryTest extends TestCase
 		$merged = new MergedRegistry([
 			new EmptyRegistry(),
 			new InMemoryRegistry($this->bots_in_category(BotCategory::AI_CRAWLER, [
-				['gptbot', 'GPTBot'],
+				[
+					'gptbot',
+					'GPTBot'
+				]
 			])),
-			new EmptyRegistry(),
+			new EmptyRegistry()
 		]);
 
 		$this->assertCount(1, $merged->ai_crawlers());
@@ -414,18 +399,15 @@ final class MergedRegistryTest extends TestCase
 	// ============================================================
 	// 6. has() / get() with overrides
 	// ============================================================
-
 	public function test_has_resolves_to_later_definition(): void
 	{
 		$merged = new MergedRegistry([
-			$this->registry_with(new BotDefinition(
-				id: 'a', name: 'A', user_agent_patterns: ['A'],
-				host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING,
-			)),
-			$this->registry_with(new BotDefinition(
-				id: 'a', name: 'A2', user_agent_patterns: ['A2'],
-				host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING,
-			)),
+			$this->registry_with(new BotDefinition(id: 'a', name: 'A', user_agent_patterns: [
+				'A'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING)),
+			$this->registry_with(new BotDefinition(id: 'a', name: 'A2', user_agent_patterns: [
+				'A2'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::MONITORING))
 		]);
 
 		$this->assertTrue($merged->has('a'));
@@ -436,7 +418,7 @@ final class MergedRegistryTest extends TestCase
 	{
 		$merged = new MergedRegistry([
 			new InMemoryRegistry([]),
-			new InMemoryRegistry([]),
+			new InMemoryRegistry([])
 		]);
 
 		$this->assertNull($merged->get('not_there'));
@@ -447,34 +429,46 @@ final class MergedRegistryTest extends TestCase
 	{
 		$merged = new MergedRegistry([
 			new InMemoryRegistry([
-				'a' => $this->mkBot('a', BotCategory::MONITORING, ['A']),
-				'b' => $this->mkBot('b', BotCategory::MONITORING, ['B']),
+				'a' => $this->mkBot('a', BotCategory::MONITORING, [
+					'A'
+				]),
+				'b' => $this->mkBot('b', BotCategory::MONITORING, [
+					'B'
+				])
 			]),
 			new InMemoryRegistry([
 				// 'a' is a duplicate
-				'a' => $this->mkBot('a', BotCategory::MONITORING, ['A']),
+				'a' => $this->mkBot('a', BotCategory::MONITORING, [
+					'A'
+				]),
 				// 'c' is unique
-				'c' => $this->mkBot('c', BotCategory::MONITORING, ['C']),
-			]),
+				'c' => $this->mkBot('c', BotCategory::MONITORING, [
+					'C'
+				])
+			])
 		]);
 
-		$this->assertSame(3, $merged->count(),
-			'Duplicates must not be double-counted (3 unique bots: a, b, c)');
+		$this->assertSame(3, $merged->count(), 'Duplicates must not be double-counted (3 unique bots: a, b, c)');
 	}
 
 	// ============================================================
 	// 7. find_by_ua / find_by_tokens operate on the merged set
 	// ============================================================
-
 	public function test_find_by_ua_finds_bots_across_registries(): void
 	{
 		$merged = new MergedRegistry([
 			new InMemoryRegistry($this->bots_in_category(BotCategory::SEARCH_ENGINE, [
-				['googlebot', 'Googlebot'],
+				[
+					'googlebot',
+					'Googlebot'
+				]
 			])),
 			new InMemoryRegistry($this->bots_in_category(BotCategory::AI_CRAWLER, [
-				['gptbot', 'GPTBot'],
-			])),
+				[
+					'gptbot',
+					'GPTBot'
+				]
+			]))
 		]);
 
 		// UA "Googlebot/2.1 (compatible)" must hit googlebot from registry 1
@@ -493,33 +487,25 @@ final class MergedRegistryTest extends TestCase
 		// UA patterns — and "last wins" means later BotDefinition replaces
 		// earlier completely).
 		$earlier = new InMemoryRegistry([
-			'gptbot' => new BotDefinition(
-				id: 'gptbot',
-				name: 'Old GPT',
-				user_agent_patterns: ['OldTokenGPT'],
-				host_patterns: [],
-				ip_ranges: [],
-				category: BotCategory::AI_CRAWLER,
-			),
+			'gptbot' => new BotDefinition(id: 'gptbot', name: 'Old GPT', user_agent_patterns: [
+				'OldTokenGPT'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::AI_CRAWLER)
 		]);
 		$later = new InMemoryRegistry([
-			'gptbot' => new BotDefinition(
-				id: 'gptbot',
-				name: 'New GPT',
-				user_agent_patterns: ['NewTokenGPT'],
-				host_patterns: [],
-				ip_ranges: [],
-				category: BotCategory::AI_CRAWLER,
-			),
+			'gptbot' => new BotDefinition(id: 'gptbot', name: 'New GPT', user_agent_patterns: [
+				'NewTokenGPT'
+			], host_patterns: [], ip_ranges: [], category: BotCategory::AI_CRAWLER)
 		]);
-		$merged = new MergedRegistry([$earlier, $later]);
+		$merged = new MergedRegistry([
+			$earlier,
+			$later
+		]);
 
 		$matches = $merged->find_by_ua('NewTokenGPT/1.0');
 		$this->assertContains('gptbot', $matches);
 
 		$matches_old = $merged->find_by_ua('OldTokenGPT/1.0');
-		$this->assertNotContains('gptbot', $matches_old,
-			'Old UA pattern must NOT match after override (replacement, not merge)');
+		$this->assertNotContains('gptbot', $matches_old, 'Old UA pattern must NOT match after override (replacement, not merge)');
 	}
 
 	public function test_find_by_tokens_finds_across_registries(): void
@@ -527,8 +513,11 @@ final class MergedRegistryTest extends TestCase
 		$merged = new MergedRegistry([
 			new InMemoryRegistry([]),
 			new InMemoryRegistry($this->bots_in_category(BotCategory::MONITORING, [
-				['unique_marker_bot', 'UniqueMarker77'],
-			])),
+				[
+					'unique_marker_bot',
+					'UniqueMarker77'
+				]
+			]))
 		]);
 
 		$matches = $merged->find_by_tokens('Mozilla compatible UniqueMarker77/1.0');
@@ -538,23 +527,20 @@ final class MergedRegistryTest extends TestCase
 	// ============================================================
 	// 8. Integration with DefaultRegistry + additions
 	// ============================================================
-
 	public function test_default_plus_additions_pattern(): void
 	{
 		// The canonical "extend shipped registry" pattern.
-		$my_bot = new BotDefinition(
-			id: 'internal_monitor',
-			name: 'Internal Monitor',
-			user_agent_patterns: ['InternalMonitor/1.0'],
-			host_patterns: [],
-			ip_ranges: ['10.0.0.0/8'],
-			category: BotCategory::MONITORING,
-			default_action: BotAction::ALLOW,
-		);
+		$my_bot = new BotDefinition(id: 'internal_monitor', name: 'Internal Monitor', user_agent_patterns: [
+			'InternalMonitor/1.0'
+		], host_patterns: [], ip_ranges: [
+			'10.0.0.0/8'
+		], category: BotCategory::MONITORING, default_action: BotAction::ALLOW);
 
 		$merged = new MergedRegistry([
 			new DefaultRegistry(),
-			new InMemoryRegistry(['internal_monitor' => $my_bot]),
+			new InMemoryRegistry([
+				'internal_monitor' => $my_bot
+			])
 		]);
 
 		// Shipped bots present
@@ -564,34 +550,31 @@ final class MergedRegistryTest extends TestCase
 
 		// My addition present
 		$this->assertTrue($merged->has('internal_monitor'));
-		$this->assertSame(
-			$my_bot,
-			$merged->get('internal_monitor'),
-			'Additions must be retrievable from the merged view'
-		);
+		$this->assertSame($my_bot, $merged->get('internal_monitor'), 'Additions must be retrievable from the merged view');
 
 		// Count is reasonable (DefaultRegistry ships ~100 bots + 1)
-		$this->assertGreaterThan(50, $merged->count(),
-			'DefaultRegistry should contribute many bots');
-		$this->assertGreaterThanOrEqual(
-			(new DefaultRegistry())->count() + 1,
-			$merged->count(),
-			'Merged count must include DefaultRegistry + additions'
-		);
+		$this->assertGreaterThan(50, $merged->count(), 'DefaultRegistry should contribute many bots');
+		$this->assertGreaterThanOrEqual((new DefaultRegistry())->count() + 1, $merged->count(), 'Merged count must include DefaultRegistry + additions');
 	}
 
 	public function test_three_registries_compose_correctly(): void
 	{
 		$merged = new MergedRegistry([
 			new InMemoryRegistry([
-				'a' => $this->mkBot('a', BotCategory::MONITORING, ['A']),
+				'a' => $this->mkBot('a', BotCategory::MONITORING, [
+					'A'
+				])
 			]),
 			new InMemoryRegistry([
-				'b' => $this->mkBot('b', BotCategory::MONITORING, ['B']),
+				'b' => $this->mkBot('b', BotCategory::MONITORING, [
+					'B'
+				])
 			]),
 			new InMemoryRegistry([
-				'c' => $this->mkBot('c', BotCategory::MONITORING, ['C']),
-			]),
+				'c' => $this->mkBot('c', BotCategory::MONITORING, [
+					'C'
+				])
+			])
 		]);
 
 		$this->assertSame(3, $merged->count());
@@ -603,47 +586,41 @@ final class MergedRegistryTest extends TestCase
 	// ============================================================
 	// 9. Override wins even when earlier registry was larger
 	// ============================================================
-
 	public function test_override_with_smaller_later_registry(): void
 	{
 		$merged = new MergedRegistry([
 			new InMemoryRegistry([
-				'a' => $this->mkBot('a', BotCategory::MONITORING, ['A']),
-				'b' => $this->mkBot('b', BotCategory::MONITORING, ['B']),
-				'c' => $this->mkBot('c', BotCategory::MONITORING, ['C']),
+				'a' => $this->mkBot('a', BotCategory::MONITORING, [
+					'A'
+				]),
+				'b' => $this->mkBot('b', BotCategory::MONITORING, [
+					'B'
+				]),
+				'c' => $this->mkBot('c', BotCategory::MONITORING, [
+					'C'
+				])
 			]),
 			new InMemoryRegistry([
 				// Only an override for 'a' — 'b' and 'c' stay from earlier.
-				'a' => $this->mkBot('a', BotCategory::AI_CRAWLER, ['A2']),
-			]),
+				'a' => $this->mkBot('a', BotCategory::AI_CRAWLER, [
+					'A2'
+				])
+			])
 		]);
 
 		$this->assertCount(3, $merged->all());
-		$this->assertSame(BotCategory::AI_CRAWLER, $merged->get('a')->category,
-			'Ovevride category wins');
-		$this->assertSame(['A2'], $merged->get('a')->user_agent_patterns,
-			'Override UA patterns win');
-		$this->assertSame(BotCategory::MONITORING, $merged->get('b')->category,
-			'Untouched bot retains original category');
+		$this->assertSame(BotCategory::AI_CRAWLER, $merged->get('a')->category, 'Ovevride category wins');
+		$this->assertSame([
+			'A2'
+		], $merged->get('a')->user_agent_patterns, 'Override UA patterns win');
+		$this->assertSame(BotCategory::MONITORING, $merged->get('b')->category, 'Untouched bot retains original category');
 	}
 
 	// ============================================================
 	// Helpers (private)
 	// ============================================================
-
-	private function mkBot(
-		string $id,
-		BotCategory $category,
-		array $ua_patterns,
-	): BotDefinition {
-		return new BotDefinition(
-			id: $id,
-			name: "Bot {$id}",
-			user_agent_patterns: $ua_patterns,
-			host_patterns: [],
-			ip_ranges: [],
-			category: $category,
-			default_action: BotAction::ALLOW,
-		);
+	private function mkBot(string $id, BotCategory $category, array $ua_patterns): BotDefinition
+	{
+		return new BotDefinition(id: $id, name: "Bot {$id}", user_agent_patterns: $ua_patterns, host_patterns: [], ip_ranges: [], category: $category, default_action: BotAction::ALLOW);
 	}
 }

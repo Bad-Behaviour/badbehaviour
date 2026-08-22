@@ -3,62 +3,62 @@
 // Single source of truth — no parsing, no ambiguity, full types
 
 return [
-    // ===== CORE =====
-    'logging'                    => true,
-    'verbose'                    => false,
-    'strict'                     => false,
-    'offsite_forms'              => false,
+	// ===== CORE =====
+	'logging'					=> true,
+	'verbose'					=> false,
+	'strict'					 => false,
+	'offsite_forms'			  => false,
 
-	'show_contact_info'        => false,
+	'show_contact_info'		=> false,
 	'show_detailed_block_page'	=> false,
 
-    // ===== REVERSE PROXY =====
-    'reverse_proxy'              => [
-        'enabled'   => true,
-        'header'    => 'CF-Connecting-IP',
-        'addresses' => [
-            '173.245.48.0/20',
-            '103.21.244.0/22',
-            // ... all Cloudflare ranges
-        ],
-    ],
+	// ===== REVERSE PROXY =====
+	'reverse_proxy'			  => [
+		'enabled'   => true,
+		'header'	=> 'CF-Connecting-IP',
+		'addresses' => [
+			'173.245.48.0/20',
+			'103.21.244.0/22',
+			// ... all Cloudflare ranges
+		],
+	],
 
-    // ===== HTTP:BL =====
-    'httpbl'                     => [
-        'key'     => '',
-        'threat'  => 25,
-        'maxage'  => 30,
-    ],
+	// ===== HTTP:BL =====
+	'httpbl'					 => [
+		'key'	 => '',
+		'threat'  => 25,
+		'maxage'  => 30,
+	],
 
-    // ===== DNSBL =====
-    'dnsbl'                      => [
-        'enabled' => false,
-        'lists'   => ['zen.spamhaus.org', 'bl.spamcop.net'],
-    ],
+	// ===== DNSBL =====
+	'dnsbl'					  => [
+		'enabled' => false,
+		'lists'   => ['zen.spamhaus.org', 'bl.spamcop.net'],
+	],
 
-    // ===== AI CRAWLERS =====
-    'ai_crawlers'                => [
-        'allowed'          => [
-        	// OpenAI family
-        	'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
-        	// Anthropic family
-        	'ClaudeBot', 'Claude-User', 'Claude-SearchBot',
-        	// Google AI (user-controlled via Search Console)
-        	'Google-Extended',
-        	// Apple AI (only if you've opted into Apple Intelligence training)
-        	'Applebot-Extended',
-        	// Meta AI
-        	'Meta-ExternalAgent',
-        	// Amazon
-        	'Amazonbot',
-        	// Other major operators with verified identity
-        	'PerplexityBot', 'Perplexity-User',
-        	'GrokBot', 'Grok-User',
-        	'CohereBot',
-        ],
-        'block_unverified' => true,
-        'strict'           => false,
-    ],
+	// ===== AI CRAWLERS =====
+	'ai_crawlers'				=> [
+		'allowed'		  => [
+			// OpenAI family
+			'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+			// Anthropic family
+			'ClaudeBot', 'Claude-User', 'Claude-SearchBot',
+			// Google AI (user-controlled via Search Console)
+			'Google-Extended',
+			// Apple AI (only if you've opted into Apple Intelligence training)
+			'Applebot-Extended',
+			// Meta AI
+			'Meta-ExternalAgent',
+			// Amazon
+			'Amazonbot',
+			// Other major operators with verified identity
+			'PerplexityBot', 'Perplexity-User',
+			'GrokBot', 'Grok-User',
+			'CohereBot',
+		],
+		'block_unverified' => true,
+		'strict'		   => false,
+	],
 
 	// ===== BOT CATEGORIES =====
 	// Pin categories to a specific action regardless of their default
@@ -70,82 +70,82 @@ return [
 	// All four default to empty; opt in as needed. CLOUD_INFRASTRUCTURE
 	// is ALWAYS allowed (hard-coded safety override — blocking CDN/LB
 	// health probes takes your origin offline).
-	'bot_categories'             => [
+	'bot_categories'			 => [
 		'blocked'   => [
 			// 'malicious',
 			// 'residential_proxy',  // Bright Data, Oxylabs, etc.
 		],
 		'challenge' => [
-			// 'social_crawler',     // force CAPTCHA on social scrapers
-			// 'ai_crawler',         // challenge ALL AI crawlers
+			// 'social_crawler',	 // force CAPTCHA on social scrapers
+			// 'ai_crawler',		 // challenge ALL AI crawlers
 		],
 		'log_only'  => [
 			// 'security_scanner',   // log Qualys/Shodan/Censys without blocking
 		],
 		'allowed'   => [
-			// 'feed_reader',        // explicitly allow RSS aggregators
-			// 'archive_crawler',    // explicitly allow Internet Archive etc.
+			// 'feed_reader',		// explicitly allow RSS aggregators
+			// 'archive_crawler',	// explicitly allow Internet Archive etc.
 		],
 	],
 
-    // ===== RATE LIMITS =====
-    'rate_limits'                => [
-        'enabled'      => true,
-        'global'       => ['requests' => 1000, 'window' => 3600],
-        'per_minute'   => ['requests' => 60,   'window' => 60],
-        'post'         => ['requests' => 30,   'window' => 3600],
-        'login'        => ['requests' => 10,   'window' => 900],
-    ],
+	// ===== RATE LIMITS =====
+	'rate_limits'				=> [
+		'enabled'	  => true,
+		'global'	   => ['requests' => 1000, 'window' => 3600],
+		'per_minute'   => ['requests' => 60,   'window' => 60],
+		'post'		 => ['requests' => 30,   'window' => 3600],
+		'login'		=> ['requests' => 10,   'window' => 900],
+	],
 
-    // ===== CHALLENGE =====
-    'challenge'                  => [
-        'enabled'             => false,
-        'provider'            => 'builtin', // builtin, hcaptcha, recaptcha, turnstile
-        'site_key'            => '',
-        'secret_key'          => '',
-        'recaptcha_min_score' => 0.5,
-    ],
+	// ===== CHALLENGE =====
+	'challenge'				  => [
+		'enabled'			 => false,
+		'provider'			=> 'builtin', // builtin, hcaptcha, recaptcha, turnstile
+		'site_key'			=> '',
+		'secret_key'		  => '',
+		'recaptcha_min_score' => 0.5,
+	],
 
-    // ===== PERFORMANCE =====
-    'performance'                => [
-        'skip_extensions' => ['css','js','png','jpg','jpeg','gif','ico','svg','woff','woff2','ttf','eot','webp','avif','map','txt'],
-        'skip_paths'      => ['/static/','/assets/','/media/','/images/','/css/','/js/','/fonts/','/dist/','/build/','/vendor/','/node_modules/'],
-    ],
+	// ===== PERFORMANCE =====
+	'performance'				=> [
+		'skip_extensions' => ['css','js','png','jpg','jpeg','gif','ico','svg','woff','woff2','ttf','eot','webp','avif','map','txt'],
+		'skip_paths'	  => ['/static/','/assets/','/media/','/images/','/css/','/js/','/fonts/','/dist/','/build/','/vendor/','/node_modules/'],
+	],
 
-    // ===== GEOIP =====
-    'geoip'                      => [
-        'enabled'             => false,
-        'database_path'       => '/usr/share/GeoIP/GeoLite2-Country.mmdb',
-        'blocked_countries'   => [],
-        'blocked_asns'        => [],
-    ],
+	// ===== GEOIP =====
+	'geoip'					  => [
+		'enabled'			 => false,
+		'database_path'	   => '/usr/share/GeoIP/GeoLite2-Country.mmdb',
+		'blocked_countries'   => [],
+		'blocked_asns'		=> [],
+	],
 
-    // ===== FINGERPRINTS =====
-    'fingerprints'               => [
-        'bad_ja3'            => [],
-        'bad_h2'             => [],
-        'bot_header_orders'  => [],
-        'expected_ja3'       => [],
-    ],
+	// ===== FINGERPRINTS =====
+	'fingerprints'			   => [
+		'bad_ja3'			=> [],
+		'bad_h2'			 => [],
+		'bot_header_orders'  => [],
+		'expected_ja3'	   => [],
+	],
 
-    // ===== BODY SCAN =====
-    'body_scan_skip_fields'      => [
-        'body', 'comment', 'content', 'text', 'message', 'description',
-        'code', 'source', 'snippet', 'markdown', 'html', 'wiki', 'post',
-        'article', 'page', 'entry', 'reply', 'review', 'feedback',
-    ],
+	// ===== BODY SCAN =====
+	'body_scan_skip_fields'	  => [
+		'body', 'comment', 'content', 'text', 'message', 'description',
+		'code', 'source', 'snippet', 'markdown', 'html', 'wiki', 'post',
+		'article', 'page', 'entry', 'reply', 'review', 'feedback',
+	],
 
-    // ===== CUSTOM RULES =====
-    'custom_rules'               => [
-        // ['type' => 'ip', 'value' => '192.0.2.0/24', 'action' => 'block', 'id' => 'test_network'],
-        // ['type' => 'header', 'header' => 'Sec-CH-UA', 'value' => 'Brave Leo', 'action' => 'log', 'id' => 'brave_leo_agentic',],
-    ],
+	// ===== CUSTOM RULES =====
+	'custom_rules'			   => [
+		// ['type' => 'ip', 'value' => '192.0.2.0/24', 'action' => 'block', 'id' => 'test_network'],
+		// ['type' => 'header', 'header' => 'Sec-CH-UA', 'value' => 'Brave Leo', 'action' => 'log', 'id' => 'brave_leo_agentic',],
+	],
 
 	// ===== DETECTION FEATURES (All Opt-In) =====
-    'enable_fingerprinting'      => false,
-    'inspect_json_body'          => false,
-    'inspect_multipart_body'     => false,
-    'enable_behavioral_analysis' => true,
+	'enable_fingerprinting'	  => false,
+	'inspect_json_body'		  => false,
+	'inspect_multipart_body'	 => false,
+	'enable_behavioral_analysis' => true,
 	'enable_client_hints_validation' => true,
 	'enable_agentic_detection' => true,
 
@@ -154,11 +154,11 @@ return [
 	// First request from each bot IP: 40-300ms. Subsequent requests: cached.
 	// Set require_forward_confirm=true only if you observe PTR spoofing abuse.
 	'dns_verification' => [
-		'enabled'                   => true,
-		'timeout_ms'                => 300,
+		'enabled'				   => true,
+		'timeout_ms'				=> 300,
 		'require_forward_confirm'   => false,
-		'positive_ttl'              => 604800,  // 7 days
-		'negative_ttl'              => 86400,   // 1 day
+		'positive_ttl'			  => 604800,  // 7 days
+		'negative_ttl'			  => 86400,   // 1 day
 	],
 
 	// ===== ON-DEMAND IP RANGE REFRESH =====
@@ -166,14 +166,14 @@ return [
 	// scheduled-job support. See bb_config.example.php for full docs.
 	// Off by default — operators opt in by flipping `enabled` to true.
 	'on_demand_ip_refresh' => [
-		'enabled'                 => false,
+		'enabled'				 => false,
 		'probability_denominator' => 1000,
-		'min_age_seconds'         => 21600,
-		'lock_ttl'                => 600,
-		'cache_ttl'               => 604800,
-		'feed_timeout_seconds'    => 5,
-		'bot_ids'                 => [],
-		'cloud_providers'         => [],
+		'min_age_seconds'		 => 21600,
+		'lock_ttl'				=> 600,
+		'cache_ttl'			   => 604800,
+		'feed_timeout_seconds'	=> 5,
+		'bot_ids'				 => [],
+		'cloud_providers'		 => [],
 	],
 
 	// ===== DYNAMIC IP RANGES =====
@@ -181,22 +181,22 @@ return [
 	// CIDR drift. Requires cron: php bin/update-ip-ranges.php every 6-24h.
 	'dynamic_ip_ranges' => [
 		'enabled' => false,  // EXPERIMENTAL - DISABLED BY DEFAULT
-		'ttl'     => 86400,
+		'ttl'	 => 86400,
 		'feeds'   => ['aws', 'cloudflare', 'fastly', 'gcp'],
 	],
 
 	// ===== HEAD REQUEST DETECTION =====
 	// Detects abuse of HEAD requests for site mapping / reconnaissance
 	'enable_head_request_detection' => true,
-	'head_require_referer'          => true,
-	'head_flood_threshold'          => 20,
-	'head_probe_threshold'          => 50,
-	'head_referer_exempt_paths'     => ['/api/', '/wp-json/', '/health', '/status'],
+	'head_require_referer'		  => true,
+	'head_flood_threshold'		  => 20,
+	'head_probe_threshold'		  => 50,
+	'head_referer_exempt_paths'	 => ['/api/', '/wp-json/', '/health', '/status'],
 
 	// ===== ASSET SCRAPING DETECTION =====
 	// Detects direct asset scraping (AI training crawlers, image harvesters)
 	'enable_asset_scraping_detection' => true,
-	'asset_extensions'                => [
+	'asset_extensions'				=> [
 		// Images
 		'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
 		// Documents
@@ -206,5 +206,5 @@ return [
 	],
 	'asset_no_referer_threshold'   => 10,
 	'asset_only_session_threshold' => 20,
-	'asset_pattern_threshold'      => 100,
+	'asset_pattern_threshold'	  => 100,
 ];

@@ -43,15 +43,15 @@ function run(array $config_overrides = []): Result
 	$bb = new BadBehaviour($config);
 	$result = $bb->run();
 
-    // is_actionable() is the correct gate:
-    //   - TRUE  → ENFORCED block/challenge; handle_result() serves 403
-    //   - FALSE → ALLOWED or MONITORED; let application serve normally
-    // Handle blocked/challenge
-    if ($result->is_actionable()) {
-        $bb->handle_result($result);
-    }
+	// is_actionable() is the correct gate:
+	//   - TRUE  → ENFORCED block/challenge; handle_result() serves 403
+	//   - FALSE → ALLOWED or MONITORED; let application serve normally
+	// Handle blocked/challenge
+	if ($result->is_actionable()) {
+		$bb->handle_result($result);
+	}
 
-    return $result;
+	return $result;
 }
 
 /**
@@ -63,6 +63,6 @@ function run(array $config_overrides = []): Result
  */
 function check(array $config_overrides = []): bool
 {
-    $result = run($config_overrides);
-    return $result->is_actionable();
+	$result = run($config_overrides);
+	return $result->is_actionable();
 }

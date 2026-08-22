@@ -18,39 +18,39 @@ namespace BadBehaviour\Config;
  */
 final class Diagnostics
 {
-    /** @var array<string, string[]> dotted-key → list of values seen */
-    private static array $unknown_keys_seen = [];
+	/** @var array<string, string[]> dotted-key → list of values seen */
+	private static array $unknown_keys_seen = [];
 
-    /** @var array<string, mixed> arbitrary warnings collected during parsing */
-    private static array $warnings = [];
+	/** @var array<string, mixed> arbitrary warnings collected during parsing */
+	private static array $warnings = [];
 
-    public static function record_unknown_key(string $dotted_key, mixed $value): void
-    {
-        self::$unknown_keys_seen[$dotted_key][] = $value;
-    }
+	public static function record_unknown_key(string $dotted_key, mixed $value): void
+	{
+		self::$unknown_keys_seen[$dotted_key][] = $value;
+	}
 
-    public static function record_warning(string $code, string $message, array $context = []): void
-    {
-        self::$warnings[$code] = ['message' => $message, 'context' => $context];
-    }
+	public static function record_warning(string $code, string $message, array $context = []): void
+	{
+		self::$warnings[$code] = ['message' => $message, 'context' => $context];
+	}
 
-    /** @return array<string, string[]> */
-    public static function unknown_keys(): array
-    {
-        return self::$unknown_keys_seen;
-    }
+	/** @return array<string, string[]> */
+	public static function unknown_keys(): array
+	{
+		return self::$unknown_keys_seen;
+	}
 
-    /** @return array<string, array{message: string, context: array}> */
-    public static function warnings(): array
-    {
-        return self::$warnings;
-    }
+	/** @return array<string, array{message: string, context: array}> */
+	public static function warnings(): array
+	{
+		return self::$warnings;
+	}
 
-    public static function reset(): void
-    {
-        self::$unknown_keys_seen = [];
-        self::$warnings = [];
-    }
+	public static function reset(): void
+	{
+		self::$unknown_keys_seen = [];
+		self::$warnings = [];
+	}
 
-    private function __construct() {}
+	private function __construct() {}
 }

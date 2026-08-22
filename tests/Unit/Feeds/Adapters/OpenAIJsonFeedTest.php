@@ -1,6 +1,5 @@
 <?php
 // tests/Unit/Feeds/Adapters/OpenAIJsonFeedTest.php
-
 namespace BadBehaviour\Tests\Unit\Feeds\Adapters;
 
 use BadBehaviour\Feeds\Adapters\OpenAIJsonFeed;
@@ -9,7 +8,9 @@ use PHPUnit\Framework\TestCase;
 
 class OpenAIJsonFeedTest extends TestCase
 {
+
 	private OpenAIJsonFeed $feed;
+
 	private CacheInterface $cache;
 
 	protected function setUp(): void
@@ -26,7 +27,9 @@ class OpenAIJsonFeedTest extends TestCase
 
 	public function test_get_bot_ids(): void
 	{
-		$this->assertEquals(['gptbot'], $this->feed->get_bot_ids());
+		$this->assertEquals([
+			'gptbot'
+		], $this->feed->get_bot_ids());
 	}
 
 	public function test_instantiation_with_different_bot_id(): void
@@ -34,7 +37,9 @@ class OpenAIJsonFeedTest extends TestCase
 		$feed = new OpenAIJsonFeed($this->cache, 'chatgpt-user', 'https://openai.com/chatgpt-user.json');
 
 		$this->assertEquals('openai-chatgpt-user', $feed->get_source_name());
-		$this->assertEquals(['chatgpt-user'], $feed->get_bot_ids());
+		$this->assertEquals([
+			'chatgpt-user'
+		], $feed->get_bot_ids());
 	}
 
 	public function test_instantiation_with_searchbot(): void
@@ -42,7 +47,9 @@ class OpenAIJsonFeedTest extends TestCase
 		$feed = new OpenAIJsonFeed($this->cache, 'oai-searchbot', 'https://openai.com/searchbot.json');
 
 		$this->assertEquals('openai-oai-searchbot', $feed->get_source_name());
-		$this->assertEquals(['oai-searchbot'], $feed->get_bot_ids());
+		$this->assertEquals([
+			'oai-searchbot'
+		], $feed->get_bot_ids());
 	}
 
 	public function test_instantiation(): void

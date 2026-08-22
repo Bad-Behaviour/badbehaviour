@@ -1,7 +1,5 @@
 <?php
-
-declare(strict_types=1);
-
+declare(strict_types = 1);
 namespace BadBehaviour\Tests\Unit\Adapter;
 
 use BadBehaviour\Adapter\WackoWikiAdapter;
@@ -20,332 +18,332 @@ use PHPUnit\Framework\TestCase;
  */
 function bb_make_wacko_db(): object
 {
-    return new class {
-        public string $table_prefix = 'wacko_';
-        public string $abuse_email  = 'admin@wiki.example';
-        public bool $is_sqlite      = true;
+	return new class() {
 
-        /** @var callable|null Set by tests to capture the SQL */
-        public $ll_query = null;
+		public string $table_prefix = 'wacko_';
 
-        public function q(mixed $v): string
-        {
-            return "'" . str_replace("'", "\\'", (string)$v) . "'";
-        }
-    };
+		public string $abuse_email = 'admin@wiki.example';
+
+		public bool $is_sqlite = true;
+
+		/** @var callable|null Set by tests to capture the SQL */
+		public $ll_query = null;
+
+		public function q(mixed $v): string
+		{
+			return "'" . str_replace("'", "\\'", (string) $v) . "'";
+		}
+	};
 }
 
 /**
+ *
  * @covers \BadBehaviour\Adapter\WackoWikiAdapter
  */
 final class WackoWikiAdapterTest extends TestCase
 {
-    private string $tmpDir;
-    private string $originalCwd;
-    private object $db;
 
-    protected function setUp(): void
-    {
-        $this->originalCwd = getcwd();
-        $this->tmpDir      = sys_get_temp_dir() . '/bb_wacko_test_' . uniqid('', true);
-        mkdir($this->tmpDir . '/config', 0755, true);
-        chdir($this->tmpDir);
+	private string $tmpDir;
 
-        $this->db = bb_make_wacko_db();
+	private string $originalCwd;
 
-        if (!defined('CACHE_DIR')) {
-            define('CACHE_DIR', sys_get_temp_dir() . '/bb_wacko_cache_' . uniqid('', true));
-        }
-    }
+	private object $db;
 
-    protected function tearDown(): void
-    {
-        chdir($this->originalCwd);
-        $this->rrmdir($this->tmpDir);
-        if (defined('CACHE_DIR') && is_dir(CACHE_DIR)) {
-            $this->rrmdir(CACHE_DIR);
-        }
-    }
+	protected function setUp(): void
+	{
+		$this->originalCwd = getcwd();
+		$this->tmpDir = sys_get_temp_dir() . '/bb_wacko_test_' . uniqid('', true);
+		mkdir($this->tmpDir . '/config', 0755, true);
+		chdir($this->tmpDir);
 
-    private function rrmdir(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-        foreach (scandir($dir) as $entry) {
-            if ($entry === '.' || $entry === '..') {
-                continue;
-            }
-            $path = $dir . '/' . $entry;
-            if (is_dir($path)) {
-                $this->rrmdir($path);
-            } else {
-                @unlink($path);
-            }
-        }
-        @rmdir($dir);
-    }
+		$this->db = bb_make_wacko_db();
 
-    private function writeConfig(string $php): void
-    {
-        file_put_contents($this->tmpDir . '/config/bb_config.php', $php);
-    }
+		if (! defined('CACHE_DIR')) {
+			define('CACHE_DIR', sys_get_temp_dir() . '/bb_wacko_cache_' . uniqid('', true));
+		}
+	}
 
-    public function testConstructorCreatesCacheDirectory(): void
-    {
-        new WackoWikiAdapter($this->db);
-        $this->assertDirectoryExists(CACHE_DIR . '/bad_behaviour/');
-    }
+	protected function tearDown(): void
+	{
+		chdir($this->originalCwd);
+		$this->rrmdir($this->tmpDir);
+		if (defined('CACHE_DIR') && is_dir(CACHE_DIR)) {
+			$this->rrmdir(CACHE_DIR);
+		}
+	}
 
-    public function testStateMachineIsInternallyConsistent(): void
-    {
-        // The safe_mode / config_loaded flags are ALWAYS opposite after
-        // get_settings() runs — that's the invariant. Whether config
-        // resolves depends on CONFIG_DIR (which may already be defined
-        // by the test bootstrap) and CWD, both of which are environmental.
-        $adapter = new WackoWikiAdapter($this->db);
-        $adapter->get_settings();
+	private function rrmdir(string $dir): void
+	{
+		if (! is_dir($dir)) {
+			return;
+		}
+		foreach (scandir($dir) as $entry) {
+			if ($entry === '.' || $entry === '..') {
+				continue;
+			}
+			$path = $dir . '/' . $entry;
+			if (is_dir($path)) {
+				$this->rrmdir($path);
+			} else {
+				@unlink($path);
+			}
+		}
+		@rmdir($dir);
+	}
 
-        $this->assertSame(
-            $adapter->is_safe_mode(),
-            !$adapter->is_config_loaded(),
-            'safe_mode and config_loaded must be opposite booleans'
-        );
-    }
+	private function writeConfig(string $php): void
+	{
+		file_put_contents($this->tmpDir . '/config/bb_config.php', $php);
+	}
 
-    public function testGetSettingsReturnsLogTableWithPrefix(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $settings = $adapter->get_settings();
+	public function testConstructorCreatesCacheDirectory(): void
+	{
+		new WackoWikiAdapter($this->db);
+		$this->assertDirectoryExists(CACHE_DIR . '/bad_behaviour/');
+	}
 
-        $this->assertArrayHasKey('log_table', $settings);
-        $this->assertSame('wacko_bad_behaviour', $settings['log_table']);
-    }
+	public function testStateMachineIsInternallyConsistent(): void
+	{
+		// The safe_mode / config_loaded flags are ALWAYS opposite after
+		// get_settings() runs — that's the invariant. Whether config
+		// resolves depends on CONFIG_DIR (which may already be defined
+		// by the test bootstrap) and CWD, both of which are environmental.
+		$adapter = new WackoWikiAdapter($this->db);
+		$adapter->get_settings();
 
-    public function testGetSettingsUsesConfiguredLogTablePrefix(): void
-    {
-        $this->db->table_prefix = 'custom_';
-        $adapter = new WackoWikiAdapter($this->db);
-        $settings = $adapter->get_settings();
+		$this->assertSame($adapter->is_safe_mode(), ! $adapter->is_config_loaded(), 'safe_mode and config_loaded must be opposite booleans');
+	}
 
-        $this->assertSame('custom_bad_behaviour', $settings['log_table']);
-    }
+	public function testGetSettingsReturnsLogTableWithPrefix(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$settings = $adapter->get_settings();
 
-    public function testGetWhitelistReturnsEmptyDefaultsWhenMissing(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $whitelist = $adapter->get_whitelist();
+		$this->assertArrayHasKey('log_table', $settings);
+		$this->assertSame('wacko_bad_behaviour', $settings['log_table']);
+	}
 
-        $this->assertSame(
-            ['ip' => [], 'useragent' => [], 'url' => [], 'asn' => [], 'country' => []],
-            $whitelist
-        );
-    }
+	public function testGetSettingsUsesConfiguredLogTablePrefix(): void
+	{
+		$this->db->table_prefix = 'custom_';
+		$adapter = new WackoWikiAdapter($this->db);
+		$settings = $adapter->get_settings();
 
-    public function testGetEmailReturnsConfiguredAbuseEmail(): void
-    {
-        $this->db->abuse_email = 'security@wiki.example';
-        $adapter = new WackoWikiAdapter($this->db);
-        $this->assertSame('security@wiki.example', $adapter->get_email());
-    }
+		$this->assertSame('custom_bad_behaviour', $settings['log_table']);
+	}
 
-    public function testGetRelativePathReturnsRoot(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $this->assertSame('/', $adapter->get_relative_path());
-    }
+	public function testGetWhitelistReturnsEmptyDefaultsWhenMissing(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$whitelist = $adapter->get_whitelist();
 
-    public function testGetTableSchemaReturnsArrayForSqlite(): void
-    {
-        $this->db->is_sqlite = true;
-        $adapter = new WackoWikiAdapter($this->db);
-        $schema = $adapter->get_table_schema('wacko_bad_behaviour');
+		$this->assertSame([
+			'ip' => [],
+			'useragent' => [],
+			'url' => [],
+			'asn' => [],
+			'country' => []
+		], $whitelist);
+	}
 
-        $this->assertIsArray($schema);
-        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS', $schema[0]);
-        $this->assertStringContainsString('log_id', $schema[0]);
-        $this->assertStringContainsString('user_agent', $schema[0]);
-        $this->assertStringContainsString('enforcement_action', $schema[0]);
-        $this->assertGreaterThan(1, count($schema));
-        $this->assertStringContainsString('CREATE INDEX', $schema[1]);
-    }
+	public function testGetEmailReturnsConfiguredAbuseEmail(): void
+	{
+		$this->db->abuse_email = 'security@wiki.example';
+		$adapter = new WackoWikiAdapter($this->db);
+		$this->assertSame('security@wiki.example', $adapter->get_email());
+	}
 
-    public function testGetTableSchemaReturnsArrayForMysql(): void
-    {
-        $this->db->is_sqlite = false;
-        $adapter = new WackoWikiAdapter($this->db);
-        $schema = $adapter->get_table_schema('wacko_bad_behaviour');
+	public function testGetRelativePathReturnsRoot(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$this->assertSame('/', $adapter->get_relative_path());
+	}
 
-        $this->assertIsArray($schema);
-        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS', $schema[0]);
-        $this->assertStringContainsString('ENGINE=InnoDB', $schema[0]);
-        $this->assertStringContainsString('`log_id`', $schema[0]);
-    }
+	public function testGetTableSchemaReturnsArrayForSqlite(): void
+	{
+		$this->db->is_sqlite = true;
+		$adapter = new WackoWikiAdapter($this->db);
+		$schema = $adapter->get_table_schema('wacko_bad_behaviour');
 
-    public function testLogRequestIsNoOpWhenLoggingDisabled(): void
-    {
-        $this->db->ll_query = function ($sql) {
-            $this->fail('ll_query should not be called when logging is disabled');
-        };
+		$this->assertIsArray($schema);
+		$this->assertStringContainsString('CREATE TABLE IF NOT EXISTS', $schema[0]);
+		$this->assertStringContainsString('log_id', $schema[0]);
+		$this->assertStringContainsString('user_agent', $schema[0]);
+		$this->assertStringContainsString('enforcement_action', $schema[0]);
+		$this->assertGreaterThan(1, count($schema));
+		$this->assertStringContainsString('CREATE INDEX', $schema[1]);
+	}
 
-        $adapter = new WackoWikiAdapter($this->db);
-        $package = new RequestPackage(
-            ip: '198.51.100.10',
-            headers: [],
-            headers_mixed: ['User-Agent' => 'UA'],
-            request_method: 'GET',
-            request_uri: '/',
-            server_protocol: 'HTTP/1.1',
-            request_entity: [],
-            user_agent: 'UA',
-        );
-        $result = new Result(ResultCode::ALLOWED, 'ok', $package);
+	public function testGetTableSchemaReturnsArrayForMysql(): void
+	{
+		$this->db->is_sqlite = false;
+		$adapter = new WackoWikiAdapter($this->db);
+		$schema = $adapter->get_table_schema('wacko_bad_behaviour');
 
-        // Without a config present, get_settings() returns safe-mode defaults
-        // where logging=true, so we instead verify the no-throw contract.
-        $adapter->log_request($package, $result);
+		$this->assertIsArray($schema);
+		$this->assertStringContainsString('CREATE TABLE IF NOT EXISTS', $schema[0]);
+		$this->assertStringContainsString('ENGINE=InnoDB', $schema[0]);
+		$this->assertStringContainsString('`log_id`', $schema[0]);
+	}
 
-        $this->expectNotToPerformAssertions();
-    }
+	public function testLogRequestIsNoOpWhenLoggingDisabled(): void
+	{
+		$this->db->ll_query = function ($sql) {
+			$this->fail('ll_query should not be called when logging is disabled');
+		};
 
-    public function testLogRequestDoesNotThrowOnDbFailure(): void
-    {
-        $this->db->ll_query = function ($sql) {
-            throw new \RuntimeException('DB down');
-        };
+		$adapter = new WackoWikiAdapter($this->db);
+		$package = new RequestPackage(ip: '198.51.100.10', headers: [], headers_mixed: [
+			'User-Agent' => 'UA'
+		], request_method: 'GET', request_uri: '/', server_protocol: 'HTTP/1.1', request_entity: [], user_agent: 'UA');
+		$result = new Result(ResultCode::ALLOWED, 'ok', $package);
 
-        $adapter = new WackoWikiAdapter($this->db);
-        $package = new RequestPackage(
-            ip: '198.51.100.10',
-            headers: [],
-            headers_mixed: ['User-Agent' => 'Mozilla/5.0'],
-            request_method: 'GET',
-            request_uri: '/',
-            server_protocol: 'HTTP/1.1',
-            request_entity: [],
-            user_agent: 'Mozilla/5.0',
-        );
-        $result = new Result(ResultCode::ALLOWED, 'ok', $package);
+		// Without a config present, get_settings() returns safe-mode defaults
+		// where logging=true, so we instead verify the no-throw contract.
+		$adapter->log_request($package, $result);
 
-        $adapter->log_request($package, $result);
-        $this->expectNotToPerformAssertions();
-    }
+		$this->expectNotToPerformAssertions();
+	}
 
-    public function testQueryReturnsFalseOnException(): void
-    {
-        $this->db->ll_query = function ($sql) {
-            throw new \RuntimeException('boom');
-        };
+	public function testLogRequestDoesNotThrowOnDbFailure(): void
+	{
+		$this->db->ll_query = function ($sql) {
+			throw new \RuntimeException('DB down');
+		};
 
-        $adapter = new WackoWikiAdapter($this->db);
-        $this->assertFalse($adapter->query('SELECT 1'));
-    }
+		$adapter = new WackoWikiAdapter($this->db);
+		$package = new RequestPackage(ip: '198.51.100.10', headers: [], headers_mixed: [
+			'User-Agent' => 'Mozilla/5.0'
+		], request_method: 'GET', request_uri: '/', server_protocol: 'HTTP/1.1', request_entity: [], user_agent: 'Mozilla/5.0');
+		$result = new Result(ResultCode::ALLOWED, 'ok', $package);
 
-    public function testCacheGetReturnsNullForMissingKey(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $this->assertNull($adapter->get('never_set'));
-    }
+		$adapter->log_request($package, $result);
+		$this->expectNotToPerformAssertions();
+	}
 
-    public function testCacheSetAndGetRoundTrip(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $this->assertTrue($adapter->set('k', 'v', 60));
-        $this->assertSame('v', $adapter->get('k'));
-    }
+	public function testQueryReturnsFalseOnException(): void
+	{
+		$this->db->ll_query = function ($sql) {
+			throw new \RuntimeException('boom');
+		};
 
-    public function testCacheDeleteRemovesEntry(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $adapter->set('k', 'v', 60);
+		$adapter = new WackoWikiAdapter($this->db);
+		$this->assertFalse($adapter->query('SELECT 1'));
+	}
 
-        $this->assertTrue($adapter->delete('k'));
-        $this->assertNull($adapter->get('k'));
-    }
+	public function testCacheGetReturnsNullForMissingKey(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$this->assertNull($adapter->get('never_set'));
+	}
 
-    public function testIncrementCounterStartsAtOne(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $this->assertSame(1, $adapter->increment_counter('c', 60));
-        $this->assertSame(2, $adapter->increment_counter('c', 60));
-    }
+	public function testCacheSetAndGetRoundTrip(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$this->assertTrue($adapter->set('k', 'v', 60));
+		$this->assertSame('v', $adapter->get('k'));
+	}
 
-    public function testGetCounterReturnsCurrentValue(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $adapter->increment_counter('c', 60);
-        $adapter->increment_counter('c', 60);
+	public function testCacheDeleteRemovesEntry(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$adapter->set('k', 'v', 60);
 
-        $this->assertSame(2, $adapter->get_counter('c'));
-    }
+		$this->assertTrue($adapter->delete('k'));
+		$this->assertNull($adapter->get('k'));
+	}
 
-    public function testSaveAndGetBehaviorProfileIncludesExpiresField(): void
-    {
-        // Real behavior: save_behavior_profile injects '_expires' into
-        // the stored profile so cache expiration can be enforced even
-        // when get() is bypassed (e.g., direct file inspection).
-        $adapter = new WackoWikiAdapter($this->db);
-        $profile = ['count' => 7, 'ua' => 'abc'];
+	public function testIncrementCounterStartsAtOne(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$this->assertSame(1, $adapter->increment_counter('c', 60));
+		$this->assertSame(2, $adapter->increment_counter('c', 60));
+	}
 
-        $this->assertTrue($adapter->save_behavior_profile('sess', $profile, 60));
-        $loaded = $adapter->get_behavior_profile('sess');
+	public function testGetCounterReturnsCurrentValue(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$adapter->increment_counter('c', 60);
+		$adapter->increment_counter('c', 60);
 
-        $this->assertIsArray($loaded);
-        $this->assertSame(7, $loaded['count']);
-        $this->assertSame('abc', $loaded['ua']);
-        $this->assertArrayHasKey('_expires', $loaded);
-        $this->assertGreaterThan(time(), $loaded['_expires']);
-    }
+		$this->assertSame(2, $adapter->get_counter('c'));
+	}
 
-    public function testAddToSetAndGetSet(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $adapter->add_to_set('ja3', 'h1', 60);
-        $adapter->add_to_set('ja3', 'h2', 60);
+	public function testSaveAndGetBehaviorProfileIncludesExpiresField(): void
+	{
+		// Real behavior: save_behavior_profile injects '_expires' into
+		// the stored profile so cache expiration can be enforced even
+		// when get() is bypassed (e.g., direct file inspection).
+		$adapter = new WackoWikiAdapter($this->db);
+		$profile = [
+			'count' => 7,
+			'ua' => 'abc'
+		];
 
-        $values = $adapter->get_set('ja3');
-        sort($values);
-        $this->assertSame(['h1', 'h2'], $values);
-    }
+		$this->assertTrue($adapter->save_behavior_profile('sess', $profile, 60));
+		$loaded = $adapter->get_behavior_profile('sess');
 
-    public function testGetSetPrunesExpired(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $adapter->add_to_set('ja3', 'live', 60);
+		$this->assertIsArray($loaded);
+		$this->assertSame(7, $loaded['count']);
+		$this->assertSame('abc', $loaded['ua']);
+		$this->assertArrayHasKey('_expires', $loaded);
+		$this->assertGreaterThan(time(), $loaded['_expires']);
+	}
 
-        // Inject an expired entry via the underlying cache file.
-        $reflection = new \ReflectionClass($adapter);
-        $cacheFileMethod = $reflection->getMethod('cache_file');
-        $cacheFileMethod->setAccessible(true);
-        $file = $cacheFileMethod->invoke($adapter, 'set:ja3');
+	public function testAddToSetAndGetSet(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$adapter->add_to_set('ja3', 'h1', 60);
+		$adapter->add_to_set('ja3', 'h2', 60);
 
-        $data = json_decode(file_get_contents($file), true);
-        $data['dead'] = time() - 100;
-        file_put_contents($file, json_encode($data), LOCK_EX);
+		$values = $adapter->get_set('ja3');
+		sort($values);
+		$this->assertSame([
+			'h1',
+			'h2'
+		], $values);
+	}
 
-        $values = $adapter->get_set('ja3');
-        $this->assertSame(['live'], $values);
-    }
+	public function testGetSetPrunesExpired(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$adapter->add_to_set('ja3', 'live', 60);
 
-    public function testGetGeoipReturnsNull(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $this->assertNull($adapter->get_geoip('1.2.3.4'));
-    }
+		// Inject an expired entry via the underlying cache file.
+		$reflection = new \ReflectionClass($adapter);
+		$cacheFileMethod = $reflection->getMethod('cache_file');
+		$cacheFileMethod->setAccessible(true);
+		$file = $cacheFileMethod->invoke($adapter, 'set:ja3');
 
-    public function testVerifyChallengeReturnsFalse(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $this->assertFalse($adapter->verify_challenge('response', '1.2.3.4'));
-    }
+		$data = json_decode(file_get_contents($file), true);
+		$data['dead'] = time() - 100;
+		file_put_contents($file, json_encode($data), LOCK_EX);
 
-    public function testLogDoesNotThrowOnCircularContext(): void
-    {
-        $adapter = new WackoWikiAdapter($this->db);
-        $ctx = [];
-        $ctx['self'] = &$ctx;
+		$values = $adapter->get_set('ja3');
+		$this->assertSame([
+			'live'
+		], $values);
+	}
 
-        $adapter->log('error', 'circular', $ctx);
-        $this->expectNotToPerformAssertions();
-    }
+	public function testGetGeoipReturnsNull(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$this->assertNull($adapter->get_geoip('1.2.3.4'));
+	}
+
+	public function testVerifyChallengeReturnsFalse(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$this->assertFalse($adapter->verify_challenge('response', '1.2.3.4'));
+	}
+
+	public function testLogDoesNotThrowOnCircularContext(): void
+	{
+		$adapter = new WackoWikiAdapter($this->db);
+		$ctx = [];
+		$ctx['self'] = &$ctx;
+
+		$adapter->log('error', 'circular', $ctx);
+		$this->expectNotToPerformAssertions();
+	}
 }

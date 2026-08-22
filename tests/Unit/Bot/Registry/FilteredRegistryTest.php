@@ -1,7 +1,5 @@
 <?php
-
-declare(strict_types=1);
-
+declare(strict_types = 1);
 namespace BadBehaviour\Tests\Unit\Bot\Registry;
 
 use BadBehaviour\Bot\BotAction;
@@ -19,10 +17,10 @@ use PHPUnit\Framework\TestCase;
  *
  * FilteredRegistry wraps another registry and applies four filter dimensions:
  *
- *   1. keep_bots (whitelist by bot ID)
- *   2. exclude_bots (blacklist by bot ID)
- *   3. include_categories (STRICT whitelist by category — opt-in only)
- *   4. exclude_categories (blacklist by category)
+ * 1. keep_bots (whitelist by bot ID)
+ * 2. exclude_bots (blacklist by bot ID)
+ * 3. include_categories (STRICT whitelist by category — opt-in only)
+ * 4. exclude_categories (blacklist by category)
  *
  * === SEMANTICS ===
  *
@@ -38,7 +36,7 @@ use PHPUnit\Framework\TestCase;
  *
  * === PRECEDENCE ===
  *
- *   keep_bots  →  exclude_bots  →  include_categories  →  exclude_categories
+ * keep_bots → exclude_bots → include_categories → exclude_categories
  *
  * A bot must pass ALL active filters to appear in the filtered registry.
  *
@@ -48,6 +46,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class FilteredRegistryTest extends TestCase
 {
+
 	// ---------- Helpers ----------
 
 	/**
@@ -61,55 +60,76 @@ final class FilteredRegistryTest extends TestCase
 	 */
 	private function sample_bots(): array
 	{
-		$mk = static function (
-			string $id,
-			BotCategory $cat,
-			array $ua_patterns = [],
-			BotAction $default_action = BotAction::ALLOW,
-		): BotDefinition {
-			return new BotDefinition(
-				id: $id,
-				name: 'Sample ' . $id,
-				user_agent_patterns: $ua_patterns ?: ['Sample' . ucfirst($id)],
-				host_patterns: [],
-				ip_ranges: [],
-				verify_dns: false,
-				dns_suffixes: [],
-				category: $cat,
-				default_action: $default_action,
-			);
+		$mk = static function (string $id, BotCategory $cat, array $ua_patterns = [], BotAction $default_action = BotAction::ALLOW): BotDefinition {
+			return new BotDefinition(id: $id, name: 'Sample ' . $id, user_agent_patterns: $ua_patterns ?: [
+				'Sample' . ucfirst($id)
+			], host_patterns: [], ip_ranges: [], verify_dns: false, dns_suffixes: [], category: $cat, default_action: $default_action);
 		};
 
 		return [
 			// SEARCH_ENGINE
-			'googlebot'   => $mk('googlebot',   BotCategory::SEARCH_ENGINE,       ['Googlebot'],         BotAction::BLOCK),
-			'bingbot'     => $mk('bingbot',     BotCategory::SEARCH_ENGINE,       ['bingbot'],           BotAction::BLOCK),
+			'googlebot' => $mk('googlebot', BotCategory::SEARCH_ENGINE, [
+				'Googlebot'
+			], BotAction::BLOCK),
+			'bingbot' => $mk('bingbot', BotCategory::SEARCH_ENGINE, [
+				'bingbot'
+			], BotAction::BLOCK),
 			// AI_CRAWLER
-			'gptbot'      => $mk('gptbot',      BotCategory::AI_CRAWLER,          ['GPTBot'],            BotAction::CHALLENGE),
-			'claude'      => $mk('claude',      BotCategory::AI_CRAWLER,          ['ClaudeBot'],         BotAction::CHALLENGE),
+			'gptbot' => $mk('gptbot', BotCategory::AI_CRAWLER, [
+				'GPTBot'
+			], BotAction::CHALLENGE),
+			'claude' => $mk('claude', BotCategory::AI_CRAWLER, [
+				'ClaudeBot'
+			], BotAction::CHALLENGE),
 			// SOCIAL_CRAWLER
-			'facebook'    => $mk('facebook',    BotCategory::SOCIAL_CRAWLER,      ['facebookexternalhit']),
-			'twitter'     => $mk('twitter',     BotCategory::SOCIAL_CRAWLER,      ['Twitterbot']),
+			'facebook' => $mk('facebook', BotCategory::SOCIAL_CRAWLER, [
+				'facebookexternalhit'
+			]),
+			'twitter' => $mk('twitter', BotCategory::SOCIAL_CRAWLER, [
+				'Twitterbot'
+			]),
 			// SEO_CRAWLER
-			'semrush'     => $mk('semrush',     BotCategory::SEO_CRAWLER,         ['SemrushBot'],        BotAction::CHALLENGE),
-			'ahrefs'      => $mk('ahrefs',      BotCategory::SEO_CRAWLER,         ['AhrefsBot'],         BotAction::CHALLENGE),
+			'semrush' => $mk('semrush', BotCategory::SEO_CRAWLER, [
+				'SemrushBot'
+			], BotAction::CHALLENGE),
+			'ahrefs' => $mk('ahrefs', BotCategory::SEO_CRAWLER, [
+				'AhrefsBot'
+			], BotAction::CHALLENGE),
 			// ARCHIVE_CRAWLER
-			'internet_archive' => $mk('internet_archive', BotCategory::ARCHIVE_CRAWLER, ['ia_archiver']),
+			'internet_archive' => $mk('internet_archive', BotCategory::ARCHIVE_CRAWLER, [
+				'ia_archiver'
+			]),
 			// FEED_READER
-			'feedly'      => $mk('feedly',      BotCategory::FEED_READER,         ['FeedlyBot']),
+			'feedly' => $mk('feedly', BotCategory::FEED_READER, [
+				'FeedlyBot'
+			]),
 			// SHOPPING_CRAWLER
-			'google_shopping' => $mk('google_shopping', BotCategory::SHOPPING_CRAWLER, ['Googlebot-Shopping']),
+			'google_shopping' => $mk('google_shopping', BotCategory::SHOPPING_CRAWLER, [
+				'Googlebot-Shopping'
+			]),
 			// CLOUD_INFRASTRUCTURE
-			'cloudflare_health' => $mk('cloudflare_health', BotCategory::CLOUD_INFRASTRUCTURE, ['Cloudflare-Healthcheck']),
-			'aws_elb_health'    => $mk('aws_elb_health',    BotCategory::CLOUD_INFRASTRUCTURE, ['ELB-HealthChecker']),
+			'cloudflare_health' => $mk('cloudflare_health', BotCategory::CLOUD_INFRASTRUCTURE, [
+				'Cloudflare-Healthcheck'
+			]),
+			'aws_elb_health' => $mk('aws_elb_health', BotCategory::CLOUD_INFRASTRUCTURE, [
+				'ELB-HealthChecker'
+			]),
 			// MONITORING
-			'uptimerobot' => $mk('uptimerobot', BotCategory::MONITORING,         ['UptimeRobot']),
+			'uptimerobot' => $mk('uptimerobot', BotCategory::MONITORING, [
+				'UptimeRobot'
+			]),
 			// SECURITY_SCANNER
-			'shodan'      => $mk('shodan',      BotCategory::SECURITY_SCANNER,    ['Shodan'],            BotAction::LOG_ONLY),
+			'shodan' => $mk('shodan', BotCategory::SECURITY_SCANNER, [
+				'Shodan'
+			], BotAction::LOG_ONLY),
 			// RESIDENTIAL_PROXY
-			'brightdata'  => $mk('brightdata',  BotCategory::RESIDENTIAL_PROXY,   ['BrightData'],        BotAction::BLOCK),
+			'brightdata' => $mk('brightdata', BotCategory::RESIDENTIAL_PROXY, [
+				'BrightData'
+			], BotAction::BLOCK),
 			// UNKNOWN / MALICIOUS (rare in real registries but valid)
-			'unknown_bot' => $mk('unknown_bot', BotCategory::UNKNOWN,             ['MysteryBot']),
+			'unknown_bot' => $mk('unknown_bot', BotCategory::UNKNOWN, [
+				'MysteryBot'
+			])
 		];
 	}
 
@@ -121,31 +141,19 @@ final class FilteredRegistryTest extends TestCase
 	// ============================================================
 	// 1. Default behavior (no filters)
 	// ============================================================
-
 	public function test_no_filters_passes_all_bots_through(): void
 	{
 		$inner = $this->make_inner();
 		$filtered = new FilteredRegistry($inner);
 
-		$this->assertSame($inner->count(), $filtered->count(),
-			'With no filters, count() must match inner count exactly');
-		$this->assertSame(
-			sortAndKey($inner->all()),
-			sortAndKey($filtered->all()),
-			'With no filters, all() must return the same bot set as inner'
-		);
+		$this->assertSame($inner->count(), $filtered->count(), 'With no filters, count() must match inner count exactly');
+		$this->assertSame(sortAndKey($inner->all()), sortAndKey($filtered->all()), 'With no filters, all() must return the same bot set as inner');
 	}
 
 	public function test_empty_filter_arrays_are_inert(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			keep_bots: [],
-			exclude_bots: [],
-			include_categories: null,
-			exclude_categories: [],
-		);
+		$filtered = new FilteredRegistry($inner, keep_bots: [], exclude_bots: [], include_categories: null, exclude_categories: []);
 
 		$this->assertSame($inner->count(), $filtered->count());
 	}
@@ -153,41 +161,40 @@ final class FilteredRegistryTest extends TestCase
 	// ============================================================
 	// 2. Keep-list (whitelist)
 	// ============================================================
-
 	public function test_keep_list_keeps_only_specified_bots(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			keep_bots: ['googlebot', 'bingbot'],
-		);
+		$filtered = new FilteredRegistry($inner, keep_bots: [
+			'googlebot',
+			'bingbot'
+		]);
 
 		$this->assertCount(2, $filtered->all());
 		$this->assertTrue($filtered->has('googlebot'));
 		$this->assertTrue($filtered->has('bingbot'));
-		$this->assertFalse($filtered->has('gptbot'),
-			'Bots not in keep_bots must be dropped, regardless of category');
+		$this->assertFalse($filtered->has('gptbot'), 'Bots not in keep_bots must be dropped, regardless of category');
 		$this->assertFalse($filtered->has('facebook'));
 	}
 
 	public function test_keep_list_is_strict_inclusion_only(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry($inner, keep_bots: ['googlebot']);
+		$filtered = new FilteredRegistry($inner, keep_bots: [
+			'googlebot'
+		]);
 
 		// Even bots from the same category as the keep-listed bot must be
 		// excluded — keep_bots is per-ID, not per-category.
-		$this->assertFalse($filtered->has('bingbot'),
-			'Bingbot is in SEARCH_ENGINE but NOT in keep_bots → must be filtered out');
+		$this->assertFalse($filtered->has('bingbot'), 'Bingbot is in SEARCH_ENGINE but NOT in keep_bots → must be filtered out');
 	}
 
 	public function test_keep_list_with_unknown_id_is_silently_ignored(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			keep_bots: ['googlebot', 'does_not_exist'],
-		);
+		$filtered = new FilteredRegistry($inner, keep_bots: [
+			'googlebot',
+			'does_not_exist'
+		]);
 
 		// Unknown IDs don't crash, just have no effect.
 		$this->assertCount(1, $filtered->all());
@@ -198,14 +205,13 @@ final class FilteredRegistryTest extends TestCase
 	// ============================================================
 	// 3. Exclude-list (blacklist)
 	// ============================================================
-
 	public function test_exclude_list_drops_specified_bots(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_bots: ['brightdata', 'shodan'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_bots: [
+			'brightdata',
+			'shodan'
+		]);
 
 		$this->assertFalse($filtered->has('brightdata'));
 		$this->assertFalse($filtered->has('shodan'));
@@ -217,11 +223,9 @@ final class FilteredRegistryTest extends TestCase
 	public function test_exclude_list_works_without_keep_list(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			keep_bots: [],
-			exclude_bots: ['brightdata'],
-		);
+		$filtered = new FilteredRegistry($inner, keep_bots: [], exclude_bots: [
+			'brightdata'
+		]);
 
 		$this->assertFalse($filtered->has('brightdata'));
 		$this->assertSame($inner->count() - 1, $filtered->count());
@@ -230,14 +234,13 @@ final class FilteredRegistryTest extends TestCase
 	// ============================================================
 	// 4. Category include-filter (STRICT WHITELIST)
 	// ============================================================
-
 	public function test_include_categories_keeps_only_listed_categories(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			include_categories: ['search_engine', 'ai_crawler'],
-		);
+		$filtered = new FilteredRegistry($inner, include_categories: [
+			'search_engine',
+			'ai_crawler'
+		]);
 
 		$this->assertTrue($filtered->has('googlebot'));
 		$this->assertTrue($filtered->has('bingbot'));
@@ -245,7 +248,7 @@ final class FilteredRegistryTest extends TestCase
 		$this->assertTrue($filtered->has('claude'));
 		$this->assertFalse($filtered->has('facebook'), 'social_crawler not in include list');
 		$this->assertFalse($filtered->has('semrush'), 'seo_crawler not in include list');
-		$this->assertFalse($filtered->has('shodan'),  'security_scanner not in include list');
+		$this->assertFalse($filtered->has('shodan'), 'security_scanner not in include list');
 		$this->assertCount(4, $filtered->all());
 	}
 
@@ -266,8 +269,7 @@ final class FilteredRegistryTest extends TestCase
 		$inner = $this->make_inner();
 		$filtered = new FilteredRegistry($inner, include_categories: []);
 
-		$this->assertCount(0, $filtered->all(),
-			'include_categories=[] must produce an empty registry (allowlist contains nothing)');
+		$this->assertCount(0, $filtered->all(), 'include_categories=[] must produce an empty registry (allowlist contains nothing)');
 	}
 
 	/**
@@ -285,46 +287,39 @@ final class FilteredRegistryTest extends TestCase
 		$inner = $this->make_inner();
 
 		// Only cloud_infrastructure in the whitelist
-		$filtered = new FilteredRegistry(
-			$inner,
-			include_categories: ['cloud_infrastructure'],
-		);
+		$filtered = new FilteredRegistry($inner, include_categories: [
+			'cloud_infrastructure'
+		]);
 
 		// ONLY cloud bots pass
 		$this->assertTrue($filtered->has('cloudflare_health'));
 		$this->assertTrue($filtered->has('aws_elb_health'));
-		$this->assertCount(2, $filtered->all(),
-			'Strict whitelist: only 2 cloud bots, every other bot dropped');
+		$this->assertCount(2, $filtered->all(), 'Strict whitelist: only 2 cloud bots, every other bot dropped');
 
 		// Every non-cloud bot is dropped — this is the documented semantic
-		$this->assertFalse($filtered->has('googlebot'),
-			'Strict whitelist semantic: googlebot (search_engine) DROPPED');
-		$this->assertFalse($filtered->has('gptbot'),
-			'Strict whitelist semantic: gptbot (ai_crawler) DROPPED');
-		$this->assertFalse($filtered->has('semrush'),
-			'Strict whitelist semantic: semrush (seo_crawler) DROPPED');
+		$this->assertFalse($filtered->has('googlebot'), 'Strict whitelist semantic: googlebot (search_engine) DROPPED');
+		$this->assertFalse($filtered->has('gptbot'), 'Strict whitelist semantic: gptbot (ai_crawler) DROPPED');
+		$this->assertFalse($filtered->has('semrush'), 'Strict whitelist semantic: semrush (seo_crawler) DROPPED');
 	}
 
 	// ============================================================
 	// 5. Category exclude-filter
 	// ============================================================
-
 	public function test_exclude_categories_drops_only_listed_categories(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_categories: ['seo_crawler', 'security_scanner'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_categories: [
+			'seo_crawler',
+			'security_scanner'
+		]);
 
 		$this->assertFalse($filtered->has('semrush'), 'seo_crawler → excluded');
-		$this->assertFalse($filtered->has('ahrefs'),  'seo_crawler → excluded');
-		$this->assertFalse($filtered->has('shodan'),  'security_scanner → excluded');
+		$this->assertFalse($filtered->has('ahrefs'), 'seo_crawler → excluded');
+		$this->assertFalse($filtered->has('shodan'), 'security_scanner → excluded');
 		$this->assertTrue($filtered->has('googlebot'), 'search_engine → kept');
-		$this->assertTrue($filtered->has('gptbot'),    'ai_crawler → kept');
-		$this->assertTrue($filtered->has('facebook'),  'social_crawler → kept');
-		$this->assertSame($inner->count() - 3, $filtered->count(),
-			'Three bots in the excluded categories should be dropped');
+		$this->assertTrue($filtered->has('gptbot'), 'ai_crawler → kept');
+		$this->assertTrue($filtered->has('facebook'), 'social_crawler → kept');
+		$this->assertSame($inner->count() - 3, $filtered->count(), 'Three bots in the excluded categories should be dropped');
 	}
 
 	// ============================================================
@@ -333,45 +328,42 @@ final class FilteredRegistryTest extends TestCase
 
 	/**
 	 * Filter precedence, as documented in the class docblock:
-	 *   1. keep_bots  → bot MUST be in this list
-	 *   2. exclude_bots → bot must NOT be in this list
-	 *   3. include_categories → bot's category MUST be in this list
-	 *   4. exclude_categories → bot's category must NOT be in this list
+	 * 1.
+	 * keep_bots → bot MUST be in this list
+	 * 2. exclude_bots → bot must NOT be in this list
+	 * 3. include_categories → bot's category MUST be in this list
+	 * 4. exclude_categories → bot's category must NOT be in this list
 	 *
 	 * These tests prove each ordering rule individually.
 	 */
-
 	public function test_keep_list_overrides_exclude_list_with_same_id(): void
 	{
 		// keep_bots runs FIRST, so it gates everything else.
 		// If 'brightdata' is in keep_bots but also in exclude_bots,
 		// keep_bots lets it through and exclude_bots never gets to drop it.
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			keep_bots: ['brightdata'],
-			exclude_bots: ['brightdata'],
-		);
+		$filtered = new FilteredRegistry($inner, keep_bots: [
+			'brightdata'
+		], exclude_bots: [
+			'brightdata'
+		]);
 
-		$this->assertTrue($filtered->has('brightdata'),
-			'keep_bots runs first → bot passes through even if also in exclude_bots');
+		$this->assertTrue($filtered->has('brightdata'), 'keep_bots runs first → bot passes through even if also in exclude_bots');
 	}
 
 	public function test_exclude_list_overrides_category_include(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_bots: ['googlebot'],
-			include_categories: ['search_engine'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_bots: [
+			'googlebot'
+		], include_categories: [
+			'search_engine'
+		]);
 
 		// googlebot passes category include (SEARCH_ENGINE ∈ include list)
 		// but is then dropped by exclude_bots.
-		$this->assertFalse($filtered->has('googlebot'),
-			'exclude_bots runs before category include → bot must be dropped');
-		$this->assertTrue($filtered->has('bingbot'),
-			'Other SEARCH_ENGINE bot must pass');
+		$this->assertFalse($filtered->has('googlebot'), 'exclude_bots runs before category include → bot must be dropped');
+		$this->assertTrue($filtered->has('bingbot'), 'Other SEARCH_ENGINE bot must pass');
 	}
 
 	public function test_category_exclude_overrides_category_include(): void
@@ -380,33 +372,32 @@ final class FilteredRegistryTest extends TestCase
 		// Both run; exclude wins because dropping is safer than keeping for
 		// misconfigured policies.
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			include_categories: ['search_engine', 'ai_crawler', 'seo_crawler'],
-			exclude_categories: ['seo_crawler'],
-		);
+		$filtered = new FilteredRegistry($inner, include_categories: [
+			'search_engine',
+			'ai_crawler',
+			'seo_crawler'
+		], exclude_categories: [
+			'seo_crawler'
+		]);
 
 		$this->assertTrue($filtered->has('googlebot'), 'search_engine → kept');
-		$this->assertTrue($filtered->has('gptbot'),    'ai_crawler → kept');
-		$this->assertFalse($filtered->has('semrush'),  'seo_crawler in both → exclude wins');
-		$this->assertFalse($filtered->has('ahrefs'),   'seo_crawler in both → exclude wins');
+		$this->assertTrue($filtered->has('gptbot'), 'ai_crawler → kept');
+		$this->assertFalse($filtered->has('semrush'), 'seo_crawler in both → exclude wins');
+		$this->assertFalse($filtered->has('ahrefs'), 'seo_crawler in both → exclude wins');
 	}
 
 	// ============================================================
 	// 7. Per-category accessors
 	// ============================================================
-
 	public function test_per_category_accessors_apply_filters(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_bots: ['semrush'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_bots: [
+			'semrush'
+		]);
 
 		// ai_crawlers() should drop semrush... no, semrush is seo_crawler.
-		$this->assertCount(2, $filtered->ai_crawlers(),
-			'ai_crawlers() reflects the filter — semrush is not in AI, so this is unaffected');
+		$this->assertCount(2, $filtered->ai_crawlers(), 'ai_crawlers() reflects the filter — semrush is not in AI, so this is unaffected');
 
 		// seo_crawlers() should drop semrush.
 		$seo = $filtered->seo_crawlers();
@@ -418,26 +409,22 @@ final class FilteredRegistryTest extends TestCase
 	public function test_per_category_accessors_with_category_filter(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_categories: ['seo_crawler', 'security_scanner'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_categories: [
+			'seo_crawler',
+			'security_scanner'
+		]);
 
-		$this->assertSame([], $filtered->seo_crawlers(),
-			'seo_crawlers() must return empty when category is excluded');
-		$this->assertSame([], $filtered->security_scanners(),
-			'security_scanners() must return empty when category is excluded');
-		$this->assertNotEmpty($filtered->ai_crawlers(),
-			'ai_crawlers() is unaffected by seo/security exclusion');
+		$this->assertSame([], $filtered->seo_crawlers(), 'seo_crawlers() must return empty when category is excluded');
+		$this->assertSame([], $filtered->security_scanners(), 'security_scanners() must return empty when category is excluded');
+		$this->assertNotEmpty($filtered->ai_crawlers(), 'ai_crawlers() is unaffected by seo/security exclusion');
 	}
 
 	public function test_per_category_accessors_with_keep_list(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			keep_bots: ['googlebot'],
-		);
+		$filtered = new FilteredRegistry($inner, keep_bots: [
+			'googlebot'
+		]);
 
 		// googlebot is in SEARCH_ENGINE — that category returns 1 bot.
 		$this->assertCount(1, $filtered->search_engines());
@@ -450,10 +437,9 @@ final class FilteredRegistryTest extends TestCase
 	public function test_per_category_accessors_with_strict_include_whitelist(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			include_categories: ['search_engine'],
-		);
+		$filtered = new FilteredRegistry($inner, include_categories: [
+			'search_engine'
+		]);
 
 		// search_engines() returns the 2 search engine bots
 		$this->assertCount(2, $filtered->search_engines());
@@ -468,14 +454,13 @@ final class FilteredRegistryTest extends TestCase
 	// ============================================================
 	// 8. find_by_ua / find_by_tokens are filter-aware
 	// ============================================================
-
 	public function test_find_by_ua_respects_filters(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_bots: ['gptbot', 'claude'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_bots: [
+			'gptbot',
+			'claude'
+		]);
 
 		// UA 'GPTBot/1.0' would normally match both gptbot and claude
 		// (token overlap), but with exclude_bots the filtered registry
@@ -483,17 +468,15 @@ final class FilteredRegistryTest extends TestCase
 		$matches = $filtered->find_by_ua('GPTBot/1.0 (compatible)');
 
 		$this->assertNotContains('gptbot', $matches);
-		$this->assertNotContains('claude', $matches,
-			'Excluded bots must be absent from find_by_ua results');
+		$this->assertNotContains('claude', $matches, 'Excluded bots must be absent from find_by_ua results');
 	}
 
 	public function test_find_by_tokens_respects_filters(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_categories: ['ai_crawler'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_categories: [
+			'ai_crawler'
+		]);
 
 		$matches = $filtered->find_by_tokens('GPTBot/2.0 (compatible)');
 
@@ -504,62 +487,55 @@ final class FilteredRegistryTest extends TestCase
 	public function test_find_by_ua_respects_strict_whitelist(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			include_categories: ['cloud_infrastructure'],
-		);
+		$filtered = new FilteredRegistry($inner, include_categories: [
+			'cloud_infrastructure'
+		]);
 
 		// UA matching googlebot/facebook should return NOTHING because
 		// those bots are filtered out by the strict whitelist
 		$matches = $filtered->find_by_ua('Mozilla/5.0 (compatible; Googlebot/2.1)');
-		$this->assertEmpty($matches,
-			'Strict whitelist: find_by_ua returns nothing for non-whitelisted bots');
+		$this->assertEmpty($matches, 'Strict whitelist: find_by_ua returns nothing for non-whitelisted bots');
 
 		// UA matching cloudflare_health should return it
 		$matches = $filtered->find_by_ua('Cloudflare-Healthcheck/1.0');
-		$this->assertContains('cloudflare_health', $matches,
-			'Strict whitelist: find_by_ua returns whitelisted bots');
+		$this->assertContains('cloudflare_health', $matches, 'Strict whitelist: find_by_ua returns whitelisted bots');
 	}
 
 	// ============================================================
 	// 9. has() / get() filter-aware
 	// ============================================================
-
 	public function test_has_returns_false_for_filtered_out_bots(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_bots: ['brightdata'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_bots: [
+			'brightdata'
+		]);
 
-		$this->assertTrue($inner->has('brightdata'),
-			'Sanity: inner registry still has brightdata');
-		$this->assertFalse($filtered->has('brightdata'),
-			'Filtered registry must NOT report filtered-out bots');
+		$this->assertTrue($inner->has('brightdata'), 'Sanity: inner registry still has brightdata');
+		$this->assertFalse($filtered->has('brightdata'), 'Filtered registry must NOT report filtered-out bots');
 	}
 
 	public function test_get_returns_null_for_filtered_out_bots(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_bots: ['brightdata'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_bots: [
+			'brightdata'
+		]);
 
 		$this->assertNotNull($inner->get('brightdata'));
-		$this->assertNull($filtered->get('brightdata'),
-			'Filtered registry must return null for filtered-out bots');
+		$this->assertNull($filtered->get('brightdata'), 'Filtered registry must return null for filtered-out bots');
 	}
 
 	// ============================================================
 	// 10. Static factories
 	// ============================================================
-
 	public function test_by_bot_ids_factory_creates_keep_list_filter(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = FilteredRegistry::by_bot_ids($inner, keep: ['gptbot', 'claude']);
+		$filtered = FilteredRegistry::by_bot_ids($inner, keep: [
+			'gptbot',
+			'claude'
+		]);
 
 		$this->assertCount(2, $filtered->all());
 		$this->assertTrue($filtered->has('gptbot'));
@@ -569,7 +545,10 @@ final class FilteredRegistryTest extends TestCase
 	public function test_by_bot_ids_factory_creates_exclude_list_filter(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = FilteredRegistry::by_bot_ids($inner, exclude: ['brightdata', 'shodan']);
+		$filtered = FilteredRegistry::by_bot_ids($inner, exclude: [
+			'brightdata',
+			'shodan'
+		]);
 
 		$this->assertFalse($filtered->has('brightdata'));
 		$this->assertFalse($filtered->has('shodan'));
@@ -579,7 +558,9 @@ final class FilteredRegistryTest extends TestCase
 	public function test_by_category_factory_creates_category_filter(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = FilteredRegistry::by_category($inner, include: ['ai_crawler']);
+		$filtered = FilteredRegistry::by_category($inner, include: [
+			'ai_crawler'
+		]);
 
 		$this->assertCount(2, $filtered->all());
 		$this->assertTrue($filtered->has('gptbot'));
@@ -589,62 +570,55 @@ final class FilteredRegistryTest extends TestCase
 	public function test_by_category_factory_with_exclude_only(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = FilteredRegistry::by_category($inner, exclude: ['seo_crawler']);
+		$filtered = FilteredRegistry::by_category($inner, exclude: [
+			'seo_crawler'
+		]);
 
 		$this->assertFalse($filtered->has('semrush'));
 		$this->assertFalse($filtered->has('ahrefs'));
-		$this->assertTrue($filtered->has('googlebot'),
-			'Other categories unaffected by category exclude');
+		$this->assertTrue($filtered->has('googlebot'), 'Other categories unaffected by category exclude');
 	}
 
 	// ============================================================
 	// 11. inner-registry accessor (diagnostics)
 	// ============================================================
-
 	public function test_get_inner_returns_the_wrapped_registry(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry($inner, exclude_bots: ['brightdata']);
+		$filtered = new FilteredRegistry($inner, exclude_bots: [
+			'brightdata'
+		]);
 
-		$this->assertSame($inner, $filtered->get_inner(),
-			'get_inner() must return the exact wrapped registry instance');
+		$this->assertSame($inner, $filtered->get_inner(), 'get_inner() must return the exact wrapped registry instance');
 	}
 
 	// ============================================================
 	// 12. Integration: Real DefaultRegistry survives filter
 	// ============================================================
-
 	public function test_real_default_registry_excludes_categories_correctly(): void
 	{
 		$default = new DefaultRegistry();
 		$seo_count = count($default->seo_crawlers());
 
 		// Sanity precondition
-		$this->assertGreaterThan(0, $seo_count,
-			'DefaultRegistry should ship with multiple SEO crawlers');
+		$this->assertGreaterThan(0, $seo_count, 'DefaultRegistry should ship with multiple SEO crawlers');
 
-		$filtered = new FilteredRegistry(
-			$default,
-			exclude_categories: ['seo_crawler'],
-		);
+		$filtered = new FilteredRegistry($default, exclude_categories: [
+			'seo_crawler'
+		]);
 
-		$this->assertSame(0, count($filtered->seo_crawlers()),
-			'Filtered SEO crawlers must be empty');
-		$this->assertSame(
-			$default->count() - $seo_count,
-			$filtered->count(),
-			'Filtered total = total - seo_crawlers count'
-		);
+		$this->assertSame(0, count($filtered->seo_crawlers()), 'Filtered SEO crawlers must be empty');
+		$this->assertSame($default->count() - $seo_count, $filtered->count(), 'Filtered total = total - seo_crawlers count');
 	}
 
 	public function test_filtering_empty_registry_is_safe(): void
 	{
 		$empty = new EmptyRegistry();
-		$filtered = new FilteredRegistry(
-			$empty,
-			exclude_bots: ['anything'],
-			exclude_categories: ['any_category'],
-		);
+		$filtered = new FilteredRegistry($empty, exclude_bots: [
+			'anything'
+		], exclude_categories: [
+			'any_category'
+		]);
 
 		$this->assertCount(0, $filtered->all());
 		$this->assertSame(0, $filtered->count());
@@ -656,20 +630,17 @@ final class FilteredRegistryTest extends TestCase
 	// ============================================================
 	// 13. Determinism / caching of filtered results
 	// ============================================================
-
 	public function test_all_returns_same_array_on_repeated_calls(): void
 	{
 		$inner = $this->make_inner();
-		$filtered = new FilteredRegistry(
-			$inner,
-			exclude_bots: ['brightdata'],
-		);
+		$filtered = new FilteredRegistry($inner, exclude_bots: [
+			'brightdata'
+		]);
 
 		$first = $filtered->all();
 		$second = $filtered->all();
 
-		$this->assertSame(sortAndKey($first), sortAndKey($second),
-			'all() must be deterministic across calls (internal cache is stable)');
+		$this->assertSame(sortAndKey($first), sortAndKey($second), 'all() must be deterministic across calls (internal cache is stable)');
 	}
 
 	// ============================================================
@@ -680,7 +651,7 @@ final class FilteredRegistryTest extends TestCase
 	 * Documents the failure mode that motivated the RegistryFactory change.
 	 *
 	 * The shipped config/bb_registry.php used:
-	 *   include_categories => ['cloud_infrastructure']
+	 * include_categories => ['cloud_infrastructure']
 	 * expecting a "safety net" that ADDED cloud bots to whatever the
 	 * preset selected. But FilteredRegistry's include_categories is a
 	 * STRICT WHITELIST — it DROPS every bot not in the list.
@@ -700,17 +671,14 @@ final class FilteredRegistryTest extends TestCase
 		$default = new DefaultRegistry();
 		$real_count = $default->count();
 
-		$filtered = new FilteredRegistry(
-			$default,
-			include_categories: ['cloud_infrastructure'],
-		);
+		$filtered = new FilteredRegistry($default, include_categories: [
+			'cloud_infrastructure'
+		]);
 
 		// Direct use of FilteredRegistry with include_categories is the
 		// footgun pattern. Registry count drops to ~5 (cloud only).
-		$this->assertLessThan(10, $filtered->count(),
-			'Direct FilteredRegistry with include_categories=[cloud_infra] yields ~5 bots (footgun)');
-		$this->assertGreaterThan($filtered->count(), $real_count,
-			'Inner registry has many more bots than the filtered strict whitelist');
+		$this->assertLessThan(10, $filtered->count(), 'Direct FilteredRegistry with include_categories=[cloud_infra] yields ~5 bots (footgun)');
+		$this->assertGreaterThan($filtered->count(), $real_count, 'Inner registry has many more bots than the filtered strict whitelist');
 	}
 }
 
@@ -718,7 +686,8 @@ final class FilteredRegistryTest extends TestCase
  * Helper: produce a canonical (sorted) form of an array-of-definitions
  * suitable for value comparison with assertSame().
  *
- * @param array<string, BotDefinition> $bots
+ * @param
+ *        	array<string, BotDefinition> $bots
  * @return array<string, true>
  */
 function sortAndKey(array $bots): array

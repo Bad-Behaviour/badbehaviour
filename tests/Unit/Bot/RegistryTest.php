@@ -1,7 +1,5 @@
 <?php
-
-declare(strict_types=1);
-
+declare(strict_types = 1);
 namespace BadBehaviour\Tests\Unit\Bot;
 
 use BadBehaviour\Bot\Registry\DefaultRegistry;
@@ -20,6 +18,7 @@ use PHPUnit\Framework\TestCase;
  */
 class RegistryTest extends TestCase
 {
+
 	private RegistryInterface $registry;
 
 	protected function setUp(): void
@@ -33,7 +32,6 @@ class RegistryTest extends TestCase
 	// ========================================================================
 	// Coverage invariants
 	// ========================================================================
-
 	public function test_all_returns_all_categories(): void
 	{
 		$all = $this->registry->all();
@@ -41,7 +39,7 @@ class RegistryTest extends TestCase
 		$this->assertIsArray($all);
 		$this->assertGreaterThan(50, count($all), 'Should have 50+ bots after 3.1 expansion');
 
-		$categories = array_map(fn($bot) => $bot->category, $all);
+		$categories = array_map(fn ($bot) => $bot->category, $all);
 
 		// Original categories
 		$this->assertContains(BotCategory::SEARCH_ENGINE, $categories);
@@ -144,8 +142,7 @@ class RegistryTest extends TestCase
 		$this->assertArrayHasKey('diffbot', $crawlers);
 
 		// Note: brightdata moved to residential_crawlers() — see separate test.
-		$this->assertArrayNotHasKey('brightdata', $crawlers,
-			'brightdata must NOT be in ai_crawlers() after migration to RESIDENTIAL_PROXY');
+		$this->assertArrayNotHasKey('brightdata', $crawlers, 'brightdata must NOT be in ai_crawlers() after migration to RESIDENTIAL_PROXY');
 	}
 
 	public function test_social_crawlers_include_asian_platforms(): void
@@ -202,11 +199,13 @@ class RegistryTest extends TestCase
 
 			// Cloud bots rely on either static OR dynamic IP ranges.
 			// AWS/Azure ranges are dynamic (service-tag based); CF/Fastly/GCP have static fallbacks.
-			$has_static = !empty($bot->ip_ranges);
-			$is_dynamic_provider = in_array($bot->id, ['aws_elb_health', 'azure_health'], true);
+			$has_static = ! empty($bot->ip_ranges);
+			$is_dynamic_provider = in_array($bot->id, [
+				'aws_elb_health',
+				'azure_health'
+			], true);
 
-			$this->assertTrue($has_static || $is_dynamic_provider,
-				"Cloud bot {$bot->id} must have static IP ranges OR be a known dynamic provider");
+			$this->assertTrue($has_static || $is_dynamic_provider, "Cloud bot {$bot->id} must have static IP ranges OR be a known dynamic provider");
 		}
 	}
 
@@ -250,8 +249,7 @@ class RegistryTest extends TestCase
 	{
 		$valid_actions = array_column(BotAction::cases(), 'value');
 		foreach ($this->registry->all() as $bot) {
-			$this->assertContains($bot->default_action->value, $valid_actions,
-				"Bot {$bot->id} has invalid action");
+			$this->assertContains($bot->default_action->value, $valid_actions, "Bot {$bot->id} has invalid action");
 		}
 	}
 
@@ -259,8 +257,7 @@ class RegistryTest extends TestCase
 	{
 		$valid_categories = array_column(BotCategory::cases(), 'value');
 		foreach ($this->registry->all() as $bot) {
-			$this->assertContains($bot->category->value, $valid_categories,
-				"Bot {$bot->id} has invalid category {$bot->category->value}");
+			$this->assertContains($bot->category->value, $valid_categories, "Bot {$bot->id} has invalid category {$bot->category->value}");
 		}
 	}
 
@@ -269,8 +266,7 @@ class RegistryTest extends TestCase
 		// brightdata migrated from ai_crawlers() to residential_crawlers()
 		// because residential proxy networks deserve a distinct category.
 		$this->assertArrayHasKey('brightdata', $this->registry->residential_crawlers());
-		$this->assertArrayNotHasKey('brightdata', $this->registry->ai_crawlers(),
-			'brightdata must NOT be in ai_crawlers() after migration to RESIDENTIAL_PROXY');
+		$this->assertArrayNotHasKey('brightdata', $this->registry->ai_crawlers(), 'brightdata must NOT be in ai_crawlers() after migration to RESIDENTIAL_PROXY');
 	}
 
 	public function test_residential_crawler_default_action_is_block(): void
@@ -278,8 +274,7 @@ class RegistryTest extends TestCase
 		$residential = $this->registry->residential_crawlers();
 		foreach ($residential as $bot) {
 			$this->assertEquals(BotCategory::RESIDENTIAL_PROXY, $bot->category);
-			$this->assertEquals(BotAction::BLOCK, $bot->default_action,
-				"Residential crawler {$bot->id} must default to BLOCK");
+			$this->assertEquals(BotAction::BLOCK, $bot->default_action, "Residential crawler {$bot->id} must default to BLOCK");
 		}
 	}
 
@@ -292,10 +287,7 @@ class RegistryTest extends TestCase
 	public function test_fossies_in_archive_crawlers(): void
 	{
 		$archives = $this->registry->archive_crawlers();
-		$this->assertArrayHasKey('fossies', $archives,
-			'FOSSies belongs in archive_crawlers — pioneering FOSS archive '
-			. '(DLR/T-Systems SfR lineage), preservation-oriented like UKWA/BnF/DNB, '
-			. 'not a commercial search engine.');
+		$this->assertArrayHasKey('fossies', $archives, 'FOSSies belongs in archive_crawlers — pioneering FOSS archive ' . '(DLR/T-Systems SfR lineage), preservation-oriented like UKWA/BnF/DNB, ' . 'not a commercial search engine.');
 		$this->assertArrayNotHasKey('fossies', $this->registry->search_engines());
 		$this->assertEquals(BotCategory::ARCHIVE_CRAWLER, $archives['fossies']->category);
 	}
@@ -303,7 +295,6 @@ class RegistryTest extends TestCase
 	// ========================================================================
 	// New tests for RegistryInterface contract
 	// ========================================================================
-
 	public function test_registry_factory_default_returns_default_registry(): void
 	{
 		$reg = RegistryFactory::default();

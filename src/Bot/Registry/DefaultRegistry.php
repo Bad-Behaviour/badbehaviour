@@ -288,7 +288,6 @@ class DefaultRegistry implements RegistryInterface
 				dns_suffixes: ['gae.googleusercontent.com', 'google-proxy'],
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'Googlebot',
-				default_action: BotAction::ALLOW,
 				description: 'Google Translate, PageSpeed, Site Verifier, etc. Ignores robots.txt. Static ranges are major GCP blocks; feeds provide full precision.',
 			),
 			'google_user_triggered_agents' => new BotDefinition(
@@ -310,7 +309,6 @@ class DefaultRegistry implements RegistryInterface
 				dns_suffixes: [],
 				category: BotCategory::SEARCH_ENGINE,
 				robots_txt_token: 'Googlebot',
-				default_action: BotAction::ALLOW,
 			),
 			'bingbot' => new BotDefinition(
 				id: 'bingbot',

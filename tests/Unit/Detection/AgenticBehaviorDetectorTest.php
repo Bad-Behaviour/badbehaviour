@@ -1,6 +1,5 @@
 <?php
 // tests/Unit/Detection/AgenticBehaviorDetectorTest.php
-
 namespace BadBehaviour\Tests\Unit\Detection;
 
 use BadBehaviour\Detection\AgenticBehaviorDetector;
@@ -12,177 +11,263 @@ use PHPUnit\Framework\TestCase;
 
 class AgenticBehaviorDetectorTest extends TestCase
 {
-    private AgenticBehaviorDetector $detector;
-    private Configuration $config;
-    private AdapterInterface $adapter;
 
-    protected function setUp(): void
-    {
-        $this->adapter = $this->createMock(AdapterInterface::class);
-        $this->config = Configuration::from_array([
-            'enable_agentic_detection' => true,
-        ], new \BadBehaviour\Adapter\GenericAdapter());
+	private AgenticBehaviorDetector $detector;
 
-        $this->detector = new AgenticBehaviorDetector($this->config, $this->adapter);
-    }
+	private Configuration $config;
 
-    public function test_disabled_returns_null(): void
-    {
-        $config = Configuration::from_array([
-            'enable_agentic_detection' => false,
-        ], new \BadBehaviour\Adapter\GenericAdapter());
+	private AdapterInterface $adapter;
 
-        $detector = new AgenticBehaviorDetector($config, $this->adapter);
-        $package = $this->createPackage();
+	protected function setUp(): void
+	{
+		$this->adapter = $this->createMock(AdapterInterface::class);
+		$this->config = Configuration::from_array([
+			'enable_agentic_detection' => true
+		], new \BadBehaviour\Adapter\GenericAdapter());
 
-        $this->assertNull($detector->detect($package));
-    }
+		$this->detector = new AgenticBehaviorDetector($this->config, $this->adapter);
+	}
 
-    public function test_no_session_id_returns_null(): void
-    {
-        $package = $this->createPackage(session_id: null);
+	public function test_disabled_returns_null(): void
+	{
+		$config = Configuration::from_array([
+			'enable_agentic_detection' => false
+		], new \BadBehaviour\Adapter\GenericAdapter());
 
-        $this->assertNull($this->detector->detect($package));
-    }
+		$detector = new AgenticBehaviorDetector($config, $this->adapter);
+		$package = $this->createPackage();
 
-    public function test_insufficient_requests_returns_null(): void
-    {
-        $this->adapter->method('get_behavior_profile')
-            ->willReturn(['request_log' => []]);
+		$this->assertNull($detector->detect($package));
+	}
 
-        $package = $this->createPackage();
+	public function test_no_session_id_returns_null(): void
+	{
+		$package = $this->createPackage(session_id: null);
 
-        for ($i = 0; $i < 4; $i++) {
-            $result = $this->detector->detect($package);
-            $this->assertNull($result);
-        }
-    }
+		$this->assertNull($this->detector->detect($package));
+	}
 
-    public function test_think_then_fetch_detected(): void
-    {
-        $time = time();
+	public function test_insufficient_requests_returns_null(): void
+	{
+		$this->adapter->method('get_behavior_profile')->willReturn([
+			'request_log' => []
+		]);
 
-        $requests = [
-            ['time' => $time - 20, 'uri' => '/page1', 'method' => 'GET', 'assets' => false],
-            ['time' => $time - 5, 'uri' => '/style.css', 'method' => 'GET', 'assets' => true],
-            ['time' => $time - 4, 'uri' => '/script.js', 'method' => 'GET', 'assets' => true],
-            ['time' => $time - 3, 'uri' => '/font.woff2', 'method' => 'GET', 'assets' => true],
-            ['time' => $time - 2, 'uri' => '/image.png', 'method' => 'GET', 'assets' => true],
-            ['time' => $time - 1, 'uri' => '/api/data.json', 'method' => 'GET', 'assets' => true],
-        ];
+		$package = $this->createPackage();
 
-        $this->adapter->method('get_behavior_profile')
-            ->with('test-session')
-            ->willReturn(['request_log' => $requests]);
-        $this->adapter->method('save_behavior_profile')
-            ->willReturn(true);
+		for ($i = 0; $i < 4; $i ++) {
+			$result = $this->detector->detect($package);
+			$this->assertNull($result);
+		}
+	}
 
-        $package = $this->createPackage();
-        $result = $this->detector->detect($package);
+	public function test_think_then_fetch_detected(): void
+	{
+		$time = time();
 
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertStringContainsString('think-then-fetch', $result->message);
-    }
+		$requests = [
+			[
+				'time' => $time - 20,
+				'uri' => '/page1',
+				'method' => 'GET',
+				'assets' => false
+			],
+			[
+				'time' => $time - 5,
+				'uri' => '/style.css',
+				'method' => 'GET',
+				'assets' => true
+			],
+			[
+				'time' => $time - 4,
+				'uri' => '/script.js',
+				'method' => 'GET',
+				'assets' => true
+			],
+			[
+				'time' => $time - 3,
+				'uri' => '/font.woff2',
+				'method' => 'GET',
+				'assets' => true
+			],
+			[
+				'time' => $time - 2,
+				'uri' => '/image.png',
+				'method' => 'GET',
+				'assets' => true
+			],
+			[
+				'time' => $time - 1,
+				'uri' => '/api/data.json',
+				'method' => 'GET',
+				'assets' => true
+			]
+		];
 
-    public function test_non_linear_navigation_detected(): void
-    {
-        $requests = [];
-        $paths = ['/blog/', '/shop/', '/admin/', '/api/', '/user/', '/settings/', '/help/', '/about/'];
-        $time = time();
+		$this->adapter->method('get_behavior_profile')
+			->with('test-session')
+			->willReturn([
+			'request_log' => $requests
+		]);
+		$this->adapter->method('save_behavior_profile')->willReturn(true);
 
-        foreach ($paths as $i => $path) {
-            $requests[] = [
-                'time' => $time - (10 - $i),
-                'uri' => $path . 'page',
-                'method' => 'GET',
-                'assets' => false,
-            ];
-        }
+		$package = $this->createPackage();
+		$result = $this->detector->detect($package);
 
-        $this->adapter->method('get_behavior_profile')
-            ->with('test-session')
-            ->willReturn(['request_log' => $requests]);
-        $this->adapter->method('save_behavior_profile')
-            ->willReturn(true);
+		$this->assertNotNull($result);
+		$this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
+		$this->assertStringContainsString('think-then-fetch', $result->message);
+	}
 
-        $package = $this->createPackage();
-        $result = $this->detector->detect($package);
+	public function test_non_linear_navigation_detected(): void
+	{
+		$requests = [];
+		$paths = [
+			'/blog/',
+			'/shop/',
+			'/admin/',
+			'/api/',
+			'/user/',
+			'/settings/',
+			'/help/',
+			'/about/'
+		];
+		$time = time();
 
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertStringContainsString('non-linear', $result->message);
-    }
+		foreach ($paths as $i => $path) {
+			$requests[] = [
+				'time' => $time - (10 - $i),
+				'uri' => $path . 'page',
+				'method' => 'GET',
+				'assets' => false
+			];
+		}
 
-    public function test_precision_targeting_detected(): void
-    {
-        $requests = [];
-        $time = time();
+		$this->adapter->method('get_behavior_profile')
+			->with('test-session')
+			->willReturn([
+			'request_log' => $requests
+		]);
+		$this->adapter->method('save_behavior_profile')->willReturn(true);
 
-        // 20 API calls + 1 CSS = 21 total
-        // css_ratio = 1/21 ≈ 0.048 < 0.05 ✓
-        for ($i = 0; $i < 20; $i++) {
-        	$requests[] = [
-        		'time' => $time - $i,
-        		'uri' => '/api/v1/data' . $i . '.json',
-        		'method' => 'GET',
-        		'assets' => false,
-        	];
-        }
+		$package = $this->createPackage();
+		$result = $this->detector->detect($package);
 
-        // 1 CSS, 0 fonts, 0 tracking
-        $requests[] = ['time' => $time - 20, 'uri' => '/style.css', 'method' => 'GET', 'assets' => true];
+		$this->assertNotNull($result);
+		$this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
+		$this->assertStringContainsString('non-linear', $result->message);
+	}
 
-        $this->adapter->method('get_behavior_profile')
-            ->with('test-session')
-            ->willReturn(['request_log' => $requests]);
-        $this->adapter->method('save_behavior_profile')
-            ->willReturn(true);
+	public function test_precision_targeting_detected(): void
+	{
+		$requests = [];
+		$time = time();
 
-        $package = $this->createPackage();
-        $result = $this->detector->detect($package);
+		// 20 API calls + 1 CSS = 21 total
+		// css_ratio = 1/21 ≈ 0.048 < 0.05 ✓
+		for ($i = 0; $i < 20; $i ++) {
+			$requests[] = [
+				'time' => $time - $i,
+				'uri' => '/api/v1/data' . $i . '.json',
+				'method' => 'GET',
+				'assets' => false
+			];
+		}
 
-        $this->assertNotNull($result);
-        $this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
-        $this->assertStringContainsString('precision', $result->message);
-    }
+		// 1 CSS, 0 fonts, 0 tracking
+		$requests[] = [
+			'time' => $time - 20,
+			'uri' => '/style.css',
+			'method' => 'GET',
+			'assets' => true
+		];
 
-    public function test_normal_browsing_allowed(): void
-    {
-        $requests = [];
-        $time = time();
+		$this->adapter->method('get_behavior_profile')
+			->with('test-session')
+			->willReturn([
+			'request_log' => $requests
+		]);
+		$this->adapter->method('save_behavior_profile')->willReturn(true);
 
-        $requests[] = ['time' => $time - 10, 'uri' => '/page', 'method' => 'GET', 'assets' => false];
-        $requests[] = ['time' => $time - 9, 'uri' => '/style.css', 'method' => 'GET', 'assets' => true];
-        $requests[] = ['time' => $time - 8, 'uri' => '/script.js', 'method' => 'GET', 'assets' => true];
-        $requests[] = ['time' => $time - 7, 'uri' => '/font.woff2', 'method' => 'GET', 'assets' => true];
-        $requests[] = ['time' => $time - 6, 'uri' => '/image.png', 'method' => 'GET', 'assets' => true];
-        $requests[] = ['time' => $time - 5, 'uri' => '/api/data.json', 'method' => 'GET', 'assets' => false];
-        $requests[] = ['time' => $time - 4, 'uri' => '/page2', 'method' => 'GET', 'assets' => false];
-        $requests[] = ['time' => $time - 3, 'uri' => '/style2.css', 'method' => 'GET', 'assets' => true];
+		$package = $this->createPackage();
+		$result = $this->detector->detect($package);
 
-        $this->adapter->method('get_behavior_profile')
-            ->with('test-session')
-            ->willReturn(['request_log' => $requests]);
-        $this->adapter->method('save_behavior_profile')
-            ->willReturn(true);
+		$this->assertNotNull($result);
+		$this->assertEquals(ResultCode::BLOCKED_BEHAVIORAL, $result->code);
+		$this->assertStringContainsString('precision', $result->message);
+	}
 
-        $package = $this->createPackage();
-        $result = $this->detector->detect($package);
+	public function test_normal_browsing_allowed(): void
+	{
+		$requests = [];
+		$time = time();
 
-        $this->assertNull($result);
-    }
+		$requests[] = [
+			'time' => $time - 10,
+			'uri' => '/page',
+			'method' => 'GET',
+			'assets' => false
+		];
+		$requests[] = [
+			'time' => $time - 9,
+			'uri' => '/style.css',
+			'method' => 'GET',
+			'assets' => true
+		];
+		$requests[] = [
+			'time' => $time - 8,
+			'uri' => '/script.js',
+			'method' => 'GET',
+			'assets' => true
+		];
+		$requests[] = [
+			'time' => $time - 7,
+			'uri' => '/font.woff2',
+			'method' => 'GET',
+			'assets' => true
+		];
+		$requests[] = [
+			'time' => $time - 6,
+			'uri' => '/image.png',
+			'method' => 'GET',
+			'assets' => true
+		];
+		$requests[] = [
+			'time' => $time - 5,
+			'uri' => '/api/data.json',
+			'method' => 'GET',
+			'assets' => false
+		];
+		$requests[] = [
+			'time' => $time - 4,
+			'uri' => '/page2',
+			'method' => 'GET',
+			'assets' => false
+		];
+		$requests[] = [
+			'time' => $time - 3,
+			'uri' => '/style2.css',
+			'method' => 'GET',
+			'assets' => true
+		];
 
-    private function createPackage(?string $session_id = 'test-session'): RequestPackage
-    {
-        return RequestPackage::create_for_test(
-            'Mozilla/5.0 Chrome/120',
-            '192.0.2.1',
-            'GET',
-            '/',
-            ['Host' => 'example.com'],
-            [],
-            $session_id
-        );
-    }
+		$this->adapter->method('get_behavior_profile')
+			->with('test-session')
+			->willReturn([
+			'request_log' => $requests
+		]);
+		$this->adapter->method('save_behavior_profile')->willReturn(true);
+
+		$package = $this->createPackage();
+		$result = $this->detector->detect($package);
+
+		$this->assertNull($result);
+	}
+
+	private function createPackage(?string $session_id = 'test-session'): RequestPackage
+	{
+		return RequestPackage::create_for_test('Mozilla/5.0 Chrome/120', '192.0.2.1', 'GET', '/', [
+			'Host' => 'example.com'
+		], [], $session_id);
+	}
 }

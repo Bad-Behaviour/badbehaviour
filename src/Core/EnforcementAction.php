@@ -17,12 +17,12 @@ namespace BadBehaviour\Core;
  */
 enum EnforcementAction: string
 {
-    /** The detection ran and the response was actually changed (403 served, etc.). */
-    case ENFORCED  = 'enforced';
+	/** The detection ran and the response was actually changed (403 served, etc.). */
+	case ENFORCED  = 'enforced';
 
-    /** A block/challenge was detected but suppressed (monitor-only mode). Request was served normally. */
-    case MONITORED = 'monitored';
+	/** A block/challenge was detected but suppressed (monitor-only mode). Request was served normally. */
+	case MONITORED = 'monitored';
 
-    /** No block was detected; request was allowed to proceed. */
-    case ALLOWED   = 'allowed';
+	/** No block was detected; request was allowed to proceed. */
+	case ALLOWED   = 'allowed';
 }

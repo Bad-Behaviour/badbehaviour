@@ -8,36 +8,36 @@ use BadBehaviour\Util\RequestPackage;
 
 class HCaptchaChallenge implements ChallengeInterface
 {
-    private Configuration $config;
+	private Configuration $config;
 
-    public function __construct(Configuration $config, ?AdapterInterface $adapter = null)
-    {
-        $this->config = $config;
-    }
+	public function __construct(Configuration $config, ?AdapterInterface $adapter = null)
+	{
+		$this->config = $config;
+	}
 
-    public function verify(RequestPackage $package): bool
-    {
-        $response = $_POST['h-captcha-response'] ?? $_GET['h-captcha-response'] ?? '';
-        if (!$response) return false;
+	public function verify(RequestPackage $package): bool
+	{
+		$response = $_POST['h-captcha-response'] ?? $_GET['h-captcha-response'] ?? '';
+		if (!$response) return false;
 
-        $secret = $this->config->challenge_secret_key;
-        if (!$secret) return false;
+		$secret = $this->config->challenge_secret_key;
+		if (!$secret) return false;
 
-        $data = [
-            'secret' => $secret,
-            'response' => $response,
-            'remoteip' => $package->ip,
-        ];
+		$data = [
+			'secret' => $secret,
+			'response' => $response,
+			'remoteip' => $package->ip,
+		];
 
-        $result = $this->http_post('https://hcaptcha.com/siteverify', $data);
-        return $result['success'] ?? false;
-    }
+		$result = $this->http_post('https://hcaptcha.com/siteverify', $data);
+		return $result['success'] ?? false;
+	}
 
-    public function render(string $action_url): string
-    {
-        $site_key = $this->config->challenge_site_key;
+	public function render(string $action_url): string
+	{
+		$site_key = $this->config->challenge_site_key;
 
-        return <<<HTML
+		return <<<HTML
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -60,20 +60,20 @@ class HCaptchaChallenge implements ChallengeInterface
 </body>
 </html>
 HTML;
-    }
+	}
 
-    private function http_post(string $url, array $data): array
-    {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => http_build_query($data),
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => true,
-        ]);
-        $response = curl_exec($ch);
-        curl_close($ch);
-        return json_decode($response, true) ?? [];
-    }
+	private function http_post(string $url, array $data): array
+	{
+		$ch = curl_init($url);
+		curl_setopt_array($ch, [
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_POST => true,
+			CURLOPT_POSTFIELDS => http_build_query($data),
+			CURLOPT_TIMEOUT => 10,
+			CURLOPT_SSL_VERIFYPEER => true,
+		]);
+		$response = curl_exec($ch);
+		curl_close($ch);
+		return json_decode($response, true) ?? [];
+	}
 }

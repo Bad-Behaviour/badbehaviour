@@ -1,6 +1,5 @@
 <?php
 // tests/Unit/Feeds/Adapters/BingJsonFeedTest.php
-
 namespace BadBehaviour\Tests\Unit\Feeds\Adapters;
 
 use BadBehaviour\Feeds\Adapters\BingJsonFeed;
@@ -9,7 +8,9 @@ use PHPUnit\Framework\TestCase;
 
 class BingJsonFeedTest extends TestCase
 {
+
 	private BingJsonFeed $feed;
+
 	private CacheInterface $cache;
 
 	protected function setUp(): void
@@ -25,7 +26,9 @@ class BingJsonFeedTest extends TestCase
 
 	public function test_get_bot_ids(): void
 	{
-		$this->assertEquals(['bingbot'], $this->feed->get_bot_ids());
+		$this->assertEquals([
+			'bingbot'
+		], $this->feed->get_bot_ids());
 	}
 
 	public function test_instantiation(): void

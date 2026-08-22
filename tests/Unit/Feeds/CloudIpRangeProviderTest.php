@@ -1,7 +1,5 @@
 <?php
-
-declare(strict_types=1);
-
+declare(strict_types = 1);
 namespace BadBehaviour\Tests\Unit\Feeds;
 
 use BadBehaviour\Core\Interfaces\CacheInterface;
@@ -29,16 +27,17 @@ use PHPUnit\Framework\TestCase;
  * from a unit test (no internet in CI, no way to verify feeds are
  * up). The tests here exercise:
  *
- *   1. Public constants & API surface
- *   2. Cache integration (store → retrieve → stale fallback)
- *   3. Behavior when the cache is empty / missing
- *   4. CIDR-format validation on what comes out of the provider
+ * 1. Public constants & API surface
+ * 2. Cache integration (store → retrieve → stale fallback)
+ * 3. Behavior when the cache is empty / missing
+ * 4. CIDR-format validation on what comes out of the provider
  *
  * The internal fetch() method (which calls file_get_contents on
  * upstream URLs) is left to integration tests.
  */
 final class CloudIpRangeProviderTest extends TestCase
 {
+
 	// ---------- Test doubles ----------
 
 	/**
@@ -48,20 +47,23 @@ final class CloudIpRangeProviderTest extends TestCase
 	 */
 	private function make_cache(): CacheInterface
 	{
-		return new class implements CacheInterface {
+		return new class() implements CacheInterface {
+
 			public array $store = [];
+
 			public int $set_calls = 0;
+
 			public int $get_calls = 0;
 
 			public function get(string $key): mixed
 			{
-				$this->get_calls++;
+				$this->get_calls ++;
 				return $this->store[$key] ?? null;
 			}
 
 			public function set(string $key, mixed $value, int $ttl): bool
 			{
-				$this->set_calls++;
+				$this->set_calls ++;
 				$this->store[$key] = $value;
 				return true;
 			}
@@ -97,18 +99,16 @@ final class CloudIpRangeProviderTest extends TestCase
 	// ============================================================
 	// 1. Public API surface
 	// ============================================================
-
 	public function test_feed_urls_constant_lists_documented_providers(): void
 	{
 		$expected = [
 			'aws',
 			'cloudflare',
 			'fastly',
-			'gcp',
+			'gcp'
 		];
 
-		$this->assertSame($expected, array_keys(CloudIpRangeProvider::FEED_URLS),
-			'FEED_URLS keys are the canonical provider names accepted by ranges()');
+		$this->assertSame($expected, array_keys(CloudIpRangeProvider::FEED_URLS), 'FEED_URLS keys are the canonical provider names accepted by ranges()');
 	}
 
 	public function test_feed_urls_are_https(): void
@@ -116,11 +116,7 @@ final class CloudIpRangeProviderTest extends TestCase
 		// Refusing HTTP for IP-range feeds prevents MITM tampering with
 		// the very data that authorizes CDN health probes.
 		foreach (CloudIpRangeProvider::FEED_URLS as $provider => $url) {
-			$this->assertStringStartsWith(
-				'https://',
-				$url,
-				"Feed URL for '{$provider}' must be HTTPS (got '{$url}')"
-			);
+			$this->assertStringStartsWith('https://', $url, "Feed URL for '{$provider}' must be HTTPS (got '{$url}')");
 		}
 	}
 
@@ -130,26 +126,21 @@ final class CloudIpRangeProviderTest extends TestCase
 		// own domain. If a feed URL silently drifts to a third-party
 		// mirror, the registry is being poisoned by an attacker.
 		$official_domains = [
-			'aws'         => 'amazonaws.com',
-			'cloudflare'  => 'cloudflare.com',
-			'fastly'      => 'fastly.com',
-			'gcp'         => 'gstatic.com',
+			'aws' => 'amazonaws.com',
+			'cloudflare' => 'cloudflare.com',
+			'fastly' => 'fastly.com',
+			'gcp' => 'gstatic.com'
 		];
 
 		foreach ($official_domains as $provider => $expected_domain) {
 			$url = CloudIpRangeProvider::FEED_URLS[$provider];
-			$this->assertStringContainsString(
-				$expected_domain,
-				$url,
-				"Feed URL for '{$provider}' should be on '{$expected_domain}' (got '{$url}')"
-			);
+			$this->assertStringContainsString($expected_domain, $url, "Feed URL for '{$provider}' should be on '{$expected_domain}' (got '{$url}')");
 		}
 	}
 
 	// ============================================================
 	// 2. Construction
 	// ============================================================
-
 	public function test_constructs_with_cache(): void
 	{
 		$provider = new CloudIpRangeProvider($this->make_cache());
@@ -165,19 +156,24 @@ final class CloudIpRangeProviderTest extends TestCase
 	// ============================================================
 	// 3. Cache hit path
 	// ============================================================
-
 	public function test_ranges_returns_cached_data_when_fresh(): void
 	{
 		$cache = $this->make_cache();
 		$cache->set('ip_range:aws:all', [
-			'data'    => ['192.0.2.0/24', '198.51.100.0/24'],
-			'fetched' => time(), // fresh
+			'data' => [
+				'192.0.2.0/24',
+				'198.51.100.0/24'
+			],
+			'fetched' => time() // fresh
 		], 86400);
 
 		$provider = new CloudIpRangeProvider($cache);
 		$result = $provider->ranges('aws');
 
-		$this->assertSame(['192.0.2.0/24', '198.51.100.0/24'], $result);
+		$this->assertSame([
+			'192.0.2.0/24',
+			'198.51.100.0/24'
+		], $result);
 	}
 
 	public function test_ranges_returns_empty_for_unknown_provider(): void
@@ -202,18 +198,26 @@ final class CloudIpRangeProviderTest extends TestCase
 		// different tags don't pollute each other.
 		$cache = $this->make_cache();
 		$cache->set('ip_range:aws:CLOUDFRONT', [
-			'data'    => ['192.0.2.0/24'],
-			'fetched' => time(),
+			'data' => [
+				'192.0.2.0/24'
+			],
+			'fetched' => time()
 		], 86400);
 		$cache->set('ip_range:aws:EC2', [
-			'data'    => ['198.51.100.0/24'],
-			'fetched' => time(),
+			'data' => [
+				'198.51.100.0/24'
+			],
+			'fetched' => time()
 		], 86400);
 
 		$provider = new CloudIpRangeProvider($cache);
 
-		$this->assertSame(['192.0.2.0/24'], $provider->ranges('aws', 'CLOUDFRONT'));
-		$this->assertSame(['198.51.100.0/24'], $provider->ranges('aws', 'EC2'));
+		$this->assertSame([
+			'192.0.2.0/24'
+		], $provider->ranges('aws', 'CLOUDFRONT'));
+		$this->assertSame([
+			'198.51.100.0/24'
+		], $provider->ranges('aws', 'EC2'));
 	}
 
 	private function require_offline(): void
@@ -228,21 +232,24 @@ final class CloudIpRangeProviderTest extends TestCase
 		// whether the host is reachable, not whether TLS validates.
 		// (CloudIpRangeProvider uses CaBundleLocator for real fetches.)
 		$ctx = stream_context_create([
-			'http' => ['timeout' => 2, 'ignore_errors' => true],
-			'ssl'  => ['verify_peer' => false, 'verify_peer_name' => false],
+			'http' => [
+				'timeout' => 2,
+				'ignore_errors' => true
+			],
+			'ssl' => [
+				'verify_peer' => false,
+				'verify_peer_name' => false
+			]
 		]);
 		$reachable = @file_get_contents('https://api.fastly.com/public-ip-list', false, $ctx) !== false;
 		if ($reachable) {
-			$this->markTestSkipped(
-				'Requires unreachable network. Run with BB_TEST_OFFLINE=1 to enable.'
-			);
+			$this->markTestSkipped('Requires unreachable network. Run with BB_TEST_OFFLINE=1 to enable.');
 		}
 	}
 
 	// ============================================================
 	// 4. Stale-cache fallback
 	// ============================================================
-
 	public function test_stale_cache_returned_when_fresh_unavailable(): void
 	{
 		$this->require_offline();
@@ -255,8 +262,10 @@ final class CloudIpRangeProviderTest extends TestCase
 		// Inject a stale entry directly:
 		$cache = $this->make_cache();
 		$cache->set('ip_range:aws:all', [
-			'data'    => ['192.0.2.0/24'],
-			'fetched' => time() - (86400 * 8), // 8 days old, beyond 24h TTL
+			'data' => [
+				'192.0.2.0/24'
+			],
+			'fetched' => time() - (86400 * 8) // 8 days old, beyond 24h TTL
 		], 86400 * 30);
 
 		$provider = new CloudIpRangeProvider($cache);
@@ -271,14 +280,14 @@ final class CloudIpRangeProviderTest extends TestCase
 		// Looking at the source, the current implementation only returns
 		// stale cache if the fresh fetch fails. In unit tests, the fetch
 		// always fails, so stale cache IS returned.
-		$this->assertSame(['192.0.2.0/24'], $result,
-			'Stale cache should be returned when fresh fetch fails (unit-test fallback path)');
+		$this->assertSame([
+			'192.0.2.0/24'
+		], $result, 'Stale cache should be returned when fresh fetch fails (unit-test fallback path)');
 	}
 
 	// ============================================================
 	// 5. Cache key format
 	// ============================================================
-
 	public function test_cache_key_shape_uses_provider_and_tag(): void
 	{
 		// The cache key is built as "ip_range:{provider}:{tag|null}".
@@ -286,21 +295,24 @@ final class CloudIpRangeProviderTest extends TestCase
 		// shape and observing a hit.
 		$cache = $this->make_cache();
 		$cache->set('ip_range:fastly:all', [
-			'data'    => ['203.0.113.0/24'],
-			'fetched' => time(),
+			'data' => [
+				'203.0.113.0/24'
+			],
+			'fetched' => time()
 		], 86400);
 
 		$provider = new CloudIpRangeProvider($cache);
 		$result = $provider->ranges('fastly');
 
-		$this->assertSame(['203.0.113.0/24'], $result);
+		$this->assertSame([
+			'203.0.113.0/24'
+		], $result);
 		$this->assertGreaterThan(0, $cache->get_calls);
 	}
 
 	// ============================================================
 	// 6. CIDR-format integrity (output contract)
 	// ============================================================
-
 	public function test_cached_cidrs_returned_unchanged(): void
 	{
 		// Whatever CIDRs we put in the cache, the provider returns
@@ -309,11 +321,11 @@ final class CloudIpRangeProviderTest extends TestCase
 		$cached_cidrs = [
 			'192.0.2.0/24',
 			'198.51.100.0/24',
-			'2001:db8::/32',
+			'2001:db8::/32'
 		];
 		$cache->set('ip_range:aws:all', [
-			'data'    => $cached_cidrs,
-			'fetched' => time(),
+			'data' => $cached_cidrs,
+			'fetched' => time()
 		], 86400);
 
 		$provider = new CloudIpRangeProvider($cache);
@@ -328,8 +340,8 @@ final class CloudIpRangeProviderTest extends TestCase
 		// ranges yet). Provider should propagate empty cleanly.
 		$cache = $this->make_cache();
 		$cache->set('ip_range:gcp:all', [
-			'data'    => [],
-			'fetched' => time(),
+			'data' => [],
+			'fetched' => time()
 		], 86400);
 
 		$provider = new CloudIpRangeProvider($cache);
@@ -341,7 +353,6 @@ final class CloudIpRangeProviderTest extends TestCase
 	// ============================================================
 	// 7. Contract documentation — what the tests assume
 	// ====================================
-
 	public function test_provider_is_safe_against_constructor_without_args(): void
 	{
 		// Constructor signature: (CacheInterface $cache, int $ttl = 86400)
@@ -354,16 +365,10 @@ final class CloudIpRangeProviderTest extends TestCase
 	// ============================================================
 	// 8. Provider-specific contract: each provider has a URL
 	// ============================================================
-
-
-    #[DataProvider('everyProviderProvider')]
+	#[DataProvider('everyProviderProvider')]
 	public function test_each_documented_provider_has_a_feed_url(string $provider): void
 	{
-		$this->assertArrayHasKey(
-			$provider,
-			CloudIpRangeProvider::FEED_URLS,
-			"Provider '{$provider}' is documented but missing from FEED_URLS"
-		);
+		$this->assertArrayHasKey($provider, CloudIpRangeProvider::FEED_URLS, "Provider '{$provider}' is documented but missing from FEED_URLS");
 
 		$url = CloudIpRangeProvider::FEED_URLS[$provider];
 		$this->assertNotEmpty($url);
@@ -373,17 +378,24 @@ final class CloudIpRangeProviderTest extends TestCase
 	public static function everyProviderProvider(): array
 	{
 		return [
-			'AWS'         => ['aws'],
-			'Cloudflare'  => ['cloudflare'],
-			'Fastly'      => ['fastly'],
-			'GCP'         => ['gcp'],
+			'AWS' => [
+				'aws'
+			],
+			'Cloudflare' => [
+				'cloudflare'
+			],
+			'Fastly' => [
+				'fastly'
+			],
+			'GCP' => [
+				'gcp'
+			]
 		];
 	}
 
 	// ============================================================
 	// 9. Return value type
 	// ============================================================
-
 	public function test_ranges_always_returns_an_array(): void
 	{
 		$provider = new CloudIpRangeProvider($this->make_cache());
@@ -393,11 +405,7 @@ final class CloudIpRangeProviderTest extends TestCase
 		// and would crash on non-array returns.
 		foreach (array_keys(CloudIpRangeProvider::FEED_URLS) as $provider_name) {
 			$result = $provider->ranges($provider_name);
-			$this->assertIsArray(
-				$result,
-				"ranges('{$provider_name}') must return an array (got "
-				. get_debug_type($result) . ')'
-			);
+			$this->assertIsArray($result, "ranges('{$provider_name}') must return an array (got " . get_debug_type($result) . ')');
 		}
 
 		// And for unknown providers
@@ -416,28 +424,29 @@ final class CloudIpRangeProviderTest extends TestCase
 		// Whatever happens internally, the public API should not throw.
 		$result = $provider->ranges('aws');
 
-		$this->assertIsArray($result,
-			'Provider must return an array even when cache is corrupted');
+		$this->assertIsArray($result, 'Provider must return an array even when cache is corrupted');
 	}
 
 	// ============================================================
 	// 10. Multiple providers are independent
 	// ============================================================
-
 	public function test_cache_for_one_provider_does_not_leak_to_another(): void
 	{
 		$this->require_offline();
 		$cache = $this->make_cache();
 		$cache->set('ip_range:aws:all', [
-			'data'    => ['192.0.2.0/24'],
-			'fetched' => time(),
+			'data' => [
+				'192.0.2.0/24'
+			],
+			'fetched' => time()
 		], 86400);
 
 		$provider = new CloudIpRangeProvider($cache);
 
 		// AWS has cache, Fastly does not
-		$this->assertSame(['192.0.2.0/24'], $provider->ranges('aws'));
-		$this->assertSame([], $provider->ranges('fastly'),
-			'Fastly cache miss must not surface AWS data');
+		$this->assertSame([
+			'192.0.2.0/24'
+		], $provider->ranges('aws'));
+		$this->assertSame([], $provider->ranges('fastly'), 'Fastly cache miss must not surface AWS data');
 	}
 }

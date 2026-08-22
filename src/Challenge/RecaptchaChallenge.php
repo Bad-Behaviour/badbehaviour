@@ -8,38 +8,38 @@ use BadBehaviour\Util\RequestPackage;
 
 class RecaptchaChallenge implements ChallengeInterface
 {
-    private Configuration $config;
+	private Configuration $config;
 
-    public function __construct(Configuration $config, ?AdapterInterface $adapter = null)
-    {
-        $this->config = $config;
-    }
+	public function __construct(Configuration $config, ?AdapterInterface $adapter = null)
+	{
+		$this->config = $config;
+	}
 
-    public function verify(RequestPackage $package): bool
-    {
-        $response = $_POST['g-recaptcha-response'] ?? $_GET['g-recaptcha-response'] ?? '';
-        if (!$response) return false;
+	public function verify(RequestPackage $package): bool
+	{
+		$response = $_POST['g-recaptcha-response'] ?? $_GET['g-recaptcha-response'] ?? '';
+		if (!$response) return false;
 
-        $secret = $this->config->challenge_secret_key;
-        if (!$secret) return false;
+		$secret = $this->config->challenge_secret_key;
+		if (!$secret) return false;
 
-        $data = [
-            'secret' => $secret,
-            'response' => $response,
-            'remoteip' => $package->ip,
-        ];
+		$data = [
+			'secret' => $secret,
+			'response' => $response,
+			'remoteip' => $package->ip,
+		];
 
-        $result = $this->http_post('https://www.google.com/recaptcha/api/siteverify', $data);
+		$result = $this->http_post('https://www.google.com/recaptcha/api/siteverify', $data);
 
-        $min_score = $this->config->recaptcha_min_score;
-        return ($result['success'] ?? false) && ($result['score'] ?? 0) >= $min_score;
-    }
+		$min_score = $this->config->recaptcha_min_score;
+		return ($result['success'] ?? false) && ($result['score'] ?? 0) >= $min_score;
+	}
 
-    public function render(string $action_url): string
-    {
-        $site_key = $this->config->challenge_site_key;
+	public function render(string $action_url): string
+	{
+		$site_key = $this->config->challenge_site_key;
 
-        return <<<HTML
+		return <<<HTML
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -55,10 +55,10 @@ class RecaptchaChallenge implements ChallengeInterface
 		<h2>Security Check</h2>
 		<form method="POST" action="{$action_url}" id="form">
 			<button class="g-recaptcha"
-			        data-sitekey="{$site_key}"
-			        data-callback="onSubmit"
-			        data-action="verify"
-			        style="padding: 0.75rem 1.5rem; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer;">
+					data-sitekey="{$site_key}"
+					data-callback="onSubmit"
+					data-action="verify"
+					style="padding: 0.75rem 1.5rem; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer;">
 				Verify
 			</button>
 			<input type="hidden" name="g-recaptcha-response" id="g-recaptcha-response">
@@ -77,20 +77,20 @@ class RecaptchaChallenge implements ChallengeInterface
 </body>
 </html>
 HTML;
-    }
+	}
 
-    private function http_post(string $url, array $data): array
-    {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => http_build_query($data),
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => true,
-        ]);
-        $response = curl_exec($ch);
-        curl_close($ch);
-        return json_decode($response, true) ?? [];
-    }
+	private function http_post(string $url, array $data): array
+	{
+		$ch = curl_init($url);
+		curl_setopt_array($ch, [
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_POST => true,
+			CURLOPT_POSTFIELDS => http_build_query($data),
+			CURLOPT_TIMEOUT => 10,
+			CURLOPT_SSL_VERIFYPEER => true,
+		]);
+		$response = curl_exec($ch);
+		curl_close($ch);
+		return json_decode($response, true) ?? [];
+	}
 }

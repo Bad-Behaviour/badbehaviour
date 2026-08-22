@@ -1,6 +1,5 @@
 <?php
 // tests/Unit/Feeds/Adapters/AppleJsonFeedTest.php
-
 namespace BadBehaviour\Tests\Unit\Feeds\Adapters;
 
 use BadBehaviour\Feeds\Adapters\AppleJsonFeed;
@@ -9,7 +8,9 @@ use PHPUnit\Framework\TestCase;
 
 class AppleJsonFeedTest extends TestCase
 {
+
 	private AppleJsonFeed $feed;
+
 	private CacheInterface $cache;
 
 	protected function setUp(): void
@@ -26,7 +27,10 @@ class AppleJsonFeedTest extends TestCase
 	public function test_get_bot_ids(): void
 	{
 		// Apple feed covers both applebot and apple_ai
-		$this->assertEquals(['applebot', 'apple_ai'], $this->feed->get_bot_ids());
+		$this->assertEquals([
+			'applebot',
+			'apple_ai'
+		], $this->feed->get_bot_ids());
 	}
 
 	public function test_instantiation(): void

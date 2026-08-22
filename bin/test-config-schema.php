@@ -17,18 +17,18 @@ $passes = 0;
 
 function check(bool $cond, string $msg, array &$errors, int &$passes): void
 {
-    if ($cond) {
-        $passes++;
-        echo "  ✓ $msg\n";
-    } else {
-        $errors[] = $msg;
-        echo "  ✗ FAIL: $msg\n";
-    }
+	if ($cond) {
+		$passes++;
+		echo "  ✓ $msg\n";
+	} else {
+		$errors[] = $msg;
+		echo "  ✗ FAIL: $msg\n";
+	}
 }
 
 function header_line(string $s): void
 {
-    echo "\n=== $s ===\n";
+	echo "\n=== $s ===\n";
 }
 
 $known = Schema::known_keys();
@@ -44,18 +44,18 @@ $skip_from_defaults = ['log_table', 'adapter', 'logger', 'cache', 'geoip'];
 
 $missing = [];
 foreach ($known as $dotted) {
-    if (in_array($dotted, $skip_from_defaults, true)) continue;
-    if (!array_key_exists($dotted, $default_flat)) {
-        $missing[] = $dotted;
-    }
+	if (in_array($dotted, $skip_from_defaults, true)) continue;
+	if (!array_key_exists($dotted, $default_flat)) {
+		$missing[] = $dotted;
+	}
 }
 
 check(
-    empty($missing),
-    "all " . count($known) . " schema keys reachable from get_defaults()"
-        . (empty($missing) ? '' : ' (missing: ' . implode(', ', $missing) . ')'),
-    $errors,
-    $passes
+	empty($missing),
+	"all " . count($known) . " schema keys reachable from get_defaults()"
+		. (empty($missing) ? '' : ' (missing: ' . implode(', ', $missing) . ')'),
+	$errors,
+	$passes
 );
 
 // =============================================================================
@@ -64,20 +64,20 @@ check(
 header_line('Test 2: Strictness overrides use valid schema keys');
 
 foreach (['monitor-only', 'normal', 'strict'] as $level) {
-    $overrides = Schema::flatten(Configuration::strictness_overrides($level));
-    $bad = [];
-    foreach (array_keys($overrides) as $dotted) {
-        if (!in_array($dotted, $known, true)) {
-            $bad[] = $dotted;
-        }
-    }
-    check(
-        empty($bad),
-        "strictness_overrides('$level') uses only valid schema keys"
-            . (empty($bad) ? '' : ' (unknown: ' . implode(', ', $bad) . ')'),
-        $errors,
-        $passes
-    );
+	$overrides = Schema::flatten(Configuration::strictness_overrides($level));
+	$bad = [];
+	foreach (array_keys($overrides) as $dotted) {
+		if (!in_array($dotted, $known, true)) {
+			$bad[] = $dotted;
+		}
+	}
+	check(
+		empty($bad),
+		"strictness_overrides('$level') uses only valid schema keys"
+			. (empty($bad) ? '' : ' (unknown: ' . implode(', ', $bad) . ')'),
+		$errors,
+		$passes
+	);
 }
 
 // =============================================================================
@@ -112,37 +112,37 @@ Diagnostics::reset();
 
 $monitor_only = Configuration::from_array(['strictness' => 'monitor-only']);
 check(
-    $monitor_only->dynamic_ip_ranges_enabled === false,
-    "strictness='monitor-only' → dynamic_ip_ranges_enabled = false",
-    $errors,
-    $passes
+	$monitor_only->dynamic_ip_ranges_enabled === false,
+	"strictness='monitor-only' → dynamic_ip_ranges_enabled = false",
+	$errors,
+	$passes
 );
 
 $normal = Configuration::from_array(['strictness' => 'normal']);
 check(
-    $normal->dynamic_ip_ranges_enabled === true,
-    "strictness='normal' → dynamic_ip_ranges_enabled = true",
-    $errors,
-    $passes
+	$normal->dynamic_ip_ranges_enabled === true,
+	"strictness='normal' → dynamic_ip_ranges_enabled = true",
+	$errors,
+	$passes
 );
 
 $strict = Configuration::from_array(['strictness' => 'strict']);
 check(
-    $strict->dynamic_ip_ranges_enabled === true,
-    "strictness='strict' → dynamic_ip_ranges_enabled = true",
-    $errors,
-    $passes
+	$strict->dynamic_ip_ranges_enabled === true,
+	"strictness='strict' → dynamic_ip_ranges_enabled = true",
+	$errors,
+	$passes
 );
 
 $user_override = Configuration::from_array([
-    'strictness' => 'monitor-only',
-    'dynamic_ip_ranges' => ['enabled' => true],
+	'strictness' => 'monitor-only',
+	'dynamic_ip_ranges' => ['enabled' => true],
 ]);
 check(
-    $user_override->dynamic_ip_ranges_enabled === true,
-    "user override beats strictness override",
-    $errors,
-    $passes
+	$user_override->dynamic_ip_ranges_enabled === true,
+	"user override beats strictness override",
+	$errors,
+	$passes
 );
 
 // =============================================================================
@@ -152,18 +152,18 @@ header_line('Test 5: dns_verification_enabled follows strictness');
 
 $mo_dns = Configuration::from_array(['strictness' => 'monitor-only']);
 check(
-    $mo_dns->dns_verification_enabled === false,
-    "strictness='monitor-only' → dns_verification_enabled = false",
-    $errors,
-    $passes
+	$mo_dns->dns_verification_enabled === false,
+	"strictness='monitor-only' → dns_verification_enabled = false",
+	$errors,
+	$passes
 );
 
 $n_dns = Configuration::from_array(['strictness' => 'normal']);
 check(
-    $n_dns->dns_verification_enabled === true,
-    "strictness='normal' → dns_verification_enabled = true",
-    $errors,
-    $passes
+	$n_dns->dns_verification_enabled === true,
+	"strictness='normal' → dns_verification_enabled = true",
+	$errors,
+	$passes
 );
 
 // =============================================================================
@@ -174,23 +174,23 @@ header_line('Test 6: Diagnostics catches typos');
 Diagnostics::reset();
 
 Configuration::from_array([
-    'dynamc_ip_ranges' => ['enabled' => true],
-    'preset'           => 'minimal',
-    'dns_verfiction'   => ['enabled' => false],
+	'dynamc_ip_ranges' => ['enabled' => true],
+	'preset'		   => 'minimal',
+	'dns_verfiction'   => ['enabled' => false],
 ]);
 
 $unknown = Diagnostics::unknown_keys();
 check(
-    isset($unknown['dynamc_ip_ranges.enabled']),
-    "typo 'dynamc_ip_ranges.enabled' flagged",
-    $errors,
-    $passes
+	isset($unknown['dynamc_ip_ranges.enabled']),
+	"typo 'dynamc_ip_ranges.enabled' flagged",
+	$errors,
+	$passes
 );
 check(
-    isset($unknown['dns_verfiction.enabled']),
-    "typo 'dns_verfiction.enabled' flagged",
-    $errors,
-    $passes
+	isset($unknown['dns_verfiction.enabled']),
+	"typo 'dns_verfiction.enabled' flagged",
+	$errors,
+	$passes
 );
 
 Diagnostics::reset();
@@ -203,29 +203,29 @@ header_line('Test 7: SafeMode produces fully-disabled Configuration');
 $safe = Configuration::from_array(SafeMode::settings('test_log_table'));
 
 $defense_flags = [
-    'dns_verification_enabled'       => false,
-    'dynamic_ip_ranges_enabled'      => false,
-    'dnsbl_enabled'                  => false,
-    'rate_limit_enabled'             => false,
-    'enable_fingerprinting'          => false,
-    'enable_behavioral_analysis'     => false,
-    'enable_client_hints_validation' => false,
-    'enable_agentic_detection'       => false,
-    'enable_head_request_detection'  => false,
-    'enable_asset_scraping_detection'=> false,
-    'geoip_enabled'                  => false,
-    'challenge_enabled'              => false,
-    'block_unverified_ai'            => false,
-    'strict_search_engines'          => false,
+	'dns_verification_enabled'	   => false,
+	'dynamic_ip_ranges_enabled'	  => false,
+	'dnsbl_enabled'				  => false,
+	'rate_limit_enabled'			 => false,
+	'enable_fingerprinting'		  => false,
+	'enable_behavioral_analysis'	 => false,
+	'enable_client_hints_validation' => false,
+	'enable_agentic_detection'	   => false,
+	'enable_head_request_detection'  => false,
+	'enable_asset_scraping_detection'=> false,
+	'geoip_enabled'				  => false,
+	'challenge_enabled'			  => false,
+	'block_unverified_ai'			=> false,
+	'strict_search_engines'		  => false,
 ];
 
 foreach ($defense_flags as $prop => $expected) {
-    check(
-        $safe->{$prop} === $expected,
-        "safe-mode → $prop = " . var_export($expected, true),
-        $errors,
-        $passes
-    );
+	check(
+		$safe->{$prop} === $expected,
+		"safe-mode → $prop = " . var_export($expected, true),
+		$errors,
+		$passes
+	);
 }
 
 check($safe->logging === true, "safe-mode → logging = true", $errors, $passes);
@@ -234,19 +234,19 @@ check($safe->geoip_database_path === '', "safe-mode → geoip_database_path = ''
 
 // =============================================================================
 // Test 8: to_array() round-trip (uses strictness='normal' to avoid
-//         strictness override wiping user ai_crawlers.allowed)
+//		 strictness override wiping user ai_crawlers.allowed)
 // =============================================================================
 header_line('Test 8: to_array() round-trip');
 
 $original = [
-    'preset'      => 'minimal',
-    'strictness'  => 'normal',
-    'logging'     => true,
-    'ai_crawlers' => ['allowed' => ['GPTBot', 'ClaudeBot']],
-    'bot_categories' => [
-        'blocked'   => ['malicious'],
-        'challenge' => ['social_crawler'],
-    ],
+	'preset'	  => 'minimal',
+	'strictness'  => 'normal',
+	'logging'	 => true,
+	'ai_crawlers' => ['allowed' => ['GPTBot', 'ClaudeBot']],
+	'bot_categories' => [
+		'blocked'   => ['malicious'],
+		'challenge' => ['social_crawler'],
+	],
 ];
 
 $cfg = Configuration::from_array($original);
@@ -255,22 +255,22 @@ $round = $cfg->to_array();
 check($round['preset'] === 'minimal', "round-trip → preset", $errors, $passes);
 check($round['strictness'] === 'normal', "round-trip → strictness", $errors, $passes);
 check(
-    ($round['ai_crawlers']['allowed'] ?? null) === ['GPTBot', 'ClaudeBot'],
-    "round-trip → ai_crawlers.allowed",
-    $errors,
-    $passes
+	($round['ai_crawlers']['allowed'] ?? null) === ['GPTBot', 'ClaudeBot'],
+	"round-trip → ai_crawlers.allowed",
+	$errors,
+	$passes
 );
 check(
-    ($round['bot_categories']['blocked'] ?? null) === ['malicious'],
-    "round-trip → bot_categories.blocked",
-    $errors,
-    $passes
+	($round['bot_categories']['blocked'] ?? null) === ['malicious'],
+	"round-trip → bot_categories.blocked",
+	$errors,
+	$passes
 );
 check(
-    ($round['bot_categories']['challenge'] ?? null) === ['social_crawler'],
-    "round-trip → bot_categories.challenge",
-    $errors,
-    $passes
+	($round['bot_categories']['challenge'] ?? null) === ['social_crawler'],
+	"round-trip → bot_categories.challenge",
+	$errors,
+	$passes
 );
 
 // =============================================================================
@@ -279,13 +279,13 @@ check(
 header_line('Test 9: bot_categories all four sub-keys');
 
 $full = Configuration::from_array([
-    'preset'         => 'full',
-    'bot_categories' => [
-        'blocked'   => ['malicious'],
-        'challenge' => ['social_crawler'],
-        'log_only'  => ['security_scanner'],
-        'allowed'   => ['feed_reader'],
-    ],
+	'preset'		 => 'full',
+	'bot_categories' => [
+		'blocked'   => ['malicious'],
+		'challenge' => ['social_crawler'],
+		'log_only'  => ['security_scanner'],
+		'allowed'   => ['feed_reader'],
+	],
 ]);
 
 check($full->blocked_bot_categories === ['malicious'], "blocked persists", $errors, $passes);
@@ -299,11 +299,11 @@ check($full->allowed_bot_categories === ['feed_reader'], "allowed persists", $er
 header_line('Test 10: rate_limits sub-buckets');
 
 $rl = Configuration::from_array([
-    'rate_limits' => [
-        'enabled' => true,
-        'global' => ['requests' => 500, 'window' => 1800],
-        'per_minute' => ['requests' => 30, 'window' => 60],
-    ],
+	'rate_limits' => [
+		'enabled' => true,
+		'global' => ['requests' => 500, 'window' => 1800],
+		'per_minute' => ['requests' => 30, 'window' => 60],
+	],
 ]);
 
 check($rl->rate_limit_enabled === true, "rate_limit_enabled from nested", $errors, $passes);
@@ -312,7 +312,7 @@ check(($rl->rate_limits['per_minute']['window'] ?? null) === 60, "rate_limits.pe
 
 // =============================================================================
 // Test 11: User config beats strictness override (regression for the
-//          bug that originally caused the dynamic_ip_ranges failure)
+//		  bug that originally caused the dynamic_ip_ranges failure)
 // =============================================================================
 header_line('Test 11: User config beats strictness override');
 
@@ -320,28 +320,28 @@ Diagnostics::reset();
 
 // monitor-only would set ai_crawlers.allowed = [], but user must win
 $user_beats = Configuration::from_array([
-    'strictness'  => 'monitor-only',
-    'ai_crawlers' => ['allowed' => ['GPTBot', 'ClaudeBot']],
+	'strictness'  => 'monitor-only',
+	'ai_crawlers' => ['allowed' => ['GPTBot', 'ClaudeBot']],
 ]);
 
 check(
-    $user_beats->allowed_ai_crawlers === ['GPTBot', 'ClaudeBot'],
-    "user ai_crawlers.allowed beats strictness override",
-    $errors,
-    $passes
+	$user_beats->allowed_ai_crawlers === ['GPTBot', 'ClaudeBot'],
+	"user ai_crawlers.allowed beats strictness override",
+	$errors,
+	$passes
 );
 
 // Same for dns_verification
 $user_dns = Configuration::from_array([
-    'strictness'         => 'monitor-only',
-    'dns_verification'   => ['enabled' => true],
+	'strictness'		 => 'monitor-only',
+	'dns_verification'   => ['enabled' => true],
 ]);
 
 check(
-    $user_dns->dns_verification_enabled === true,
-    "user dns_verification.enabled beats strictness override",
-    $errors,
-    $passes
+	$user_dns->dns_verification_enabled === true,
+	"user dns_verification.enabled beats strictness override",
+	$errors,
+	$passes
 );
 
 // =============================================================================
@@ -350,11 +350,11 @@ check(
 header_line('Test 12: ai_crawlers sub-keys');
 
 $ai = Configuration::from_array([
-    'ai_crawlers' => [
-        'allowed'          => ['GPTBot'],
-        'block_unverified' => true,
-        'strict'           => true,
-    ],
+	'ai_crawlers' => [
+		'allowed'		  => ['GPTBot'],
+		'block_unverified' => true,
+		'strict'		   => true,
+	],
 ]);
 
 check($ai->allowed_ai_crawlers === ['GPTBot'], "allowed_ai_crawlers", $errors, $passes);
@@ -363,30 +363,30 @@ check($ai->strict_ai === true, "strict_ai", $errors, $passes);
 
 // =============================================================================
 // Test 13: Defensive - Schema::KEY_MAP contains ai_crawlers.allowed
-//          (this is the specific key that was failing in Test 8 originally)
+//		  (this is the specific key that was failing in Test 8 originally)
 // =============================================================================
 header_line('Test 13: ai_crawlers.allowed is in schema');
 
 check(
-    in_array('ai_crawlers.allowed', $known, true),
-    "Schema::KEY_MAP contains 'ai_crawlers.allowed'",
-    $errors,
-    $passes
+	in_array('ai_crawlers.allowed', $known, true),
+	"Schema::KEY_MAP contains 'ai_crawlers.allowed'",
+	$errors,
+	$passes
 );
 
 if (!in_array('ai_crawlers.allowed', $known, true)) {
-    echo "  Available ai_crawlers keys in schema:\n";
-    foreach ($known as $k) {
-        if (str_starts_with($k, 'ai_crawlers.')) {
-            echo "    - $k\n";
-        }
-    }
+	echo "  Available ai_crawlers keys in schema:\n";
+	foreach ($known as $k) {
+		if (str_starts_with($k, 'ai_crawlers.')) {
+			echo "	- $k\n";
+		}
+	}
 }
 
 // =============================================================================
 // Test 14: Array properties survive coercion (regression test for the
-//          SQLite lock storm caused by skip_static_extensions being
-//          silently wiped to [] during config parsing)
+//		  SQLite lock storm caused by skip_static_extensions being
+//		  silently wiped to [] during config parsing)
 // =============================================================================
 header_line('Test 14: Array properties survive coercion');
 
@@ -394,14 +394,14 @@ $empty_cfg = Configuration::from_array([]);
 
 // Each entry: [property_name, required_entries_that_must_be_present]
 $array_properties_required = [
-	'skip_static_extensions'    => ['css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg'],
-	'skip_static_paths'         => ['/static/', '/assets/', '/media/', '/images/'],
-	'allowed_ai_crawlers'       => ['GPTBot', 'ClaudeBot', 'Google-Extended'],
-	'dnsbl_lists'               => ['zen.spamhaus.org', 'bl.spamcop.net'],
+	'skip_static_extensions'	=> ['css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg'],
+	'skip_static_paths'		 => ['/static/', '/assets/', '/media/', '/images/'],
+	'allowed_ai_crawlers'	   => ['GPTBot', 'ClaudeBot', 'Google-Extended'],
+	'dnsbl_lists'			   => ['zen.spamhaus.org', 'bl.spamcop.net'],
 	'head_referer_exempt_paths' => ['/api/'],
 	'dynamic_ip_ranges_feeds'   => ['aws', 'cloudflare'],
-	'asset_extensions'          => ['png', 'jpg', 'svg'],
-	'body_scan_skip_fields'     => ['body', 'comment'],
+	'asset_extensions'		  => ['png', 'jpg', 'svg'],
+	'body_scan_skip_fields'	 => ['body', 'comment'],
 ];
 
 foreach ($array_properties_required as $prop => $required_entries) {
@@ -460,18 +460,18 @@ foreach ($empty_by_default as $prop) {
 
 // =============================================================================
 // Test 15: User config without performance section preserves static skip
-//          (regression test for the exact config that triggered the bug:
-//           preset=minimal, strictness=monitor-only, verbose=true)
+//		  (regression test for the exact config that triggered the bug:
+//		   preset=minimal, strictness=monitor-only, verbose=true)
 // =============================================================================
 header_line('Test 15: Minimal user config preserves skip_static_extensions');
 
 Diagnostics::reset();
 
 $minimal = Configuration::from_array([
-	'preset'     => 'minimal',
+	'preset'	 => 'minimal',
 	'strictness' => 'monitor-only',
-	'logging'    => true,
-	'verbose'    => true,
+	'logging'	=> true,
+	'verbose'	=> true,
 ]);
 
 check(
@@ -520,14 +520,14 @@ check(
 
 // =============================================================================
 // Test 16: Explicit empty array in user config wipes defaults
-//          (distinguishes "defaults flowed through" from "user disabled")
+//		  (distinguishes "defaults flowed through" from "user disabled")
 // =============================================================================
 header_line('Test 16: Explicit empty array respects user intent');
 
 $disabled = Configuration::from_array([
 	'performance' => [
 		'skip_extensions' => [],
-		'skip_paths'      => [],
+		'skip_paths'	  => [],
 	],
 ]);
 
@@ -568,16 +568,16 @@ check(
 
 // =============================================================================
 // Test 17: Coercion handles type mismatches gracefully
-//          (string 'true' for bool, string '60' for int, etc.)
+//		  (string 'true' for bool, string '60' for int, etc.)
 // =============================================================================
 header_line('Test 17: Type coercion handles mismatches');
 
 $coerced = Configuration::from_array([
-	'verbose'             => 'true',          // string → bool
-	'logging'             => '1',             // string '1' → bool true
-	'httpbl_threat'       => '25',            // string '25' → int
-	'dns_verification'    => ['timeout_ms' => '300'],  // string '300' → int
-	'recaptcha_min_score' => '0.5',           // string '0.5' → float
+	'verbose'			 => 'true',		  // string → bool
+	'logging'			 => '1',			 // string '1' → bool true
+	'httpbl_threat'	   => '25',			// string '25' → int
+	'dns_verification'	=> ['timeout_ms' => '300'],  // string '300' → int
+	'recaptcha_min_score' => '0.5',		   // string '0.5' → float
 ]);
 
 check(
@@ -617,8 +617,8 @@ check(
 
 // =============================================================================
 // Test 18: Schema reflectively covers all array-typed constructor parameters
-//          (the catch-all that prevents future regressions when adding
-//           new array properties without updating the allow-list)
+//		  (the catch-all that prevents future regressions when adding
+//		   new array properties without updating the allow-list)
 // =============================================================================
 header_line('Test 18: Schema covers all array constructor parameters');
 
@@ -734,12 +734,12 @@ check(
 echo "  Array parameters on Configuration:\n";
 foreach ($array_params as $p) {
 	$count = is_array($verify_cfg->{$p} ?? null) ? count($verify_cfg->{$p}) : '?';
-	echo "    - $p ($count entries)\n";
+	echo "	- $p ($count entries)\n";
 }
 
 // =============================================================================
 // Test 19: Strictness overrides don't wipe array defaults
-//          (regression: monitor-only could accidentally clear skip lists)
+//		  (regression: monitor-only could accidentally clear skip lists)
 // =============================================================================
 header_line('Test 19: Strictness overrides preserve array defaults');
 
@@ -770,8 +770,8 @@ foreach (['monitor-only', 'normal', 'strict'] as $level) {
 
 // =============================================================================
 // Test 20: SafeMode preserves critical safety properties
-//          (safe-mode must not accidentally disable static skip — that
-//           would cause every asset to be processed in degraded mode)
+//		  (safe-mode must not accidentally disable static skip — that
+//		   would cause every asset to be processed in degraded mode)
 // =============================================================================
 header_line('Test 20: SafeMode preserves safety properties');
 
@@ -830,14 +830,14 @@ check(
 
 // Verify nested equivalents ARE present in overrides() with safe values
 $nested_keys_required = [
-	'dns_verification.enabled'      => false,
-	'dynamic_ip_ranges.enabled'     => false,
-	'geoip.enabled'                 => false,
-	'challenge.enabled'             => false,
-	'dnsbl.enabled'                 => false,
-	'reverse_proxy.enabled'         => false,
-	'rate_limits.enabled'           => false,
-	'bot_categories.blocked'        => [],
+	'dns_verification.enabled'	  => false,
+	'dynamic_ip_ranges.enabled'	 => false,
+	'geoip.enabled'				 => false,
+	'challenge.enabled'			 => false,
+	'dnsbl.enabled'				 => false,
+	'reverse_proxy.enabled'		 => false,
+	'rate_limits.enabled'		   => false,
+	'bot_categories.blocked'		=> [],
 ];
 
 foreach ($nested_keys_required as $nested => $expected) {
@@ -894,11 +894,11 @@ echo "  Passed: $passes\n";
 echo "  Failed: " . count($errors) . "\n";
 
 if (!empty($errors)) {
-    echo "\nFAILURES:\n";
-    foreach ($errors as $e) {
-        echo "  - $e\n";
-    }
-    exit(1);
+	echo "\nFAILURES:\n";
+	foreach ($errors as $e) {
+		echo "  - $e\n";
+	}
+	exit(1);
 }
 
 echo "\n✓ All schema integrity checks passed.\n";

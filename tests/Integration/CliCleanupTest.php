@@ -1,6 +1,5 @@
 <?php
-declare(strict_types=1);
-
+declare(strict_types = 1);
 namespace BadBehaviour\Tests\Integration;
 
 use BadBehaviour\Configuration;
@@ -14,7 +13,9 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(LogRetention::class)]
 final class CliCleanupTest extends TestCase
 {
+
 	private string $tempDbFile;
+
 	private SqliteTestAdapter $adapter;
 
 	protected function setUp(): void
@@ -39,13 +40,13 @@ final class CliCleanupTest extends TestCase
 	{
 		return Configuration::from_array([
 			'log_retention' => [
-				'enabled'                 => true,
-				'max_age_days'            => $maxAgeDays,
-				'max_rows'                => 0,
+				'enabled' => true,
+				'max_age_days' => $maxAgeDays,
+				'max_rows' => 0,
 				'probability_denominator' => 1000,
-				'min_interval_seconds'    => 60,    // short for tests
-				'lock_ttl'                => 60,
-			],
+				'min_interval_seconds' => 60, // short for tests
+				'lock_ttl' => 60
+			]
 		]);
 	}
 
@@ -57,25 +58,20 @@ final class CliCleanupTest extends TestCase
 	// ========================================================================
 	// In-process tests (fast, deterministic)
 	// ========================================================================
-
 	#[Test]
 	public function in_process_deletes_rows_older_than_max_age(): void
 	{
 		// Insert 5 old + 3 recent rows (using unix timestamps)
-		for ($i = 0; $i < 5; $i++) {
-			$this->adapter->insertRow((string)$this->unixDaysAgo(30));
+		for ($i = 0; $i < 5; $i ++) {
+			$this->adapter->insertRow((string) $this->unixDaysAgo(30));
 		}
-		for ($i = 0; $i < 3; $i++) {
-			$this->adapter->insertRow((string)$this->unixDaysAgo(1));
+		for ($i = 0; $i < 3; $i ++) {
+			$this->adapter->insertRow((string) $this->unixDaysAgo(1));
 		}
 
 		$this->assertSame(8, $this->adapter->countRows());
 
-		$retention = new LogRetention(
-			adapter: $this->adapter,
-			config: $this->makeConfig(maxAgeDays: 7),
-			cache: $this->adapter,
-			);
+		$retention = new LogRetention(adapter: $this->adapter, config: $this->makeConfig(maxAgeDays: 7), cache: $this->adapter);
 
 		$result = $retention->force_cleanup_now();
 
@@ -89,22 +85,14 @@ final class CliCleanupTest extends TestCase
 		$this->assertSame(3, $this->adapter->countRows());
 		$dates = $this->adapter->listDates();
 		foreach ($dates as $date) {
-			$this->assertGreaterThanOrEqual(
-				$this->unixDaysAgo(7),
-				(int)$date,
-				"Surviving row $date should not be older than 7 days"
-				);
+			$this->assertGreaterThanOrEqual($this->unixDaysAgo(7), (int) $date, "Surviving row $date should not be older than 7 days");
 		}
 	}
 
 	#[Test]
 	public function in_process_skips_empty_table(): void
 	{
-		$retention = new LogRetention(
-			adapter: $this->adapter,
-			config: $this->makeConfig(),
-			cache: $this->adapter,
-			);
+		$retention = new LogRetention(adapter: $this->adapter, config: $this->makeConfig(), cache: $this->adapter);
 
 		$result = $retention->force_cleanup_now();
 
@@ -122,33 +110,28 @@ final class CliCleanupTest extends TestCase
 		// Newest row is 20 days old. With max_age_days=7, cutoff = newest - 7d.
 		// Rows older than 20-7 = 13 days should be deleted.
 		// (i.e., the 20-day-old row survives; the 30-day-old row does not)
-		$this->adapter->insertRow((string)$this->unixDaysAgo(30));
-		$this->adapter->insertRow((string)$this->unixDaysAgo(20));
+		$this->adapter->insertRow((string) $this->unixDaysAgo(30));
+		$this->adapter->insertRow((string) $this->unixDaysAgo(20));
 
-		$retention = new LogRetention(
-			adapter: $this->adapter,
-			config: $this->makeConfig(maxAgeDays: 7),
-			cache: $this->adapter,
-			);
+		$retention = new LogRetention(adapter: $this->adapter, config: $this->makeConfig(maxAgeDays: 7), cache: $this->adapter);
 
 		$result = $retention->force_cleanup_now();
 
 		$this->assertSame(1, $result->rows_deleted);
-		$this->assertSame(1, $this->adapter->countRows());  // ← FIX: 1 row survives, not 2
+		$this->assertSame(1, $this->adapter->countRows()); // ← FIX: 1 row survives, not 2
 	}
 
 	// ========================================================================
 	// CLI subprocess tests (end-to-end)
 	// ========================================================================
-
 	#[Test]
 	public function cli_subprocess_deletes_old_rows_and_exits_zero(): void
 	{
 		// Insert old + recent rows (unix timestamps)
-		for ($i = 0; $i < 4; $i++) {
-			$this->adapter->insertRow((string)$this->unixDaysAgo(30));
+		for ($i = 0; $i < 4; $i ++) {
+			$this->adapter->insertRow((string) $this->unixDaysAgo(30));
 		}
-		$this->adapter->insertRow((string)$this->unixDaysAgo(1));
+		$this->adapter->insertRow((string) $this->unixDaysAgo(1));
 
 		$this->assertSame(5, $this->adapter->countRows());
 
@@ -190,26 +173,31 @@ final class CliCleanupTest extends TestCase
 			$this->markTestSkipped('bin/cleanup-logs.php not found');
 		}
 
-		$cmd = sprintf(
-			'%s %s 2>&1',
-			escapeshellarg(PHP_BINARY),
-			escapeshellarg($cli),
-			);
+		$cmd = sprintf('%s %s 2>&1', escapeshellarg(PHP_BINARY), escapeshellarg($cli));
 
 		$descriptors = [
-			0 => ['pipe', 'r'],
-			1 => ['pipe', 'w'],
-			2 => ['pipe', 'w'],
+			0 => [
+				'pipe',
+				'r'
+			],
+			1 => [
+				'pipe',
+				'w'
+			],
+			2 => [
+				'pipe',
+				'w'
+			]
 		];
 
 		$env = [
-			'BB_DB_DSN'    => 'sqlite:' . $this->tempDbFile,
-			'BB_DB_TABLE'  => 'bad_behaviour',
-			'PATH'         => getenv('PATH'),
+			'BB_DB_DSN' => 'sqlite:' . $this->tempDbFile,
+			'BB_DB_TABLE' => 'bad_behaviour',
+			'PATH' => getenv('PATH')
 		];
 
 		$proc = proc_open($cmd, $descriptors, $pipes, dirname($cli), $env);
-		if (!is_resource($proc)) {
+		if (! is_resource($proc)) {
 			$this->markTestSkipped('Could not start subprocess');
 		}
 
@@ -222,9 +210,9 @@ final class CliCleanupTest extends TestCase
 		$exit = proc_close($proc);
 
 		return [
-			'exit'   => $exit,
+			'exit' => $exit,
 			'stdout' => $stdout,
-			'stderr' => $stderr,
+			'stderr' => $stderr
 		];
 	}
 }
